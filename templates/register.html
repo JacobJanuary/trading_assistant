@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Регистрация - Помощник Трейдера{% endblock %}
+
+{% block content %}
+<div class="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+    <div class="max-w-md w-full space-y-8">
+        <div>
+            <div class="mx-auto h-12 w-12 flex items-center justify-center rounded-full bg-green-100">
+                <i class="fas fa-user-plus text-green-600 text-xl"></i>
+            </div>
+            <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900">
+                Регистрация
+            </h2>
+            <p class="mt-2 text-center text-sm text-gray-600">
+                Создайте аккаунт для доступа к системе
+            </p>
+        </div>
+        
+        <form class="mt-8 space-y-6" method="POST">
+            <div class="space-y-4">
+                <div>
+                    <label for="username" class="block text-sm font-medium text-gray-700">
+                        Имя пользователя
+                    </label>
+                    <input id="username" name="username" type="text" required 
+                           class="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm" 
+                           placeholder="Минимум 3 символа">
+                </div>
+                
+                <div>
+                    <label for="password" class="block text-sm font-medium text-gray-700">
+                        Пароль
+                    </label>
+                    <input id="password" name="password" type="password" required 
+                           class="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm" 
+                           placeholder="Минимум 6 символов">
+                </div>
+                
+                <div>
+                    <label for="confirm_password" class="block text-sm font-medium text-gray-700">
+                        Подтвердите пароль
+                    </label>
+                    <input id="confirm_password" name="confirm_password" type="password" required 
+                           class="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm" 
+                           placeholder="Повторите пароль">
+                </div>
+            </div>
+
+            <div class="bg-blue-50 border border-blue-200 rounded-md p-4">
+                <div class="flex">
+                    <div class="flex-shrink-0">
+                        <i class="fas fa-info-circle text-blue-400"></i>
+                    </div>
+                    <div class="ml-3">
+                        <p class="text-sm text-blue-700">
+                            <strong>Важно:</strong> Первый зарегистрированный пользователь становится администратором и получает немедленный доступ. Остальные пользователи должны дождаться подтверждения от администратора.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <button type="submit" 
+                        class="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+                    <span class="absolute left-0 inset-y-0 flex items-center pl-3">
+                        <i class="fas fa-user-plus text-green-500 group-hover:text-green-400"></i>
+                    </span>
+                    Зарегистрироваться
+                </button>
+            </div>
+
+            <div class="text-center">
+                <p class="text-sm text-gray-600">
+                    Уже есть аккаунт? 
+                    <a href="{{ url_for('login') }}" class="font-medium text-blue-600 hover:text-blue-500">
+                        Войти
+                    </a>
+                </p>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

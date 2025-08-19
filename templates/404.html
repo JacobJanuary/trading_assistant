@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Страница не найдена - Помощник Трейдера{% endblock %}
+
+{% block content %}
+<div class="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+    <div class="max-w-md w-full space-y-8 text-center">
+        <div>
+            <div class="mx-auto h-20 w-20 flex items-center justify-center rounded-full bg-red-100">
+                <i class="fas fa-exclamation-triangle text-red-600 text-3xl"></i>
+            </div>
+            <h2 class="mt-6 text-6xl font-extrabold text-gray-900">
+                404
+            </h2>
+            <h3 class="mt-2 text-3xl font-bold text-gray-900">
+                Страница не найдена
+            </h3>
+            <p class="mt-2 text-sm text-gray-600">
+                Запрашиваемая страница не существует или была перемещена.
+            </p>
+        </div>
+        
+        <div class="flex flex-col space-y-3">
+            {% if current_user.is_authenticated %}
+                <a href="{{ url_for('dashboard') }}" 
+                   class="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                    <span class="absolute left-0 inset-y-0 flex items-center pl-3">
+                        <i class="fas fa-home text-blue-500 group-hover:text-blue-400"></i>
+                    </span>
+                    Вернуться на главную
+                </a>
+            {% else %}
+                <a href="{{ url_for('login') }}" 
+                   class="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                    <span class="absolute left-0 inset-y-0 flex items-center pl-3">
+                        <i class="fas fa-sign-in-alt text-blue-500 group-hover:text-blue-400"></i>
+                    </span>
+                    Войти в систему
+                </a>
+            {% endif %}
+            
+            <button onclick="history.back()" 
+                    class="group relative w-full flex justify-center py-2 px-4 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                <span class="absolute left-0 inset-y-0 flex items-center pl-3">
+                    <i class="fas fa-arrow-left text-gray-400 group-hover:text-gray-300"></i>
+                </span>
+                Вернуться назад
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}

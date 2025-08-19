@@ -1,0 +1,389 @@
+{% extends "base.html" %}
+
+{% block title %}BigGuy Dashboard - Помощник Трейдера{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <!-- Заголовок дашборда -->
+    <div class="bg-white overflow-hidden shadow rounded-lg mb-6">
+        <div class="px-4 py-5 sm:p-6">
+            <h1 class="text-3xl font-bold text-gray-900 mb-2">
+                <i class="fas fa-chart-bar text-blue-600 mr-3"></i>
+                BigGuy Dashboard
+            </h1>
+            <p class="text-gray-600">Анализ потоков капитала по крупным сделкам</p>
+        </div>
+    </div>
+
+    <!-- Панель фильтров -->
+    <div class="bg-white shadow rounded-lg mb-6">
+        <div class="px-4 py-5 sm:p-6">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">
+                <i class="fas fa-filter text-gray-600 mr-2"></i>
+                Фильтры
+            </h3>
+            
+            <form method="GET" id="filterForm" class="space-y-4 md:space-y-0 md:flex md:items-end md:space-x-4">
+                <!-- Временной фильтр -->
+                <div class="flex-1">
+                    <label for="time_filter" class="block text-sm font-medium text-gray-700 mb-1">
+                        Временной период
+                    </label>
+                    <select name="time_filter" id="time_filter" 
+                            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                        {% for value, label in time_filter_options %}
+                            <option value="{{ value }}" {% if value == time_filter %}selected{% endif %}>
+                                {{ label }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <!-- Минимальная сумма -->
+                <div class="flex-1">
+                    <label for="min_value_usd" class="block text-sm font-medium text-gray-700 mb-1">
+                        Минимальная сумма ($)
+                    </label>
+                    <input type="number" name="min_value_usd" id="min_value_usd" 
+                           value="{{ min_value_usd }}" min="10000" step="1000"
+                           class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                           placeholder="10000">
+                </div>
+                
+                <!-- Тип операций -->
+                <div class="flex-1">
+                    <label for="operation_type" class="block text-sm font-medium text-gray-700 mb-1">
+                        Тип операций
+                    </label>
+                    <select name="operation_type" id="operation_type" 
+                            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                        {% for value, label in operation_type_options %}
+                            <option value="{{ value }}" {% if value == operation_type %}selected{% endif %}>
+                                {{ label }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <!-- Кнопки -->
+                <div class="flex space-x-2">
+                    <button type="submit" 
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition duration-150 ease-in-out">
+                        <i class="fas fa-search mr-1"></i>
+                        Применить
+                    </button>
+                    <button type="button" id="refreshBtn"
+                            class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm font-medium transition duration-150 ease-in-out">
+                        <i class="fas fa-sync-alt mr-1"></i>
+                        Обновить
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Статистика -->
+    {% if trading_stats %}
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+        <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="p-5">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <i class="fas fa-handshake text-blue-600 text-2xl"></i>
+                    </div>
+                    <div class="ml-5 w-0 flex-1">
+                        <dl>
+                            <dt class="text-sm font-medium text-gray-500 truncate">
+                                Всего сделок
+                            </dt>
+                            <dd class="text-lg font-medium text-gray-900">
+                                {{ "{:,}".format(trading_stats.total_trades) }}
+                            </dd>
+                        </dl>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="p-5">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <i class="fas fa-dollar-sign text-green-600 text-2xl"></i>
+                    </div>
+                    <div class="ml-5 w-0 flex-1">
+                        <dl>
+                            <dt class="text-sm font-medium text-gray-500 truncate">
+                                Общий объем
+                            </dt>
+                            <dd class="text-lg font-medium text-gray-900">
+                                ${{ "{:,.0f}".format(trading_stats.total_volume) }}
+                            </dd>
+                        </dl>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="p-5">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <i class="fas fa-coins text-yellow-600 text-2xl"></i>
+                    </div>
+                    <div class="ml-5 w-0 flex-1">
+                        <dl>
+                            <dt class="text-sm font-medium text-gray-500 truncate">
+                                Активов
+                            </dt>
+                            <dd class="text-lg font-medium text-gray-900">
+                                {{ trading_stats.total_assets }}
+                            </dd>
+                        </dl>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="p-5">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <i class="fas fa-chart-line text-purple-600 text-2xl"></i>
+                    </div>
+                    <div class="ml-5 w-0 flex-1">
+                        <dl>
+                            <dt class="text-sm font-medium text-gray-500 truncate">
+                                Средняя сделка
+                            </dt>
+                            <dd class="text-lg font-medium text-gray-900">
+                                ${{ "{:,.0f}".format(trading_stats.avg_trade_size) }}
+                            </dd>
+                        </dl>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- График чистых потоков -->
+    <div class="bg-white shadow rounded-lg mb-6">
+        <div class="px-4 py-5 sm:p-6">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">
+                <i class="fas fa-chart-bar text-green-600 mr-2"></i>
+                Чистые потоки капитала (Покупки - Продажи)
+            </h3>
+            
+            {% if trading_data %}
+                <div class="relative" style="height: 600px;">
+                    <canvas id="netFlowChart"></canvas>
+                </div>
+                
+                <!-- Легенда -->
+                <div class="mt-4 flex justify-center space-x-6">
+                    <div class="flex items-center">
+                        <div class="w-4 h-4 bg-green-500 rounded mr-2"></div>
+                        <span class="text-sm text-gray-600">Положительный поток (покупки > продажи)</span>
+                    </div>
+                    <div class="flex items-center">
+                        <div class="w-4 h-4 bg-red-500 rounded mr-2"></div>
+                        <span class="text-sm text-gray-600">Отрицательный поток (продажи > покупки)</span>
+                    </div>
+                </div>
+            {% else %}
+                <div class="text-center py-12">
+                    <i class="fas fa-chart-bar text-gray-400 text-4xl mb-4"></i>
+                    <p class="text-gray-500">Нет данных для отображения</p>
+                    <p class="text-sm text-gray-400 mt-2">Попробуйте изменить фильтры</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Детальная таблица -->
+    {% if trading_data %}
+    <div class="bg-white shadow rounded-lg">
+        <div class="px-4 py-5 sm:p-6">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">
+                <i class="fas fa-table text-blue-600 mr-2"></i>
+                Детальные данные по активам
+            </h3>
+            
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Актив
+                            </th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Покупки ($)
+                            </th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Продажи ($)
+                            </th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Чистый поток ($)
+                            </th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Сделок
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        {% for item in trading_data %}
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                {{ item.base_asset }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-green-600">
+                                ${{ "{:,.0f}".format(item.total_buys) }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-red-600">
+                                ${{ "{:,.0f}".format(item.total_sells) }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm {% if item.net_flow >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                                {% if item.net_flow >= 0 %}+{% endif %}${{ "{:,.0f}".format(item.net_flow) }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {{ item.total_trades }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Данные для графика
+    const tradingData = {{ trading_data | tojson }};
+    
+    if (tradingData && tradingData.length > 0) {
+        // Подготовка данных для Chart.js
+        const labels = tradingData.map(item => item.base_asset);
+        const netFlows = tradingData.map(item => item.net_flow);
+        const backgroundColors = netFlows.map(flow => flow >= 0 ? '#10B981' : '#EF4444');
+        
+        // Создание графика
+        const ctx = document.getElementById('netFlowChart').getContext('2d');
+        const chart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Чистый поток ($)',
+                    data: netFlows,
+                    backgroundColor: backgroundColors,
+                    borderColor: backgroundColors,
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                indexAxis: 'y', // Горизонтальный график
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Чистые потоки капитала по активам'
+                    },
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const item = tradingData[context.dataIndex];
+                                return [
+                                    `Чистый поток: $${context.parsed.x.toLocaleString()}`,
+                                    `Покупки: $${item.total_buys.toLocaleString()}`,
+                                    `Продажи: $${item.total_sells.toLocaleString()}`,
+                                    `Сделок: ${item.total_trades}`
+                                ];
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return '$' + value.toLocaleString();
+                            }
+                        }
+                    },
+                    y: {
+                        ticks: {
+                            font: {
+                                size: 12
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    // Автообновление каждые 30 секунд
+    let autoRefreshInterval;
+    
+    function startAutoRefresh() {
+        autoRefreshInterval = setInterval(function() {
+            const refreshBtn = document.getElementById('refreshBtn');
+            if (refreshBtn) {
+                refreshBtn.click();
+            }
+        }, 30000);
+    }
+    
+    function stopAutoRefresh() {
+        if (autoRefreshInterval) {
+            clearInterval(autoRefreshInterval);
+        }
+    }
+    
+    // Обработчик кнопки обновления
+    document.getElementById('refreshBtn').addEventListener('click', function() {
+        const form = document.getElementById('filterForm');
+        const formData = new FormData(form);
+        const params = new URLSearchParams(formData);
+        
+        // Показываем индикатор загрузки
+        this.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Обновление...';
+        this.disabled = true;
+        
+        // Отправляем AJAX запрос
+        fetch('/api/dashboard-data?' + params.toString())
+            .then(response => response.json())
+            .then(data => {
+                if (data.trading_data) {
+                    // Обновляем данные и перезагружаем страницу
+                    window.location.reload();
+                }
+            })
+            .catch(error => {
+                console.error('Ошибка при обновлении данных:', error);
+            })
+            .finally(() => {
+                this.innerHTML = '<i class="fas fa-sync-alt mr-1"></i>Обновить';
+                this.disabled = false;
+            });
+    });
+    
+    // Запускаем автообновление
+    startAutoRefresh();
+    
+    // Останавливаем автообновление при уходе со страницы
+    window.addEventListener('beforeunload', stopAutoRefresh);
+});
+</script>
+{% endblock %}

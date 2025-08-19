@@ -1,0 +1,711 @@
+<!-- templates/signal_performance.html -->
+{% extends "base.html" %}
+
+{% block title %}Эффективность сигналов - Помощник Трейдера{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+
+    <!-- Панель фильтров -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h2 class="text-xl font-bold text-gray-800 mb-4">
+            <i class="fas fa-filter mr-2 text-blue-600"></i>
+            Фильтры и настройки
+        </h2>
+
+        <!-- Разделяем фильтры по типам -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+            <!-- ВИЗУАЛЬНЫЕ ФИЛЬТРЫ (применяются мгновенно) -->
+            <div class="border-l-4 border-blue-500 pl-4">
+                <h3 class="font-semibold text-gray-700 mb-3">Фильтры отображения</h3>
+
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            Скрыть младше (часов)
+                        </label>
+                        <input type="number" id="hideYounger"
+                               value="{{ filters.hide_younger_than_hours }}"
+                               min="0" max="48" step="1"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            Скрыть старше (часов)
+                        </label>
+                        <input type="number" id="hideOlder"
+                               value="{{ filters.hide_older_than_hours }}"
+                               min="1" max="168" step="1"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    </div>
+
+                    <button onclick="applyTimeFilters()"
+                            class="w-full bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-md text-sm">
+                        <i class="fas fa-clock mr-1"></i>
+                        Применить
+                    </button>
+                </div>
+            </div>
+
+            <!-- ПАРАМЕТРЫ РАСЧЕТА (требуют переинициализации) -->
+            <div class="border-l-4 border-red-500 pl-4">
+                <h3 class="font-semibold text-gray-700 mb-3">Параметры торговли</h3>
+
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            Stop Loss (%)
+                        </label>
+                        <input type="number" id="stopLoss"
+                               value="{{ filters.stop_loss_percent }}"
+                               min="0.5" max="10" step="0.5"
+                               onchange="showReinitWarning()"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            Take Profit (%)
+                        </label>
+                        <input type="number" id="takeProfit"
+                               value="{{ filters.take_profit_percent }}"
+                               min="1" max="20" step="0.5"
+                               onchange="showReinitWarning()"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    </div>
+
+                    <div id="reinitWarning" class="hidden bg-red-50 p-2 rounded text-sm text-red-700">
+                        <i class="fas fa-exclamation-triangle mr-1"></i>
+                        Требуется переинициализация!
+                    </div>
+
+                    {% if current_user.is_admin %}
+                    <button onclick="reinitializeWithParams()"
+                            class="w-full bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-md text-sm">
+                        <i class="fas fa-sync-alt mr-1"></i>
+                        Переинициализировать
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- LEVERAGE  -->
+            <!-- LEVERAGE и POSITION SIZE (пересчет на лету) -->
+            <div class="border-l-4 border-green-500 pl-4">
+                <h3 class="font-semibold text-gray-700 mb-3">Параметры расчета</h3>
+
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            Leverage (x)
+                        </label>
+                        <input type="number" id="leverage"
+                               value="{{ filters.leverage }}"
+                               min="1" max="20" step="1"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            Размер позиции ($)
+                        </label>
+                        <input type="number" id="positionSize"
+                               value="{{ filters.position_size_usd }}"
+                               min="10" max="1000" step="10"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    </div>
+
+                    <!-- Две кнопки с разным функционалом -->
+                    <div class="flex space-x-2">
+                        <button onclick="applyCalculationParams()"
+                                class="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-md text-sm">
+                            <i class="fas fa-calculator mr-1"></i>
+                            Применить
+                        </button>
+
+                        <button onclick="saveCalculationParams()"
+                                class="flex-1 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-md text-sm">
+                            <i class="fas fa-save mr-1"></i>
+                            Сохранить
+                        </button>
+                    </div>
+
+                    <!-- Индикатор несохраненных изменений -->
+                    <div id="unsavedIndicator" class="hidden text-xs text-orange-600">
+                        <i class="fas fa-exclamation-circle mr-1"></i>
+                        Изменения не сохранены
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Статистика -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h2 class="text-xl font-bold text-gray-800 mb-4">
+            <i class="fas fa-chart-bar mr-2 text-blue-600"></i>
+            Статистика (с учетом фильтров)
+        </h2>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            <div class="bg-blue-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600">Всего в БД</div>
+                <div class="text-xl font-bold text-blue-600">{{ total_stats.total_all }}</div>
+            </div>
+            <div class="bg-purple-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600">Показано</div>
+                <div class="text-xl font-bold text-purple-600">{{ stats.total }}</div>
+            </div>
+            <div class="bg-green-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600">Открытых</div>
+                <div class="text-xl font-bold text-green-600">{{ stats.open }}</div>
+            </div>
+            <div class="bg-emerald-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600">По TP</div>
+                <div class="text-xl font-bold text-emerald-600">{{ stats.closed_tp }}</div>
+            </div>
+            <div class="bg-red-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600">По SL</div>
+                <div class="text-xl font-bold text-red-600">{{ stats.closed_sl }}</div>
+            </div>
+            <div class="{% if stats.total_pnl >= 0 %}bg-green-50{% else %}bg-red-50{% endif %} p-3 rounded-lg">
+                <div class="text-xs text-gray-600">P&L</div>
+                <div class="text-xl font-bold {% if stats.total_pnl >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                    {% if stats.total_pnl >= 0 %}+{% endif %}${{ "%.2f"|format(stats.total_pnl) }}
+                </div>
+            </div>
+        </div>
+
+        {% if stats.closed_tp + stats.closed_sl > 0 %}
+        <div class="mt-4 bg-blue-100 p-3 rounded-lg">
+            <span class="text-sm text-gray-700">Win Rate: </span>
+            <span class="text-lg font-bold text-blue-700">{{ "%.1f"|format(stats.win_rate) }}%</span>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- В templates/signal_performance.html добавляем новый блок после основной статистики -->
+
+    <!-- Статистика эффективности (новый блок) -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h2 class="text-xl font-bold text-gray-800 mb-4">
+            <i class="fas fa-chart-line mr-2 text-purple-600"></i>
+            Анализ эффективности стратегии
+        </h2>
+
+        <!-- Основные показатели эффективности -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+
+            <!-- Эффективность Take Profit -->
+            <div class="bg-gradient-to-br from-blue-50 to-indigo-100 p-4 rounded-lg">
+                <div class="flex justify-between items-start mb-3">
+                    <div>
+                        <h3 class="text-sm font-medium text-gray-700">Эффективность TP</h3>
+                        <p class="text-2xl font-bold text-indigo-700 mt-1">
+                            {{ "%.1f"|format(efficiency.tp_efficiency) }}%
+                        </p>
+                    </div>
+                    <div class="text-indigo-600">
+                        <i class="fas fa-bullseye text-2xl"></i>
+                    </div>
+                </div>
+                <div class="text-xs text-gray-600 space-y-1">
+                    <!-- ИЗМЕНЕНО: более понятные названия -->
+                    <div>Прибыль от TP: <span class="font-semibold text-green-700">${{ "%.2f"|format(efficiency.tp_realized_profit) }}</span>
+                    </div>
+                    <div>Макс возможный: <span class="font-semibold text-blue-700">${{ "%.2f"|format(efficiency.tp_max_potential) }}</span>
+                    </div>
+                    <div>Упущено по TP: <span class="font-semibold text-orange-600">${{ "%.2f"|format(efficiency.missed_profit) }}</span>
+                    </div>
+                </div>
+            </div>
+            <!-- Win Rate -->
+            <div class="bg-gradient-to-br from-green-50 to-emerald-100 p-4 rounded-lg">
+                <div class="flex justify-between items-start mb-3">
+                    <div>
+                        <h3 class="text-sm font-medium text-gray-700">Win Rate</h3>
+                        <p class="text-2xl font-bold text-emerald-700 mt-1">
+                            {{ "%.1f"|format(efficiency.win_rate) }}%
+                        </p>
+                    </div>
+                    <div class="text-emerald-600">
+                        <i class="fas fa-trophy text-2xl"></i>
+                    </div>
+                </div>
+                <div class="text-xs text-gray-600 space-y-1">
+                    <div>Прибыльных: <span class="font-semibold text-green-700">{{ efficiency.closed_tp }}</span></div>
+                    <div>Убыточных: <span class="font-semibold text-red-700">{{ efficiency.closed_sl }}</span></div>
+                    <div>Ср. TP: <span class="font-semibold">{{ "%.2f"|format(efficiency.avg_tp_percent) }}%</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Общая эффективность -->
+            <div class="bg-gradient-to-br from-purple-50 to-pink-100 p-4 rounded-lg">
+                <div class="flex justify-between items-start mb-3">
+                    <div>
+                        <h3 class="text-sm font-medium text-gray-700">Общая эффективность</h3>
+                        <p class="text-2xl font-bold text-purple-700 mt-1">
+                            {{ "%.1f"|format(efficiency.overall_efficiency) }}%
+                        </p>
+                    </div>
+                    <div class="text-purple-600">
+                        <i class="fas fa-rocket text-2xl"></i>
+                    </div>
+                </div>
+                <div class="text-xs text-gray-600 space-y-1">
+                    <div>Чистая прибыль: <span
+                            class="font-semibold {% if efficiency.net_realized_pnl >= 0 %}text-green-700{% else %}text-red-700{% endif %}">
+                    ${{ "%.2f"|format(efficiency.net_realized_pnl) }}
+                </span></div>
+                    <div>Потенциал: <span class="font-semibold text-blue-700">${{ "%.2f"|format(efficiency.total_max_potential) }}</span>
+                    </div>
+                    <div>Открытых P&L: <span class="font-semibold">
+                    ${{ "%.2f"|format(efficiency.unrealized_pnl) }}
+                </span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Визуализация эффективности -->
+        <div class="border-t pt-4">
+            <div class="flex items-center justify-between">
+                <div class="text-sm text-gray-600">
+                    <i class="fas fa-info-circle mr-1"></i>
+                    Эффективность показывает, какую часть от максимально возможного профита удается реализовать
+                </div>
+                <div class="flex items-center space-x-4">
+                    {% if efficiency.tp_efficiency < 50 %}
+                    <span class="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">
+                    <i class="fas fa-exclamation-triangle mr-1"></i>
+                    Низкая эффективность TP
+                </span>
+                    {% elif efficiency.tp_efficiency < 70 %}
+                    <span class="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded">
+                    <i class="fas fa-exclamation mr-1"></i>
+                    Средняя эффективность TP
+                </span>
+                    {% else %}
+                    <span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
+                    <i class="fas fa-check-circle mr-1"></i>
+                    Хорошая эффективность TP
+                </span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Прогресс-бар эффективности -->
+            <div class="mt-4">
+                <div class="flex justify-between text-xs text-gray-600 mb-1">
+                    <span>Реализованный профит</span>
+                    <span>{{ "%.1f"|format(efficiency.tp_efficiency) }}% от максимума</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-3 relative">
+                    <div class="bg-gradient-to-r from-indigo-500 to-purple-600 h-3 rounded-full"
+                         style="width: {{ efficiency.tp_efficiency }}%"></div>
+                    <div class="absolute inset-0 flex items-center justify-center">
+                    <span class="text-xs font-semibold text-white drop-shadow">
+                        ${{ "%.0f"|format(efficiency.tp_realized_profit) }} / ${{ "%.0f"|format(efficiency.tp_max_potential) }}
+                    </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Добавьте после блока статистики эффективности -->
+    <div class="mt-4 bg-blue-50 p-3 rounded-lg">
+        <div class="text-xs text-gray-700">
+            <i class="fas fa-info-circle mr-1"></i>
+            <strong>Расшифровка метрик:</strong>
+            <ul class="mt-1 space-y-1">
+                <li>• <strong>P&L ({% if efficiency.total_pnl >= 0 %}+{% endif %}${{ "%.2f"|format(efficiency.total_pnl)
+                    }})</strong> =
+                    Прибыль TP (${{ "%.2f"|format(efficiency.tp_realized_profit) }}) -
+                    Убытки SL (${{ "%.2f"|format(efficiency.sl_realized_loss) }}) +
+                    Открытые (${{ "%.2f"|format(efficiency.unrealized_pnl) }})
+                </li>
+                <li>• <strong>Чистая прибыль (${{ "%.2f"|format(efficiency.net_realized_pnl) }})</strong> =
+                    Только закрытые позиции (TP - SL)
+                </li>
+                <li>• <strong>Эффективность TP</strong> =
+                    Сколько % от максимально возможного профита мы забираем по Take Profit
+                </li>
+            </ul>
+        </div>
+    </div>
+    <!-- Добавляем после блока эффективности -->
+    {% if efficiency.tp_efficiency < 60 %}
+    <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6">
+        <div class="flex">
+            <div class="flex-shrink-0">
+                <i class="fas fa-lightbulb text-yellow-400"></i>
+            </div>
+            <div class="ml-3">
+                <h3 class="text-sm font-medium text-yellow-800">
+                    Рекомендации по улучшению эффективности
+                </h3>
+                <div class="mt-2 text-sm text-yellow-700">
+                    <ul class="list-disc list-inside space-y-1">
+                        <li>Текущий TP ({{ filters.take_profit_percent }}%) забирает только {{
+                            "%.1f"|format(efficiency.tp_efficiency) }}% возможного профита
+                        </li>
+                        <li>Рассмотрите увеличение TP до 5-6% для захвата большего движения</li>
+                        <li>Или используйте trailing stop для следования за трендом</li>
+                        <li>Упущенный профит составляет ${{ "%.2f"|format(efficiency.missed_profit) }}</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Таблица сигналов -->
+    <div class="bg-white rounded-lg shadow-lg overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 flex justify-between">
+            <h2 class="text-lg font-semibold text-gray-800">
+                <i class="fas fa-list mr-2"></i>
+                Сигналы
+            </h2>
+            <span class="text-sm text-gray-600">
+                Автообновление каждую минуту
+            </span>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Пара</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Тип</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Возраст</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Вход</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Текущая</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">P&L ($)</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">P&L (%)</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Макс</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Статус</th>
+                </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                {% for signal in signals %}
+                <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ signal.pair_symbol }}</td>
+                    <td class="px-4 py-3 text-sm">
+                            <span class="px-2 py-1 text-xs rounded-full
+                                {% if signal.signal_action in ['SELL', 'SHORT'] %}bg-red-100 text-red-800
+                                {% else %}bg-green-100 text-green-800{% endif %}">
+                                {{ signal.signal_action }}
+                            </span>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-500">{{ signal.age_hours }}ч</td>
+                    <td class="px-4 py-3 text-sm text-gray-900">{{ "%.8f"|format(signal.entry_price) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-900">
+                        {% if signal.current_price %}
+                        {{ "%.8f"|format(signal.current_price) }}
+                        {% else %}
+                        -
+                        {% endif %}
+                    </td>
+                    <td class="px-4 py-3 text-sm font-medium pnl-value
+                            {% if signal.pnl_usd >= 0 %}text-green-600{% else %}text-red-600{% endif %}"
+                        data-base="{{ signal.pnl_usd }}">
+                        {% if signal.pnl_usd >= 0 %}+{% endif %}{{ "%.2f"|format(signal.pnl_usd) }}
+                    </td>
+                    <td class="px-4 py-3 text-sm
+                            {% if signal.pnl_percent >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                        {% if signal.pnl_percent >= 0 %}+{% endif %}{{ "%.2f"|format(signal.pnl_percent) }}%
+                    </td>
+                    <td class="px-4 py-3 text-sm text-blue-600 max-profit-value"
+                        data-base="{{ signal.max_potential_profit_usd }}">
+                        {% if signal.max_potential_profit_usd > 0 %}
+                        ${{ "%.2f"|format(signal.max_potential_profit_usd) }}
+                        {% else %}
+                        -
+                        {% endif %}
+                    </td>
+                    <td class="px-4 py-3 text-sm">
+                        {% if signal.is_closed %}
+                        <span class="px-2 py-1 text-xs rounded-full
+                                    {% if signal.close_reason == 'stop_loss' %}bg-red-100 text-red-800
+                                    {% elif signal.close_reason == 'take_profit' %}bg-green-100 text-green-800
+                                    {% else %}bg-gray-100 text-gray-800{% endif %}">
+                                    {{ signal.close_reason|upper|replace('_', ' ') }}
+                                </span>
+                        {% else %}
+                        <span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">
+                                    ОТКРЫТА
+                                </span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="mt-4 text-center text-sm text-gray-600">
+        <i class="fas fa-info-circle mr-1"></i>
+        Последнее обновление: {{ last_update.strftime('%H:%M:%S') }}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Автообновление страницы каждую минуту
+setTimeout(() => location.reload(), 60000);
+
+// Применение временных фильтров (для времени, leverage и position_size)
+function applyTimeFilters() {
+    const params = new URLSearchParams({
+        hide_younger: document.getElementById('hideYounger').value,
+        hide_older: document.getElementById('hideOlder').value,
+        leverage: document.getElementById('leverage').value,
+        position_size: document.getElementById('positionSize').value
+    });
+    window.location.href = '/signal_performance?' + params.toString();
+}
+
+// Применение параметров расчета (leverage и position_size)
+function applyCalculationParams() {
+    const params = new URLSearchParams({
+        hide_younger: document.getElementById('hideYounger').value,
+        hide_older: document.getElementById('hideOlder').value,
+        leverage: document.getElementById('leverage').value,
+        position_size: document.getElementById('positionSize').value
+    });
+    window.location.href = '/signal_performance?' + params.toString();
+}
+
+// Показать предупреждение при изменении TP/SL
+function showReinitWarning() {
+    document.getElementById('reinitWarning').classList.remove('hidden');
+}
+
+// Переинициализация с новыми параметрами TP/SL
+function reinitializeWithParams() {
+    const tp = parseFloat(document.getElementById('takeProfit').value);
+    const sl = parseFloat(document.getElementById('stopLoss').value);
+
+    if (!confirm(`Переинициализировать систему с параметрами:\nTP: ${tp}%\nSL: ${sl}%\n\nЭто удалит все текущие данные!`)) {
+        return;
+    }
+
+    const button = event.target.closest('button');
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Инициализация...';
+
+    fetch('/api/initialize_signals', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            take_profit: tp,
+            stop_loss: sl,
+            hours: 48
+        })
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.status === 'success') {
+            alert(result.message);
+            location.reload();
+        } else {
+            alert('Ошибка: ' + result.message);
+            button.disabled = false;
+            button.innerHTML = '<i class="fas fa-sync-alt mr-1"></i>Переинициализировать';
+        }
+    })
+    .catch(error => {
+        alert('Ошибка сети: ' + error);
+        button.disabled = false;
+        button.innerHTML = '<i class="fas fa-sync-alt mr-1"></i>Переинициализировать';
+    });
+}
+
+// Сохранение параметров в БД
+function saveCalculationParams() {
+    const data = {
+        hide_younger_than_hours: parseInt(document.getElementById('hideYounger').value),
+        hide_older_than_hours: parseInt(document.getElementById('hideOlder').value),
+        leverage: parseInt(document.getElementById('leverage').value),
+        position_size_usd: parseFloat(document.getElementById('positionSize').value)
+    };
+
+    // Показываем индикатор загрузки
+    const button = event.target.closest('button');
+    const originalHTML = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Сохранение...';
+
+    fetch('/api/save_filters', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.status === 'success') {
+            showNotification('Параметры сохранены', 'success');
+            // Скрыть индикатор несохраненных изменений
+            const indicator = document.getElementById('unsavedIndicator');
+            if (indicator) {
+                indicator.classList.add('hidden');
+            }
+            // Обновляем сохраненные значения
+            if (window.savedValues) {
+                window.savedValues.leverage = data.leverage;
+                window.savedValues.positionSize = data.position_size_usd;
+            }
+        } else {
+            showNotification('Ошибка сохранения', 'error');
+        }
+    })
+    .catch(error => {
+        showNotification('Ошибка сети: ' + error, 'error');
+    })
+    .finally(() => {
+        button.disabled = false;
+        button.innerHTML = originalHTML;
+    });
+}
+
+// Функция показа уведомлений
+function showNotification(message, type) {
+    const notification = document.createElement('div');
+    notification.className = `fixed top-4 right-4 px-6 py-4 rounded-lg shadow-lg transition-all duration-500 z-50 ${
+        type === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'
+    }`;
+    notification.innerHTML = `
+        <div class="flex items-center">
+            <i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'} mr-3"></i>
+            <span>${message}</span>
+        </div>
+    `;
+
+    document.body.appendChild(notification);
+
+    setTimeout(() => {
+        notification.style.opacity = '0';
+        setTimeout(() => notification.remove(), 500);
+    }, 3000);
+}
+
+// Отслеживание изменений для показа индикатора несохраненных изменений
+document.addEventListener('DOMContentLoaded', function() {
+    // Сохраняем оригинальные значения
+    window.savedValues = {
+        leverage: {{ filters.saved_leverage|default(5) }},
+        positionSize: {{ filters.saved_position_size|default(100) }},
+        hideYounger: {{ filters.hide_younger_than_hours|default(6) }},
+        hideOlder: {{ filters.hide_older_than_hours|default(48) }}
+    };
+
+    // Элементы формы
+    const leverageInput = document.getElementById('leverage');
+    const positionSizeInput = document.getElementById('positionSize');
+    const hideYoungerInput = document.getElementById('hideYounger');
+    const hideOlderInput = document.getElementById('hideOlder');
+    const indicator = document.getElementById('unsavedIndicator');
+
+    // Функция проверки изменений
+    function checkChanges() {
+        if (!indicator) return;
+
+        const currentLeverage = parseInt(leverageInput.value);
+        const currentPositionSize = parseFloat(positionSizeInput.value);
+        const currentHideYounger = parseInt(hideYoungerInput.value);
+        const currentHideOlder = parseInt(hideOlderInput.value);
+
+        const hasChanges =
+            currentLeverage !== window.savedValues.leverage ||
+            currentPositionSize !== window.savedValues.positionSize ||
+            currentHideYounger !== window.savedValues.hideYounger ||
+            currentHideOlder !== window.savedValues.hideOlder;
+
+        if (hasChanges) {
+            indicator.classList.remove('hidden');
+        } else {
+            indicator.classList.add('hidden');
+        }
+    }
+
+    // Добавляем слушатели событий
+    if (leverageInput) leverageInput.addEventListener('input', checkChanges);
+    if (positionSizeInput) positionSizeInput.addEventListener('input', checkChanges);
+    if (hideYoungerInput) hideYoungerInput.addEventListener('input', checkChanges);
+    if (hideOlderInput) hideOlderInput.addEventListener('input', checkChanges);
+
+    // Обработка Enter в input полях
+    const allInputs = [leverageInput, positionSizeInput, hideYoungerInput, hideOlderInput];
+    allInputs.forEach(input => {
+        if (input) {
+            input.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    applyCalculationParams();
+                }
+            });
+        }
+    });
+
+    // Добавляем подсказки при наведении на кнопки
+    const applyButton = document.querySelector('button[onclick*="applyCalculationParams"]');
+    const saveButton = document.querySelector('button[onclick*="saveCalculationParams"]');
+
+    if (applyButton) {
+        applyButton.title = 'Применить параметры для текущего просмотра';
+    }
+    if (saveButton) {
+        saveButton.title = 'Сохранить параметры как настройки по умолчанию';
+    }
+});
+
+// Вспомогательная функция для форматирования чисел
+function formatNumber(num, decimals = 2) {
+    return new Intl.NumberFormat('en-US', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+    }).format(num);
+}
+
+// Экспорт данных в CSV (если понадобится)
+function exportToCSV() {
+    const table = document.querySelector('table');
+    if (!table) {
+        showNotification('Нет данных для экспорта', 'error');
+        return;
+    }
+
+    let csv = [];
+    const rows = table.querySelectorAll('tr');
+
+    for (let i = 0; i < rows.length; i++) {
+        const row = [];
+        const cols = rows[i].querySelectorAll('td, th');
+
+        for (let j = 0; j < cols.length; j++) {
+            row.push(cols[j].innerText);
+        }
+
+        csv.push(row.join(','));
+    }
+
+    const csvContent = csv.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.setAttribute('hidden', '');
+    a.setAttribute('href', url);
+    a.setAttribute('download', `signals_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
+
+// Проверяем соединение каждые 30 секунд
+setInterval(checkConnection, 30000);
+</script>
+{% endblock %}
