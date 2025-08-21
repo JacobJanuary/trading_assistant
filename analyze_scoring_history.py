@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Параметры подключения к БД
 DB_CONFIG = {
-    'host': '10.8.0.1',
+    'host': 'localhost',
     'port': 5432,
     'dbname': 'fox_crypto',
     'user': 'elcrypto',
