@@ -2,6 +2,7 @@
 """
 Скрипт для анализа исторических данных скоринга
 Анализирует все сигналы старше 48 часов и сохраняет результаты в БД
+Version: 2.0 - Полностью переработанная логика
 """
 
 import os
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Параметры подключения к БД
 DB_CONFIG = {
-    'host': '10.8.0.1',
+    'host': 'localhost',
     'port': 5432,
     'dbname': 'fox_crypto',
     'user': 'elcrypto',
@@ -39,21 +40,8 @@ ANALYSIS_PARAMS = {
     'sl_percent': 3.0,
     'position_size': 100.0,
     'leverage': 5,
-    'analysis_hours': 48  # Анализируем 48 часов после сигнала
-}
-
-# Критерии определения сигналов
-SIGNAL_CRITERIA = {
-    'BUY': [
-        {'market': 'BULL', 'total_score_min': 30},
-        {'market': 'BULL', 'indicator_score_min': 40},
-        {'market': 'NEUTRAL', 'total_score_min': 50},
-    ],
-    'SELL': [
-        {'market': 'BEAR', 'total_score_max': -30},
-        {'market': 'BEAR', 'indicator_score_max': -40},
-        {'market': 'NEUTRAL', 'total_score_max': -50},
-    ]
+    'analysis_hours': 48,  # Анализируем 48 часов после сигнала
+    'entry_delay_minutes': 15  # Задержка входа после сигнала
 }
 
 
@@ -64,6 +52,7 @@ class ScoringAnalyzer:
         self.processed_count = 0
         self.error_count = 0
         self.new_signals_count = 0
+        self.skipped_count = 0
 
     def connect(self):
         """Подключение к БД"""
@@ -72,19 +61,19 @@ class ScoringAnalyzer:
                           f"dbname={self.db_config['dbname']} user={self.db_config['user']} " \
                           f"password={self.db_config['password']}"
             self.conn = psycopg.connect(conn_string, row_factory=dict_row)
-            logger.info("Успешное подключение к БД")
+            logger.info("✅ Успешное подключение к БД")
         except Exception as e:
-            logger.error(f"Ошибка подключения к БД: {e}")
+            logger.error(f"❌ Ошибка подключения к БД: {e}")
             raise
 
     def disconnect(self):
         """Отключение от БД"""
         if self.conn:
             self.conn.close()
-            logger.info("Отключение от БД")
+            logger.info("🔌 Отключение от БД")
 
     def get_unprocessed_signals(self) -> List[Dict]:
-        """Получение необработанных сигналов старше 48 часов"""
+        """Получение ВСЕХ необработанных сигналов старше 48 часов"""
         query = """
             SELECT 
                 sh.id as scoring_history_id,
@@ -118,104 +107,122 @@ class ScoringAnalyzer:
             cur.execute(query)
             signals = cur.fetchall()
 
-        logger.info(f"Найдено {len(signals)} необработанных сигналов")
+        logger.info(f"📊 Найдено {len(signals)} необработанных сигналов")
         return signals
 
     def determine_signal_type(self, signal: Dict) -> Tuple[str, str]:
-        """Определение типа сигнала на основе критериев"""
-        market_regime = signal.get('market_regime')
+        """
+        НОВАЯ ЛОГИКА: Определение типа сигнала ТОЛЬКО на основе total_score
+        ВСЕ сигналы обрабатываются!
+        """
         total_score = float(signal.get('total_score', 0))
-        indicator_score = float(signal.get('indicator_score', 0))
-        pattern_score = float(signal.get('pattern_score', 0))
 
-        # Проверяем критерии для BUY
-        for criteria in SIGNAL_CRITERIA['BUY']:
-            if 'market' in criteria and market_regime != criteria['market']:
-                continue
-            if 'total_score_min' in criteria and total_score < criteria['total_score_min']:
-                continue
-            if 'indicator_score_min' in criteria and indicator_score < criteria['indicator_score_min']:
-                continue
-            # Если все условия выполнены
-            return 'BUY', f"Market: {market_regime}, Total: {total_score:.1f}"
+        # КРИТИЧЕСКИ ВАЖНО: единственный критерий
+        if total_score >= 0:
+            return 'BUY', f"Total Score: {total_score:.1f}"
+        else:
+            return 'SELL', f"Total Score: {total_score:.1f}"
 
-        # Проверяем критерии для SELL
-        for criteria in SIGNAL_CRITERIA['SELL']:
-            if 'market' in criteria and market_regime != criteria['market']:
-                continue
-            if 'total_score_max' in criteria and total_score > criteria['total_score_max']:
-                continue
-            if 'indicator_score_max' in criteria and indicator_score > criteria['indicator_score_max']:
-                continue
-            # Если все условия выполнены
-            return 'SELL', f"Market: {market_regime}, Total: {total_score:.1f}"
+    def get_entry_price(self, trading_pair_id: int, signal_time: datetime,
+                        signal_type: str) -> Optional[Dict]:
+        """
+        Получение цены входа из первой свечи ПОСЛЕ signal_time + 15 минут
+        Используем fas.market_data_aggregated с timeframe='15m'
+        """
+        # ВАЖНО: добавляем 15 минут к времени сигнала
+        entry_time = signal_time + timedelta(minutes=ANALYSIS_PARAMS['entry_delay_minutes'])
 
-        return 'NO_SIGNAL', 'No criteria matched'
+        query = """
+            SELECT 
+                timestamp,
+                close_price,
+                high_price,
+                low_price
+            FROM fas.market_data_aggregated
+            WHERE trading_pair_id = %s
+                AND timeframe = '15m'
+                AND timestamp >= %s
+            ORDER BY timestamp ASC
+            LIMIT 1
+        """
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, (trading_pair_id, entry_time))
+                result = cur.fetchone()
+
+            if result:
+                # Для BUY используем high_price, для SELL - low_price
+                if signal_type == 'BUY':
+                    entry_price = float(result['high_price'])
+                else:  # SELL
+                    entry_price = float(result['low_price'])
+
+                return {
+                    'entry_price': entry_price,
+                    'entry_time': result['timestamp']
+                }
+            return None
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения цены входа: {e}")
+            return None
 
     def analyze_signal(self, signal: Dict) -> Optional[Dict]:
-        """Анализ одного сигнала"""
+        """Анализ одного сигнала с использованием новой логики"""
         try:
-            # Определяем тип сигнала
+            # ВСЕГДА определяем тип сигнала (теперь нет NO_SIGNAL)
             signal_type, signal_criteria = self.determine_signal_type(signal)
 
-            # Если нет сигнала, пропускаем
-            if signal_type == 'NO_SIGNAL':
+            # Получаем цену входа с учетом 15-минутной задержки
+            entry_data = self.get_entry_price(
+                signal['trading_pair_id'],
+                signal['signal_timestamp'],
+                signal_type
+            )
+
+            if not entry_data:
+                logger.warning(f"⚠️ Нет цены входа для {signal['pair_symbol']} @ {signal['signal_timestamp']}")
+                self.skipped_count += 1
                 return None
 
-            # Получаем цену входа
-            entry_price_query = """
-                SELECT mark_price
-                FROM public.market_data
-                WHERE trading_pair_id = %s
-                    AND capture_time >= %s - INTERVAL '5 minutes'
-                    AND capture_time <= %s + INTERVAL '5 minutes'
-                ORDER BY ABS(EXTRACT(EPOCH FROM (capture_time - %s))) ASC
-                LIMIT 1
-            """
+            entry_price = entry_data['entry_price']
+            actual_entry_time = entry_data['entry_time']
 
-            with self.conn.cursor() as cur:
-                cur.execute(entry_price_query, (
-                    signal['trading_pair_id'],
-                    signal['signal_timestamp'],
-                    signal['signal_timestamp'],
-                    signal['signal_timestamp']
-                ))
-                price_result = cur.fetchone()
-
-            if not price_result:
-                logger.warning(f"Нет цены входа для {signal['pair_symbol']} @ {signal['signal_timestamp']}")
-                return None
-
-            entry_price = float(price_result['mark_price'])
-
-            # Получаем историю цен за 48 часов
+            # Получаем историю цен из market_data_aggregated за 48 часов
             history_query = """
-                SELECT capture_time, mark_price
-                FROM public.market_data
+                SELECT 
+                    timestamp,
+                    close_price,
+                    high_price,
+                    low_price
+                FROM fas.market_data_aggregated
                 WHERE trading_pair_id = %s
-                    AND capture_time >= %s
-                    AND capture_time <= %s + INTERVAL '48 hours'
-                ORDER BY capture_time ASC
+                    AND timeframe = '15m'
+                    AND timestamp >= %s
+                    AND timestamp <= %s + INTERVAL '48 hours'
+                ORDER BY timestamp ASC
             """
 
             with self.conn.cursor() as cur:
                 cur.execute(history_query, (
                     signal['trading_pair_id'],
-                    signal['signal_timestamp'],
-                    signal['signal_timestamp']
+                    actual_entry_time,
+                    actual_entry_time
                 ))
                 history = cur.fetchall()
 
-            if not history:
-                logger.warning(f"Нет истории цен для {signal['pair_symbol']}")
+            if not history or len(history) < 10:  # Минимум 10 свечей для анализа
+                logger.warning(f"⚠️ Недостаточно истории для {signal['pair_symbol']}")
+                self.skipped_count += 1
                 return None
 
-            # Анализируем движение цены
+            # Анализируем движение цены с использованием high/low
             result = self.process_price_history(
                 signal_type,
                 entry_price,
                 history,
-                signal['signal_timestamp']
+                actual_entry_time
             )
 
             # Формируем результат
@@ -236,16 +243,27 @@ class ScoringAnalyzer:
             }
 
         except Exception as e:
-            logger.error(f"Ошибка анализа сигнала {signal['pair_symbol']}: {e}")
+            logger.error(f"❌ Ошибка анализа сигнала {signal['pair_symbol']}: {e}")
+            self.error_count += 1
             return None
 
     def process_price_history(self, signal_type: str, entry_price: float,
-                              history: List[Dict], signal_timestamp) -> Dict:
-        """Обработка истории цен для сигнала"""
+                              history: List[Dict], actual_entry_time) -> Dict:
+        """
+        Обработка истории цен с использованием high/low для реалистичного расчета
+        """
         tp_percent = ANALYSIS_PARAMS['tp_percent']
         sl_percent = ANALYSIS_PARAMS['sl_percent']
         position_size = ANALYSIS_PARAMS['position_size']
         leverage = ANALYSIS_PARAMS['leverage']
+
+        # Расчет уровней TP и SL
+        if signal_type == 'BUY':
+            tp_price = entry_price * (1 + tp_percent / 100)
+            sl_price = entry_price * (1 - sl_percent / 100)
+        else:  # SELL
+            tp_price = entry_price * (1 - tp_percent / 100)
+            sl_price = entry_price * (1 + sl_percent / 100)
 
         # Переменные для отслеживания
         is_closed = False
@@ -253,7 +271,7 @@ class ScoringAnalyzer:
         close_price = None
         close_time = None
         hours_to_close = None
-        is_win = None  # НОВАЯ ПЕРЕМЕННАЯ
+        is_win = None
 
         best_price = entry_price
         worst_price = entry_price
@@ -262,83 +280,108 @@ class ScoringAnalyzer:
         max_drawdown_percent = 0
         max_drawdown_usd = 0
 
-        # Анализируем каждую точку истории
-        for price_point in history:
-            current_price = float(price_point['mark_price'])
-            current_time = price_point['capture_time']
-            hours_passed = (current_time - signal_timestamp).total_seconds() / 3600
+        # Анализируем каждую свечу
+        for candle in history:
+            current_time = candle['timestamp']
+            hours_passed = (current_time - actual_entry_time).total_seconds() / 3600
 
-            # Обновляем лучшую и худшую цены
-            if signal_type == 'SELL':
-                if current_price < best_price:
-                    best_price = current_price
-                    temp_profit_percent = ((entry_price - best_price) / entry_price) * 100
-                    temp_profit_usd = position_size * (temp_profit_percent / 100) * leverage
-                    if temp_profit_usd > max_profit_usd:
-                        max_profit_percent = temp_profit_percent
-                        max_profit_usd = temp_profit_usd
+            # ВАЖНО: используем high/low для реалистичного анализа
+            high_price = float(candle['high_price'])
+            low_price = float(candle['low_price'])
+            close_price_candle = float(candle['close_price'])
 
-                if current_price > worst_price:
-                    worst_price = current_price
-                    temp_loss_percent = ((worst_price - entry_price) / entry_price) * 100
-                    temp_loss_usd = position_size * (temp_loss_percent / 100) * leverage
-                    if temp_loss_usd > max_drawdown_usd:
-                        max_drawdown_percent = temp_loss_percent
-                        max_drawdown_usd = temp_loss_usd
-            else:  # BUY
-                if current_price > best_price:
-                    best_price = current_price
+            # Обновляем экстремумы для статистики
+            if signal_type == 'BUY':
+                # Для BUY: лучшая цена - максимальная, худшая - минимальная
+                if high_price > best_price:
+                    best_price = high_price
                     temp_profit_percent = ((best_price - entry_price) / entry_price) * 100
                     temp_profit_usd = position_size * (temp_profit_percent / 100) * leverage
                     if temp_profit_usd > max_profit_usd:
                         max_profit_percent = temp_profit_percent
                         max_profit_usd = temp_profit_usd
 
-                if current_price < worst_price:
-                    worst_price = current_price
+                if low_price < worst_price:
+                    worst_price = low_price
                     temp_loss_percent = ((entry_price - worst_price) / entry_price) * 100
                     temp_loss_usd = position_size * (temp_loss_percent / 100) * leverage
                     if temp_loss_usd > max_drawdown_usd:
                         max_drawdown_percent = temp_loss_percent
                         max_drawdown_usd = temp_loss_usd
 
-            # Проверяем условия закрытия (только если еще не закрыта)
-            if not is_closed:
-                if signal_type == 'SELL':
-                    price_change_percent = ((entry_price - current_price) / entry_price) * 100
-                else:  # BUY
-                    price_change_percent = ((current_price - entry_price) / entry_price) * 100
+                # Проверка закрытия позиции (только если еще не закрыта)
+                if not is_closed:
+                    # Сначала проверяем SL (приоритет защиты капитала)
+                    if low_price <= sl_price:
+                        is_closed = True
+                        close_reason = 'stop_loss'
+                        is_win = False  # ПОРАЖЕНИЕ
+                        close_price = sl_price
+                        close_time = current_time
+                        hours_to_close = hours_passed
+                    # Затем проверяем TP
+                    elif high_price >= tp_price:
+                        is_closed = True
+                        close_reason = 'take_profit'
+                        is_win = True  # ПОБЕДА
+                        close_price = tp_price
+                        close_time = current_time
+                        hours_to_close = hours_passed
 
-                # Проверяем TP
-                if price_change_percent >= tp_percent:
-                    is_closed = True
-                    close_reason = 'take_profit'
-                    is_win = True  # ПОБЕДА!
-                    close_price = current_price
-                    close_time = current_time
-                    hours_to_close = hours_passed
-                # Проверяем SL
-                elif price_change_percent <= -sl_percent:
-                    is_closed = True
-                    close_reason = 'stop_loss'
-                    is_win = False  # ПОРАЖЕНИЕ!
-                    close_price = current_price
-                    close_time = current_time
-                    hours_to_close = hours_passed
+            else:  # SELL
+                # Для SELL: лучшая цена - минимальная, худшая - максимальная
+                if low_price < best_price:
+                    best_price = low_price
+                    temp_profit_percent = ((entry_price - best_price) / entry_price) * 100
+                    temp_profit_usd = position_size * (temp_profit_percent / 100) * leverage
+                    if temp_profit_usd > max_profit_usd:
+                        max_profit_percent = temp_profit_percent
+                        max_profit_usd = temp_profit_usd
+
+                if high_price > worst_price:
+                    worst_price = high_price
+                    temp_loss_percent = ((worst_price - entry_price) / entry_price) * 100
+                    temp_loss_usd = position_size * (temp_loss_percent / 100) * leverage
+                    if temp_loss_usd > max_drawdown_usd:
+                        max_drawdown_percent = temp_loss_percent
+                        max_drawdown_usd = temp_loss_usd
+
+                # Проверка закрытия позиции (только если еще не закрыта)
+                if not is_closed:
+                    # Сначала проверяем SL (приоритет защиты капитала)
+                    if high_price >= sl_price:
+                        is_closed = True
+                        close_reason = 'stop_loss'
+                        is_win = False  # ПОРАЖЕНИЕ
+                        close_price = sl_price
+                        close_time = current_time
+                        hours_to_close = hours_passed
+                    # Затем проверяем TP
+                    elif low_price <= tp_price:
+                        is_closed = True
+                        close_reason = 'take_profit'
+                        is_win = True  # ПОБЕДА
+                        close_price = tp_price
+                        close_time = current_time
+                        hours_to_close = hours_passed
+
+            # Прерываем если позиция закрыта
+            if is_closed:
+                break
 
         # Если не закрылась за 48 часов
         if not is_closed:
             is_closed = True
             close_reason = 'timeout'
-            is_win = None  # НЕ ОПРЕДЕЛЕНО (timeout)
-            close_price = float(history[-1]['mark_price'])
-            close_time = history[-1]['capture_time']
+            is_win = None  # НЕ ОПРЕДЕЛЕНО для timeout
+            close_price = float(history[-1]['close_price'])
+            close_time = history[-1]['timestamp']
             hours_to_close = 48.0
 
         # Рассчитываем финальный P&L
         if signal_type == 'SELL':
             final_pnl_percent = ((entry_price - close_price) / entry_price) * 100
-        else:
+        else:  # BUY
             final_pnl_percent = ((close_price - entry_price) / entry_price) * 100
 
         final_pnl_usd = position_size * (final_pnl_percent / 100) * leverage
@@ -349,7 +392,7 @@ class ScoringAnalyzer:
             'close_price': close_price,
             'is_closed': is_closed,
             'close_reason': close_reason,
-            'is_win': is_win,  # ДОБАВЛЯЕМ В РЕЗУЛЬТАТ
+            'is_win': is_win,
             'close_time': close_time,
             'hours_to_close': hours_to_close,
             'pnl_percent': final_pnl_percent,
@@ -362,11 +405,11 @@ class ScoringAnalyzer:
             'sl_percent': sl_percent,
             'position_size': position_size,
             'leverage': leverage,
-            'analysis_end_time': signal_timestamp + timedelta(hours=48)
+            'analysis_end_time': actual_entry_time + timedelta(hours=48)
         }
 
     def save_results(self, results: List[Dict]):
-        """Сохранение результатов в БД"""
+        """Сохранение результатов в БД с поддержкой is_win"""
         if not results:
             return
 
@@ -390,6 +433,7 @@ class ScoringAnalyzer:
             ON CONFLICT (scoring_history_id) DO NOTHING
         """
 
+        saved_count = 0
         with self.conn.cursor() as cur:
             for result in results:
                 try:
@@ -411,7 +455,7 @@ class ScoringAnalyzer:
                         result['close_price'],
                         result['is_closed'],
                         result['close_reason'],
-                        result['is_win'],  # ДОБАВЛЯЕМ is_win
+                        result['is_win'],  # Сохраняем is_win
                         result['close_time'],
                         result['hours_to_close'],
                         result['pnl_percent'],
@@ -426,59 +470,97 @@ class ScoringAnalyzer:
                         result['leverage'],
                         result['analysis_end_time']
                     ))
-                    self.new_signals_count += 1
+                    saved_count += 1
                 except Exception as e:
-                    logger.error(f"Ошибка сохранения результата: {e}")
+                    logger.error(f"❌ Ошибка сохранения результата для {result['pair_symbol']}: {e}")
                     self.error_count += 1
 
         self.conn.commit()
-        logger.info(f"Сохранено {self.new_signals_count} новых результатов")
+        self.new_signals_count += saved_count
+        logger.info(f"💾 Сохранено {saved_count} результатов из {len(results)}")
 
     def print_statistics(self):
-        """Вывод статистики по результатам"""
-        stats_query = """
-            SELECT 
-                COUNT(*) as total_signals,
-                COUNT(CASE WHEN signal_type = 'BUY' THEN 1 END) as buy_signals,
-                COUNT(CASE WHEN signal_type = 'SELL' THEN 1 END) as sell_signals,
-                COUNT(CASE WHEN close_reason = 'take_profit' THEN 1 END) as tp_count,
-                COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_count,
-                COUNT(CASE WHEN close_reason = 'timeout' THEN 1 END) as timeout_count,
-                AVG(pnl_usd) as avg_pnl,
-                SUM(pnl_usd) as total_pnl,
-                AVG(CASE WHEN close_reason = 'take_profit' THEN pnl_usd END) as avg_tp_profit,
-                AVG(CASE WHEN close_reason = 'stop_loss' THEN pnl_usd END) as avg_sl_loss,
-                AVG(max_potential_profit_usd) as avg_max_profit,
-                AVG(hours_to_close) FILTER (WHERE close_reason != 'timeout') as avg_hours_to_close
-            FROM web.scoring_history_results
-            WHERE processed_at >= NOW() - INTERVAL '1 day'
-        """
+        """Вывод расширенной статистики по результатам"""
+        try:
+            # Общая статистика
+            stats_query = """
+                SELECT 
+                    COUNT(*) as total_signals,
+                    COUNT(CASE WHEN signal_type = 'BUY' THEN 1 END) as buy_signals,
+                    COUNT(CASE WHEN signal_type = 'SELL' THEN 1 END) as sell_signals,
+                    COUNT(CASE WHEN is_win = true THEN 1 END) as wins,
+                    COUNT(CASE WHEN is_win = false THEN 1 END) as losses,
+                    COUNT(CASE WHEN is_win IS NULL THEN 1 END) as timeouts,
+                    AVG(pnl_usd) as avg_pnl,
+                    SUM(pnl_usd) as total_pnl,
+                    AVG(CASE WHEN is_win = true THEN pnl_usd END) as avg_win_profit,
+                    AVG(CASE WHEN is_win = false THEN pnl_usd END) as avg_loss,
+                    MAX(pnl_usd) as max_profit,
+                    MIN(pnl_usd) as max_loss,
+                    AVG(max_potential_profit_usd) as avg_max_potential,
+                    AVG(hours_to_close) FILTER (WHERE close_reason != 'timeout') as avg_hours_to_close
+                FROM web.scoring_history_results
+                WHERE processed_at >= NOW() - INTERVAL '1 day'
+            """
 
-        with self.conn.cursor() as cur:
-            cur.execute(stats_query)
-            stats = cur.fetchone()
+            with self.conn.cursor() as cur:
+                cur.execute(stats_query)
+                stats = cur.fetchone()
 
-        logger.info("=" * 60)
-        logger.info("СТАТИСТИКА ЗА ПОСЛЕДНИЕ 24 ЧАСА:")
-        logger.info(f"Всего сигналов: {stats['total_signals']}")
-        logger.info(f"BUY: {stats['buy_signals']}, SELL: {stats['sell_signals']}")
-        logger.info(f"TP: {stats['tp_count']}, SL: {stats['sl_count']}, Timeout: {stats['timeout_count']}")
+            logger.info("=" * 70)
+            logger.info("📊 СТАТИСТИКА ЗА ПОСЛЕДНИЕ 24 ЧАСА:")
+            logger.info("=" * 70)
 
-        if stats['tp_count'] + stats['sl_count'] > 0:
-            win_rate = stats['tp_count'] / (stats['tp_count'] + stats['sl_count']) * 100
-            logger.info(f"Win Rate: {win_rate:.1f}%")
+            if stats and stats['total_signals'] > 0:
+                logger.info(f"📈 Всего сигналов: {stats['total_signals']}")
+                logger.info(
+                    f"   ├─ BUY: {stats['buy_signals']} ({stats['buy_signals'] / stats['total_signals'] * 100:.1f}%)")
+                logger.info(
+                    f"   └─ SELL: {stats['sell_signals']} ({stats['sell_signals'] / stats['total_signals'] * 100:.1f}%)")
 
-        logger.info(f"Средний P&L: ${stats['avg_pnl']:.2f}")
-        logger.info(f"Общий P&L: ${stats['total_pnl']:.2f}")
-        logger.info(f"Средний профит на TP: ${stats['avg_tp_profit']:.2f}")
-        logger.info(f"Средний убыток на SL: ${stats['avg_sl_loss']:.2f}")
-        logger.info(f"Средний макс. профит: ${stats['avg_max_profit']:.2f}")
-        logger.info(f"Среднее время до закрытия: {stats['avg_hours_to_close']:.1f} часов")
-        logger.info("=" * 60)
+                logger.info(f"\n🎯 Результаты:")
+                logger.info(f"   ├─ Победы (TP): {stats['wins']}")
+                logger.info(f"   ├─ Поражения (SL): {stats['losses']}")
+                logger.info(f"   └─ Таймауты: {stats['timeouts']}")
+
+                if stats['wins'] and stats['losses']:
+                    win_rate = stats['wins'] / (stats['wins'] + stats['losses']) * 100
+                    logger.info(f"\n🏆 Win Rate: {win_rate:.1f}%")
+
+                    if stats['avg_win_profit'] and stats['avg_loss']:
+                        profit_factor = abs(stats['avg_win_profit'] / stats['avg_loss'])
+                        logger.info(f"📊 Profit Factor: {profit_factor:.2f}")
+
+                logger.info(f"\n💰 Финансовые показатели:")
+                logger.info(f"   ├─ Общий P&L: ${stats['total_pnl']:.2f}")
+                logger.info(f"   ├─ Средний P&L: ${stats['avg_pnl']:.2f}")
+                logger.info(f"   ├─ Средний профит (WIN): ${stats['avg_win_profit']:.2f}" if stats[
+                    'avg_win_profit'] else "   ├─ Средний профит (WIN): N/A")
+                logger.info(f"   ├─ Средний убыток (LOSS): ${stats['avg_loss']:.2f}" if stats[
+                    'avg_loss'] else "   ├─ Средний убыток (LOSS): N/A")
+                logger.info(f"   ├─ Максимальный профит: ${stats['max_profit']:.2f}" if stats[
+                    'max_profit'] else "   ├─ Максимальный профит: N/A")
+                logger.info(f"   └─ Максимальный убыток: ${stats['max_loss']:.2f}" if stats[
+                    'max_loss'] else "   └─ Максимальный убыток: N/A")
+
+                if stats['avg_hours_to_close']:
+                    logger.info(f"\n⏱️ Среднее время до закрытия: {stats['avg_hours_to_close']:.1f} часов")
+
+                logger.info(f"\n📈 Средний макс. потенциал: ${stats['avg_max_potential']:.2f}" if stats[
+                    'avg_max_potential'] else "\n📈 Средний макс. потенциал: N/A")
+            else:
+                logger.info("Нет данных для отображения статистики")
+
+            logger.info("=" * 70)
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка при выводе статистики: {e}")
 
     def run(self):
         """Основной процесс анализа"""
-        logger.info("Начало анализа исторических данных скоринга")
+        start_time = datetime.now()
+        logger.info("🚀 Начало анализа исторических данных скоринга")
+        logger.info(f"📅 Время запуска: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
         try:
             self.connect()
@@ -487,22 +569,25 @@ class ScoringAnalyzer:
             signals = self.get_unprocessed_signals()
 
             if not signals:
-                logger.info("Нет новых сигналов для обработки")
+                logger.info("✅ Нет новых сигналов для обработки")
                 return
 
             # Анализируем сигналы
             results = []
+            batch_size = 100
+
             for i, signal in enumerate(signals):
-                if i % 100 == 0:
-                    logger.info(f"Обработано {i}/{len(signals)} сигналов...")
+                if i % 100 == 0 and i > 0:
+                    progress = (i / len(signals)) * 100
+                    logger.info(f"⏳ Обработано {i}/{len(signals)} сигналов ({progress:.1f}%)...")
 
                 result = self.analyze_signal(signal)
                 if result:
                     results.append(result)
                     self.processed_count += 1
 
-                # Сохраняем пачками по 100
-                if len(results) >= 100:
+                # Сохраняем пачками
+                if len(results) >= batch_size:
                     self.save_results(results)
                     results = []
 
@@ -510,15 +595,29 @@ class ScoringAnalyzer:
             if results:
                 self.save_results(results)
 
-            # Выводим статистику
-            logger.info(f"\nОбработано сигналов: {self.processed_count}")
-            logger.info(f"Сохранено новых результатов: {self.new_signals_count}")
-            logger.info(f"Ошибок: {self.error_count}")
+            # Выводим итоговую статистику
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
 
+            logger.info("\n" + "=" * 70)
+            logger.info("📋 ИТОГИ ОБРАБОТКИ:")
+            logger.info("=" * 70)
+            logger.info(f"✅ Обработано сигналов: {self.processed_count}")
+            logger.info(f"💾 Сохранено новых результатов: {self.new_signals_count}")
+            logger.info(f"⏭️ Пропущено (нет данных): {self.skipped_count}")
+            logger.info(f"❌ Ошибок: {self.error_count}")
+            logger.info(f"⏱️ Время выполнения: {duration:.1f} секунд")
+
+            if self.processed_count > 0:
+                logger.info(f"⚡ Скорость обработки: {self.processed_count / duration:.1f} сигналов/сек")
+
+            logger.info("=" * 70)
+
+            # Выводим статистику по результатам
             self.print_statistics()
 
         except Exception as e:
-            logger.error(f"Критическая ошибка: {e}")
+            logger.error(f"❌ Критическая ошибка: {e}")
             raise
         finally:
             self.disconnect()
@@ -526,8 +625,15 @@ class ScoringAnalyzer:
 
 def main():
     """Точка входа"""
-    analyzer = ScoringAnalyzer(DB_CONFIG)
-    analyzer.run()
+    try:
+        analyzer = ScoringAnalyzer(DB_CONFIG)
+        analyzer.run()
+    except KeyboardInterrupt:
+        logger.info("\n⛔ Прерывание пользователем")
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"❌ Фатальная ошибка: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
