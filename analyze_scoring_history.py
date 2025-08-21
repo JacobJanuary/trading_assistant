@@ -12,6 +12,7 @@ from psycopg.rows import dict_row
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import logging
+import time
 from typing import List, Dict, Optional, Tuple
 
 # Настройка логирования
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Параметры подключения к БД
 DB_CONFIG = {
-    'host': 'localhost',
+    'host': '10.8.0.1',
     'port': 5432,
     'dbname': 'fox_crypto',
     'user': 'elcrypto',
@@ -72,8 +73,8 @@ class ScoringAnalyzer:
             self.conn.close()
             logger.info("🔌 Отключение от БД")
 
-    def get_unprocessed_signals(self) -> List[Dict]:
-        """Получение ВСЕХ необработанных сигналов старше 48 часов"""
+    def get_unprocessed_signals(self, batch_size: int = 10000, offset: int = 0) -> List[Dict]:
+        """Получение пакета необработанных сигналов старше 48 часов"""
         query = """
             SELECT 
                 sh.id as scoring_history_id,
@@ -100,15 +101,31 @@ class ScoringAnalyzer:
                     WHERE shr.scoring_history_id = sh.id
                 )
             ORDER BY sh.timestamp ASC
-            LIMIT 10000  -- Обрабатываем порциями
+            LIMIT %s OFFSET %s
+        """
+
+        with self.conn.cursor() as cur:
+            cur.execute(query, (batch_size, offset))
+            signals = cur.fetchall()
+
+        return signals
+
+    def get_total_unprocessed_count(self) -> int:
+        """Получение общего количества необработанных сигналов"""
+        query = """
+            SELECT COUNT(*) as count
+            FROM fas.scoring_history sh
+            WHERE sh.timestamp <= NOW() - INTERVAL '48 hours'
+                AND NOT EXISTS (
+                    SELECT 1 FROM web.scoring_history_results shr
+                    WHERE shr.scoring_history_id = sh.id
+                )
         """
 
         with self.conn.cursor() as cur:
             cur.execute(query)
-            signals = cur.fetchall()
-
-        logger.info(f"📊 Найдено {len(signals)} необработанных сигналов")
-        return signals
+            result = cur.fetchone()
+            return result['count'] if result else 0
 
     def determine_signal_type(self, signal: Dict) -> Tuple[str, str]:
         """
@@ -557,7 +574,7 @@ class ScoringAnalyzer:
             logger.error(f"❌ Ошибка при выводе статистики: {e}")
 
     def run(self):
-        """Основной процесс анализа"""
+        """Основной процесс анализа с обработкой ВСЕХ записей"""
         start_time = datetime.now()
         logger.info("🚀 Начало анализа исторических данных скоринга")
         logger.info(f"📅 Время запуска: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
@@ -565,35 +582,75 @@ class ScoringAnalyzer:
         try:
             self.connect()
 
-            # Получаем необработанные сигналы
-            signals = self.get_unprocessed_signals()
+            # Получаем общее количество необработанных сигналов
+            total_unprocessed = self.get_total_unprocessed_count()
 
-            if not signals:
+            if total_unprocessed == 0:
                 logger.info("✅ Нет новых сигналов для обработки")
                 return
 
-            # Анализируем сигналы
-            results = []
-            batch_size = 100
+            logger.info(f"📊 Всего необработанных сигналов: {total_unprocessed}")
+            logger.info(f"📦 Будут обработаны пакетами по 10000 записей")
 
-            for i, signal in enumerate(signals):
-                if i % 100 == 0 and i > 0:
-                    progress = (i / len(signals)) * 100
-                    logger.info(f"⏳ Обработано {i}/{len(signals)} сигналов ({progress:.1f}%)...")
+            # Параметры пакетной обработки
+            batch_size = 10000
+            save_batch_size = 100
+            offset = 0
+            batch_number = 0
 
-                result = self.analyze_signal(signal)
-                if result:
-                    results.append(result)
-                    self.processed_count += 1
+            # Обрабатываем все записи пакетами
+            while offset < total_unprocessed:
+                batch_number += 1
+                logger.info(
+                    f"\n📦 Обработка пакета #{batch_number} (записи {offset + 1}-{min(offset + batch_size, total_unprocessed)})")
 
-                # Сохраняем пачками
-                if len(results) >= batch_size:
+                # Получаем пакет сигналов
+                signals = self.get_unprocessed_signals(batch_size, offset)
+
+                if not signals:
+                    logger.info(f"✅ Пакет #{batch_number} пуст, завершаем обработку")
+                    break
+
+                logger.info(f"📊 В пакете #{batch_number}: {len(signals)} сигналов")
+
+                # Анализируем сигналы в пакете
+                results = []
+
+                for i, signal in enumerate(signals):
+                    # Прогресс внутри пакета
+                    if i % 100 == 0 and i > 0:
+                        progress = (i / len(signals)) * 100
+                        total_progress = ((offset + i) / total_unprocessed) * 100
+                        logger.info(
+                            f"⏳ Пакет #{batch_number}: {i}/{len(signals)} ({progress:.1f}%) | Общий прогресс: {total_progress:.1f}%")
+
+                    result = self.analyze_signal(signal)
+                    if result:
+                        results.append(result)
+                        self.processed_count += 1
+
+                    # Сохраняем результаты пачками
+                    if len(results) >= save_batch_size:
+                        self.save_results(results)
+                        results = []
+
+                # Сохраняем оставшиеся результаты пакета
+                if results:
                     self.save_results(results)
-                    results = []
 
-            # Сохраняем оставшиеся результаты
-            if results:
-                self.save_results(results)
+                logger.info(f"✅ Пакет #{batch_number} обработан: {len(signals)} сигналов")
+
+                # Если обработали меньше записей, чем batch_size, значит это был последний пакет
+                if len(signals) < batch_size:
+                    logger.info(f"📌 Достигнут конец данных")
+                    break
+
+                offset += batch_size
+
+                # Небольшая пауза между пакетами для снижения нагрузки
+                if offset < total_unprocessed:
+                    logger.info(f"⏸️ Пауза перед следующим пакетом...")
+                    time.sleep(2)
 
             # Выводим итоговую статистику
             end_time = datetime.now()
@@ -602,11 +659,13 @@ class ScoringAnalyzer:
             logger.info("\n" + "=" * 70)
             logger.info("📋 ИТОГИ ОБРАБОТКИ:")
             logger.info("=" * 70)
-            logger.info(f"✅ Обработано сигналов: {self.processed_count}")
+            logger.info(f"📊 Изначально к обработке: {total_unprocessed} сигналов")
+            logger.info(f"✅ Успешно обработано: {self.processed_count}")
             logger.info(f"💾 Сохранено новых результатов: {self.new_signals_count}")
             logger.info(f"⏭️ Пропущено (нет данных): {self.skipped_count}")
             logger.info(f"❌ Ошибок: {self.error_count}")
-            logger.info(f"⏱️ Время выполнения: {duration:.1f} секунд")
+            logger.info(f"📦 Обработано пакетов: {batch_number}")
+            logger.info(f"⏱️ Время выполнения: {duration:.1f} секунд ({duration / 60:.1f} минут)")
 
             if self.processed_count > 0:
                 logger.info(f"⚡ Скорость обработки: {self.processed_count / duration:.1f} сигналов/сек")
