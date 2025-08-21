@@ -134,47 +134,58 @@ def login():
     
     return render_template('login.html')
 
+def is_first_user(db):
+    """Проверка, является ли регистрируемый пользователь первым в системе"""
+    try:
+        result = db.execute_query(
+            "SELECT COUNT(*) as count FROM users",
+            fetch=True
+        )
+        return result[0]['count'] == 0
+    except:
+        return True  # Если таблица не существует, считаем что это первый пользователь
+
 # Страница регистрации
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     """Страница регистрации"""
     if current_user.is_authenticated and current_user.is_approved:
         return redirect(url_for('dashboard'))
-    
+
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
         confirm_password = request.form.get('confirm_password')
-        
+
         # Валидация данных
         if not username or not password:
             flash('Заполните все поля', 'error')
             return render_template('register.html')
-        
+
         if len(username) < 3:
             flash('Имя пользователя должно содержать минимум 3 символа', 'error')
             return render_template('register.html')
-        
+
         if len(password) < 6:
             flash('Пароль должен содержать минимум 6 символов', 'error')
             return render_template('register.html')
-        
+
         if password != confirm_password:
             flash('Пароли не совпадают', 'error')
             return render_template('register.html')
-        
+
         # Проверка первого пользователя
         is_first = is_first_user(db)
-        
+
         # Создание пользователя
         user = User.create(
-            db, 
-            username, 
-            password, 
+            db,
+            username,
+            password,
             is_admin=is_first,  # Первый пользователь - администратор
             is_approved=is_first  # Первый пользователь сразу подтвержден
         )
-        
+
         if user:
             if is_first:
                 flash(f'Добро пожаловать, администратор {username}! Вы можете войти в систему.', 'success')
@@ -182,11 +193,11 @@ def register():
             else:
                 flash('Регистрация успешна! Ожидайте подтверждения от администратора.', 'info')
                 logger.info(f"Зарегистрирован новый пользователь: {username}")
-            
+
             return redirect(url_for('login'))
         else:
             flash('Пользователь с таким именем уже существует', 'error')
-    
+
     return render_template('register.html')
 
 # Выход из системы
@@ -645,6 +656,309 @@ def signal_performance():
         return redirect(url_for('dashboard'))
 
 
+@app.route('/scoring_analysis')
+@login_required
+def scoring_analysis():
+    """Страница анализа скоринга"""
+    try:
+        # Получаем диапазон дат
+        date_range = db.execute_query("""
+            SELECT 
+                MIN(timestamp)::date as min_date,
+                (CURRENT_DATE - INTERVAL '2 days')::date as max_date
+            FROM fas.scoring_history
+        """, fetch=True)[0]
+
+        # Получаем выбранную дату или используем максимальную
+        selected_date = request.args.get('date', str(date_range['max_date']))
+
+        # Получаем фильтры из запроса (JSON формат)
+        import json
+        buy_filters_json = request.args.get('buy_filters', '[]')
+        sell_filters_json = request.args.get('sell_filters', '[]')
+
+        try:
+            buy_filters = json.loads(buy_filters_json) if buy_filters_json else []
+            sell_filters = json.loads(sell_filters_json) if sell_filters_json else []
+        except:
+            buy_filters = []
+            sell_filters = []
+
+        # Параметры расчета
+        tp_percent = request.args.get('tp', type=float, default=4.0)
+        sl_percent = request.args.get('sl', type=float, default=3.0)
+        position_size = request.args.get('position_size', type=float, default=100.0)
+        leverage = request.args.get('leverage', type=int, default=5)
+
+        # Получаем сохраненные фильтры пользователя
+        from database import get_user_scoring_filters, get_scoring_signals, process_scoring_signals_batch, \
+            get_scoring_analysis_results
+        import uuid
+
+        saved_filters = get_user_scoring_filters(db, current_user.id)
+
+        # Инициализация данных по умолчанию
+        signals_data = []
+        stats = {
+            'total': 0,
+            'buy_signals': 0,
+            'sell_signals': 0,
+            'total_pnl': 0,
+            'tp_count': 0,
+            'sl_count': 0,
+            'timeout_count': 0,
+            'open_count': 0,
+            'max_potential': 0,
+            'realized_profit': 0,
+            'realized_loss': 0
+        }
+        metrics = {
+            'win_rate': 0,
+            'tp_efficiency': 0,
+            'net_pnl': 0
+        }
+
+        # Если есть активные фильтры, получаем и обрабатываем сигналы
+        if buy_filters or sell_filters:
+            # Получаем сигналы
+            raw_signals = get_scoring_signals(db, selected_date, buy_filters, sell_filters)
+
+            # Обрабатываем сигналы
+            if raw_signals:
+                # Генерируем ID сессии для этого запроса
+                session_id = f"scoring_{current_user.id}_{uuid.uuid4().hex[:8]}"
+
+                # Обрабатываем пакетно и сохраняем в БД
+                result = process_scoring_signals_batch(
+                    db, raw_signals, session_id, current_user.id,
+                    tp_percent=tp_percent,
+                    sl_percent=sl_percent,
+                    position_size=position_size,
+                    leverage=leverage
+                )
+
+                # Получаем обработанные результаты из БД
+                db_signals = get_scoring_analysis_results(db, session_id, current_user.id)
+
+                # Форматируем для отображения
+                for signal in db_signals:
+                    signals_data.append({
+                        'timestamp': signal['signal_timestamp'],
+                        'pair_symbol': signal['pair_symbol'],
+                        'signal_action': signal['signal_action'],
+                        'market_regime': signal['market_regime'],
+                        'total_score': float(signal['total_score'] or 0),
+                        'indicator_score': float(signal['indicator_score'] or 0),
+                        'pattern_score': float(signal['pattern_score'] or 0),
+                        'combination_score': float(signal['combination_score'] or 0),
+                        'entry_price': float(signal['entry_price']),
+                        'current_price': float(signal['close_price']),
+                        'is_closed': signal['is_closed'],
+                        'close_reason': signal['close_reason'],
+                        'hours_to_close': float(signal['hours_to_close'] or 0),
+                        'pnl_usd': float(signal['pnl_usd'] or 0),
+                        'pnl_percent': float(signal['pnl_percent'] or 0),
+                        'max_potential_profit_usd': float(signal['max_potential_profit_usd'] or 0)
+                    })
+
+                # Обновляем статистику
+                if result and 'stats' in result:
+                    db_stats = result['stats']
+                    stats = {
+                        'total': db_stats['total'] or 0,
+                        'buy_signals': db_stats['buy_signals'] or 0,
+                        'sell_signals': db_stats['sell_signals'] or 0,
+                        'tp_count': db_stats['tp_count'] or 0,
+                        'sl_count': db_stats['sl_count'] or 0,
+                        'timeout_count': db_stats['timeout_count'] or 0,
+                        'total_pnl': float(db_stats['total_pnl'] or 0),
+                        'realized_profit': float(db_stats['tp_profit'] or 0),
+                        'realized_loss': float(db_stats['sl_loss'] or 0),
+                        'max_potential': float(db_stats['total_max_potential'] or 0)
+                    }
+
+                    # Рассчитываем метрики
+                    total_closed = stats['tp_count'] + stats['sl_count']
+                    if total_closed > 0:
+                        metrics['win_rate'] = (stats['tp_count'] / total_closed) * 100
+
+                    if stats['max_potential'] > 0:
+                        metrics['tp_efficiency'] = (stats['realized_profit'] / stats['max_potential']) * 100
+
+                    metrics['net_pnl'] = stats['total_pnl']
+
+        return render_template(
+            'scoring_analysis.html',
+            date_range=date_range,
+            selected_date=selected_date,
+            buy_filters=buy_filters,
+            sell_filters=sell_filters,
+            saved_filters=saved_filters,
+            signals=signals_data,
+            stats=stats,
+            metrics=metrics,
+            params={
+                'tp_percent': tp_percent,
+                'sl_percent': sl_percent,
+                'position_size': position_size,
+                'leverage': leverage
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке страницы скоринга: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        flash('Ошибка при загрузке данных скоринга', 'error')
+        return redirect(url_for('dashboard'))
+
+
+@app.route('/api/scoring/apply_filters', methods=['POST'])
+@login_required
+def api_scoring_apply_filters():
+    """API для применения фильтров скоринга"""
+    try:
+        data = request.get_json()
+
+        from database import get_scoring_signals, process_scoring_signals_batch, get_scoring_analysis_results
+        import uuid
+
+        # Генерируем ID сессии
+        session_id = f"scoring_{current_user.id}_{uuid.uuid4().hex[:8]}"
+
+        # Получаем параметры
+        selected_date = data.get('date')
+        buy_filters = data.get('buy_filters', [])
+        sell_filters = data.get('sell_filters', [])
+        tp_percent = data.get('tp_percent', 4.0)
+        sl_percent = data.get('sl_percent', 3.0)
+        position_size = data.get('position_size', 100.0)
+        leverage = data.get('leverage', 5)
+
+        # Получаем сигналы по фильтрам
+        raw_signals = get_scoring_signals(db, selected_date, buy_filters, sell_filters)
+
+        if raw_signals:
+            # Обрабатываем и сохраняем в БД
+            result = process_scoring_signals_batch(
+                db, raw_signals, session_id, current_user.id,
+                tp_percent=tp_percent,
+                sl_percent=sl_percent,
+                position_size=position_size,
+                leverage=leverage
+            )
+
+            # Получаем обработанные результаты из БД
+            signals_data = get_scoring_analysis_results(db, session_id, current_user.id)
+
+            # Форматируем для отображения
+            formatted_signals = []
+            for signal in signals_data:
+                formatted_signals.append({
+                    'timestamp': signal['signal_timestamp'],
+                    'pair_symbol': signal['pair_symbol'],
+                    'signal_action': signal['signal_action'],
+                    'market_regime': signal['market_regime'],
+                    'total_score': float(signal['total_score'] or 0),
+                    'indicator_score': float(signal['indicator_score'] or 0),
+                    'pattern_score': float(signal['pattern_score'] or 0),
+                    'combination_score': float(signal['combination_score'] or 0),
+                    'entry_price': float(signal['entry_price']),
+                    'current_price': float(signal['close_price']),
+                    'is_closed': signal['is_closed'],
+                    'close_reason': signal['close_reason'],
+                    'hours_to_close': float(signal['hours_to_close'] or 0),
+                    'pnl_usd': float(signal['pnl_usd'] or 0),
+                    'pnl_percent': float(signal['pnl_percent'] or 0),
+                    'max_potential_profit': float(signal['max_potential_profit_usd'] or 0)
+                })
+
+            # Статистика
+            stats = result['stats']
+
+            # Расчет метрик
+            win_rate = 0
+            if stats['tp_count'] + stats['sl_count'] > 0:
+                win_rate = (stats['tp_count'] / (stats['tp_count'] + stats['sl_count'])) * 100
+
+            tp_efficiency = 0
+            if stats['total_max_potential'] and stats['total_max_potential'] > 0:
+                tp_efficiency = (float(stats['tp_profit'] or 0) / float(stats['total_max_potential'])) * 100
+
+            return jsonify({
+                'status': 'success',
+                'data': {
+                    'signals': formatted_signals,
+                    'stats': {
+                        'total': stats['total'],
+                        'buy_signals': stats['buy_signals'],
+                        'sell_signals': stats['sell_signals'],
+                        'tp_count': stats['tp_count'],
+                        'sl_count': stats['sl_count'],
+                        'timeout_count': stats['timeout_count'],
+                        'total_pnl': float(stats['total_pnl'] or 0),
+                        'realized_profit': float(stats['tp_profit'] or 0),
+                        'realized_loss': float(stats['sl_loss'] or 0),
+                        'max_potential': float(stats['total_max_potential'] or 0),
+                        'avg_hours_to_close': float(stats['avg_hours_to_close'] or 0)
+                    },
+                    'metrics': {
+                        'win_rate': win_rate,
+                        'tp_efficiency': tp_efficiency,
+                        'net_pnl': float(stats['total_pnl'] or 0)
+                    }
+                }
+            })
+        else:
+            return jsonify({
+                'status': 'success',
+                'data': {
+                    'signals': [],
+                    'stats': {
+                        'total': 0,
+                        'buy_signals': 0,
+                        'sell_signals': 0,
+                        'total_pnl': 0
+                    },
+                    'metrics': {
+                        'win_rate': 0,
+                        'tp_efficiency': 0,
+                        'net_pnl': 0
+                    }
+                }
+            })
+
+    except Exception as e:
+        logger.error(f"Ошибка API скоринга: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/scoring/save_filters', methods=['POST'])
+@login_required
+def api_scoring_save_filters():
+    """API для сохранения фильтров скоринга"""
+    try:
+        data = request.get_json()
+
+        from database import save_user_scoring_filters
+
+        filter_name = data.get('name', f'Filter_{datetime.now().strftime("%Y%m%d_%H%M%S")}')
+        buy_filters = data.get('buy_filters', [])
+        sell_filters = data.get('sell_filters', [])
+
+        save_user_scoring_filters(db, current_user.id, filter_name, buy_filters, sell_filters)
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Фильтры сохранены'
+        })
+
+    except Exception as e:
+        logger.error(f"Ошибка сохранения фильтров: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 # ========== API ENDPOINTS ==========
 
 @app.route('/api/initialize_signals', methods=['POST'])
@@ -736,6 +1050,61 @@ def api_save_filters():
         logger.error(f"Ошибка при сохранении фильтров: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+
+@app.route('/api/scoring/get_date_info', methods=['POST'])
+@login_required
+def api_scoring_get_date_info():
+    """API для получения информации о выбранной дате"""
+    try:
+        data = request.get_json()
+        selected_date = data.get('date')
+        buy_filters = data.get('buy_filters', [])
+        sell_filters = data.get('sell_filters', [])
+
+        # Получаем режимы рынка для этой даты
+        market_query = """
+            SELECT DISTINCT 
+                DATE_TRUNC('hour', timestamp) as hour,
+                regime
+            FROM fas.market_regime
+            WHERE timestamp::date = %s
+                AND timeframe = '4h'
+            ORDER BY hour
+        """
+        market_data = db.execute_query(market_query, (selected_date,), fetch=True)
+
+        # Подсчитываем распределение режимов
+        regime_counts = {'BULL': 0, 'NEUTRAL': 0, 'BEAR': 0}
+        for row in market_data:
+            regime = row['regime']
+            if regime in regime_counts:
+                regime_counts[regime] += 1
+
+        # Определяем доминирующий режим
+        dominant_regime = max(regime_counts, key=regime_counts.get)
+
+        # Если есть фильтры, подсчитываем количество сигналов
+        signal_count = 0
+        if buy_filters or sell_filters:
+            from database import get_scoring_signals
+            raw_signals = get_scoring_signals(db, selected_date, buy_filters, sell_filters)
+            signal_count = len(raw_signals) if raw_signals else 0
+
+        return jsonify({
+            'status': 'success',
+            'date': selected_date,
+            'market_regimes': regime_counts,
+            'dominant_regime': dominant_regime,
+            'signal_count': signal_count,
+            'market_timeline': [
+                {'hour': row['hour'].strftime('%H:%M'), 'regime': row['regime']}
+                for row in market_data[:6]  # Первые 6 записей для отображения
+            ]
+        })
+
+    except Exception as e:
+        logger.error(f"Ошибка получения информации о дате: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # Обработка ошибок
 @app.errorhandler(404)
