@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Параметры подключения к БД
 DB_CONFIG = {
-    'host': 'localhost',
+    'host': '10.8.0.1',
     'port': 5432,
     'dbname': 'fox_crypto',
     'user': 'elcrypto',
@@ -600,6 +600,8 @@ class ScoringAnalyzer:
             save_batch_size = 100
             batch_number = 0
             total_processed_in_run = 0
+            previous_unprocessed = total_unprocessed
+            no_progress_counter = 0
 
             # Обрабатываем все записи пакетами
             # ВАЖНО: НЕ используем offset, так как обработанные записи
@@ -661,8 +663,40 @@ class ScoringAnalyzer:
                     skipped_in_batch = len(signals) - batch_processed
                     logger.warning(f"⚠️ В пакете #{batch_number} пропущено {skipped_in_batch} сигналов (нет данных)")
 
-                # Небольшая пауза между пакетами для снижения нагрузки
-                if current_unprocessed > batch_size:
+                # ЗАЩИТА ОТ ЗАЦИКЛИВАНИЯ
+                # Если количество необработанных не изменилось после пакета
+                if current_unprocessed == previous_unprocessed:
+                    no_progress_counter += 1
+                    if no_progress_counter >= 3:
+                        logger.warning(f"⚠️ Обработка остановлена: {current_unprocessed} записей невозможно обработать")
+                        logger.warning(f"   Вероятно, для них отсутствуют данные в market_data_aggregated")
+
+                        # Показываем проблемные пары для диагностики
+                        with self.conn.cursor() as cur:
+                            cur.execute("""
+                                SELECT DISTINCT pair_symbol, COUNT(*) as count
+                                FROM fas.scoring_history sh
+                                WHERE sh.timestamp <= NOW() - INTERVAL '48 hours'
+                                    AND NOT EXISTS (
+                                        SELECT 1 FROM web.scoring_history_results shr
+                                        WHERE shr.scoring_history_id = sh.id
+                                    )
+                                GROUP BY pair_symbol
+                                ORDER BY count DESC
+                                LIMIT 10
+                            """)
+                            problem_pairs = cur.fetchall()
+
+                            logger.warning("   Проблемные пары:")
+                            for pair in problem_pairs:
+                                logger.warning(f"     - {pair['pair_symbol']}: {pair['count']} записей")
+                        break
+                else:
+                    no_progress_counter = 0
+                    previous_unprocessed = current_unprocessed
+
+                # Небольшая пауза между пакетами для снижения нагрузки (только если есть прогресс)
+                if current_unprocessed > batch_size and batch_processed > 0:
                     logger.info(f"⏸️ Пауза перед следующим пакетом...")
                     time.sleep(2)
 
@@ -687,8 +721,32 @@ class ScoringAnalyzer:
             # Финальная проверка
             final_unprocessed = self.get_total_unprocessed_count()
             if final_unprocessed > 0:
-                logger.warning(f"⚠️ Остались необработанные сигналы: {final_unprocessed}")
-                logger.warning(f"   Вероятно, для них нет данных в market_data_aggregated")
+                logger.warning(f"\n⚠️ Остались необработанные сигналы: {final_unprocessed}")
+                logger.warning(f"   Это записи, для которых отсутствуют данные в market_data_aggregated")
+
+                # Показываем детали по необработанным
+                with self.conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT 
+                            pair_symbol,
+                            COUNT(*) as count,
+                            MIN(timestamp) as min_date,
+                            MAX(timestamp) as max_date
+                        FROM fas.scoring_history sh
+                        WHERE sh.timestamp <= NOW() - INTERVAL '48 hours'
+                            AND NOT EXISTS (
+                                SELECT 1 FROM web.scoring_history_results shr
+                                WHERE shr.scoring_history_id = sh.id
+                            )
+                        GROUP BY pair_symbol
+                        ORDER BY count DESC
+                    """)
+                    unprocessed_pairs = cur.fetchall()
+
+                    logger.warning("\n   Детализация по парам:")
+                    for pair in unprocessed_pairs[:20]:  # Показываем топ-20
+                        logger.warning(
+                            f"     {pair['pair_symbol']:20s}: {pair['count']:5d} записей ({pair['min_date'].strftime('%Y-%m-%d')} - {pair['max_date'].strftime('%Y-%m-%d')})")
 
             logger.info("=" * 70)
 
