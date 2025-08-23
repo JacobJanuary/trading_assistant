@@ -778,18 +778,29 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
                                  sl_percent, position_size, leverage):
     """
     Расчет выхода по trailing stop с использованием high/low из market_data_aggregated
+
     ИСПРАВЛЕНО:
-    - Корректная работа с timezone
-    - max_profit считается как максимально возможная прибыль БЕЗ стопов
+    - Разделены переменные для отслеживания максимального профита и trailing stop
+    - max_profit_usd всегда считается от абсолютно лучшей цены за весь период
+    - best_price_for_trailing используется только для управления trailing stop
     """
+
     # Переменные для отслеживания trailing stop
     is_trailing_active = False
     trailing_stop_price = None
-    best_price_for_trailing = entry_price  # Лучшая цена для trailing stop
+    best_price_for_trailing = entry_price  # Лучшая цена для управления trailing stop
 
-    # Переменные для отслеживания максимального профита (БЕЗ учета стопов)
-    absolute_best_price = entry_price  # Абсолютно лучшая цена за весь период
-    max_profit_usd = 0  # Максимально возможный профит
+    # ВАЖНО: Отдельные переменные для отслеживания максимального профита
+    absolute_best_price = entry_price  # Абсолютно лучшая цена за ВЕСЬ период (для max_profit)
+    max_profit_usd = 0  # Максимально возможный профит БЕЗ учета стопов
+
+    # Расчет уровня активации и страхового SL
+    if signal_action in ['SELL', 'SHORT']:
+        activation_price = entry_price * (1 - trailing_activation_pct / 100)
+        insurance_sl_price = entry_price * (1 + sl_percent / 100)
+    else:  # BUY, LONG
+        activation_price = entry_price * (1 + trailing_activation_pct / 100)
+        insurance_sl_price = entry_price * (1 - sl_percent / 100)
 
     # Результат по умолчанию
     result = {
@@ -801,46 +812,40 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
         'pnl_percent': 0,
         'max_profit_usd': 0,
         'trailing_activated': False,
-        'best_price': entry_price
+        'best_price': entry_price,
+        'absolute_best_price': entry_price  # Добавляем для отладки
     }
 
     # Проверка наличия истории
     if not history or len(history) == 0:
         return result
 
-    # Расчет уровня активации и страхового SL
-    if signal_action in ['SELL', 'SHORT']:
-        activation_price = entry_price * (1 - trailing_activation_pct / 100)
-        insurance_sl_price = entry_price * (1 + sl_percent / 100)
-    else:  # BUY, LONG
-        activation_price = entry_price * (1 + trailing_activation_pct / 100)
-        insurance_sl_price = entry_price * (1 - sl_percent / 100)
-
     # Проходим по истории
     for candle in history:
-        # Делаем timestamp aware если нужно
-        current_time = make_aware(candle['timestamp'])
+        current_time = candle['timestamp']
         high_price = float(candle['high_price'])
         low_price = float(candle['low_price'])
 
-        # ВАЖНО: Сначала всегда обновляем absolute_best_price и max_profit
-        # независимо от того, сработают ли стопы
+        # ============ СНАЧАЛА ВСЕГДА ОБНОВЛЯЕМ АБСОЛЮТНЫЙ МАКСИМУМ ============
+        # Это происходит независимо от стопов и trailing
         if signal_action in ['SELL', 'SHORT']:
             # Для SHORT лучшая цена = минимальная
             if low_price < absolute_best_price:
                 absolute_best_price = low_price
+                # Пересчитываем максимально возможный профит
                 max_profit_percent = ((entry_price - absolute_best_price) / entry_price) * 100
                 max_profit_usd = position_size * (max_profit_percent / 100) * leverage
         else:  # BUY, LONG
             # Для LONG лучшая цена = максимальная
             if high_price > absolute_best_price:
                 absolute_best_price = high_price
+                # Пересчитываем максимально возможный профит
                 max_profit_percent = ((absolute_best_price - entry_price) / entry_price) * 100
                 max_profit_usd = position_size * (max_profit_percent / 100) * leverage
 
-        # Теперь обработка trailing stop логики
+        # ============ ТЕПЕРЬ ОБРАБОТКА TRAILING STOP ============
         if signal_action in ['SELL', 'SHORT']:
-            # Проверка страховочного SL
+            # Проверка страховочного SL (до активации trailing)
             if not is_trailing_active and high_price >= insurance_sl_price:
                 result['is_closed'] = True
                 result['close_reason'] = 'stop_loss'
@@ -879,7 +884,7 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
                 break
 
         else:  # BUY, LONG
-            # Проверка страховочного SL
+            # Проверка страховочного SL (до активации trailing)
             if not is_trailing_active and low_price <= insurance_sl_price:
                 result['is_closed'] = True
                 result['close_reason'] = 'stop_loss'
@@ -917,178 +922,12 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
                 result['pnl_usd'] = position_size * (result['pnl_percent'] / 100) * leverage
                 break
 
-    # ВАЖНО: Сохраняем максимальный профит (без учета стопов)
+    # ============ ВАЖНО: СОХРАНЯЕМ МАКСИМАЛЬНЫЙ ПРОФИТ ============
     result['max_profit_usd'] = max_profit_usd
-    result['best_price'] = absolute_best_price  # Абсолютно лучшая цена
+    result['best_price'] = best_price_for_trailing  # Для trailing управления
+    result['absolute_best_price'] = absolute_best_price  # Абсолютный максимум для статистики
 
     # Проверка таймаута (48 часов)
-    if not result['is_closed'] and len(history) > 0:
-        # Делаем оба timestamp aware для корректного вычисления
-        last_timestamp = make_aware(history[-1]['timestamp'])
-        first_timestamp = make_aware(history[0]['timestamp'])
-
-        hours_passed = (last_timestamp - first_timestamp).total_seconds() / 3600
-
-        if hours_passed >= 48:
-            last_price = float(history[-1]['close_price'])
-            result['is_closed'] = True
-            result['close_reason'] = 'timeout'
-            result['close_price'] = last_price
-            result['close_time'] = last_timestamp
-
-            if signal_action in ['SELL', 'SHORT']:
-                result['pnl_percent'] = ((entry_price - last_price) / entry_price) * 100
-            else:
-                result['pnl_percent'] = ((last_price - entry_price) / entry_price) * 100
-
-            result['pnl_usd'] = position_size * (result['pnl_percent'] / 100) * leverage
-
-    return result
-
-
-# ========== ФУНКЦИИ ДЛЯ TRAILING STOP ==========
-
-def calculate_trailing_stop_exit(entry_price, history, signal_action,
-                                 trailing_distance_pct, trailing_activation_pct,
-                                 sl_percent, position_size, leverage):
-    """
-    Расчет выхода по trailing stop с использованием high/low из market_data_aggregated
-
-    Returns: dict с результатами обработки
-    """
-    # Переменные для отслеживания
-    is_trailing_active = False
-    trailing_stop_price = None
-    best_price = entry_price
-    max_profit_usd = 0
-
-    # Расчет уровня активации и страхового SL
-    if signal_action in ['SELL', 'SHORT']:
-        # Для SHORT: активация когда цена упала на activation%
-        activation_price = entry_price * (1 - trailing_activation_pct / 100)
-        insurance_sl_price = entry_price * (1 + sl_percent / 100)  # Страховочный SL
-    else:  # BUY, LONG
-        # Для LONG: активация когда цена выросла на activation%
-        activation_price = entry_price * (1 + trailing_activation_pct / 100)
-        insurance_sl_price = entry_price * (1 - sl_percent / 100)  # Страховочный SL
-
-    # Результат по умолчанию
-    result = {
-        'is_closed': False,
-        'close_price': None,
-        'close_time': None,
-        'close_reason': None,
-        'pnl_usd': 0,
-        'pnl_percent': 0,
-        'max_profit_usd': 0,
-        'trailing_activated': False,
-        'best_price': entry_price
-    }
-
-    # Проходим по истории
-    for candle in history:
-        current_time = candle['timestamp']
-        high_price = float(candle['high_price'])
-        low_price = float(candle['low_price'])
-
-        # Обработка для SHORT
-        if signal_action in ['SELL', 'SHORT']:
-            # Проверка страховочного SL (до активации trailing)
-            if not is_trailing_active and high_price >= insurance_sl_price:
-                result['is_closed'] = True
-                result['close_reason'] = 'stop_loss'
-                result['close_price'] = insurance_sl_price
-                result['close_time'] = current_time
-                result['pnl_percent'] = ((entry_price - insurance_sl_price) / entry_price) * 100
-                result['pnl_usd'] = position_size * (result['pnl_percent'] / 100) * leverage
-                break
-
-            # Обновляем лучшую цену (минимум для SHORT)
-            if low_price < best_price:
-                best_price = low_price
-
-                # Расчет текущего профита
-                profit_percent = ((entry_price - best_price) / entry_price) * 100
-                profit_usd = position_size * (profit_percent / 100) * leverage
-
-                if profit_usd > max_profit_usd:
-                    max_profit_usd = profit_usd
-
-                # Проверка активации trailing stop
-                if not is_trailing_active and low_price <= activation_price:
-                    is_trailing_active = True
-                    result['trailing_activated'] = True
-                    # Устанавливаем trailing stop выше лучшей цены на distance%
-                    trailing_stop_price = best_price * (1 + trailing_distance_pct / 100)
-                    # print(f"[TRAILING] SHORT активирован на {best_price:.8f}, стоп на {trailing_stop_price:.8f}")
-
-                # Если trailing активен, двигаем стоп
-                elif is_trailing_active:
-                    new_stop = best_price * (1 + trailing_distance_pct / 100)
-                    if new_stop < trailing_stop_price:
-                        trailing_stop_price = new_stop
-
-            # Проверка срабатывания trailing stop
-            if is_trailing_active and high_price >= trailing_stop_price:
-                result['is_closed'] = True
-                result['close_reason'] = 'trailing_stop'
-                result['close_price'] = trailing_stop_price
-                result['close_time'] = current_time
-                result['pnl_percent'] = ((entry_price - trailing_stop_price) / entry_price) * 100
-                result['pnl_usd'] = position_size * (result['pnl_percent'] / 100) * leverage
-                break
-
-        else:  # BUY, LONG
-            # Проверка страховочного SL (до активации trailing)
-            if not is_trailing_active and low_price <= insurance_sl_price:
-                result['is_closed'] = True
-                result['close_reason'] = 'stop_loss'
-                result['close_price'] = insurance_sl_price
-                result['close_time'] = current_time
-                result['pnl_percent'] = ((insurance_sl_price - entry_price) / entry_price) * 100
-                result['pnl_usd'] = position_size * (result['pnl_percent'] / 100) * leverage
-                break
-
-            # Обновляем лучшую цену (максимум для LONG)
-            if high_price > best_price:
-                best_price = high_price
-
-                # Расчет текущего профита
-                profit_percent = ((best_price - entry_price) / entry_price) * 100
-                profit_usd = position_size * (profit_percent / 100) * leverage
-
-                if profit_usd > max_profit_usd:
-                    max_profit_usd = profit_usd
-
-                # Проверка активации trailing stop
-                if not is_trailing_active and high_price >= activation_price:
-                    is_trailing_active = True
-                    result['trailing_activated'] = True
-                    # Устанавливаем trailing stop ниже лучшей цены на distance%
-                    trailing_stop_price = best_price * (1 - trailing_distance_pct / 100)
-                    # print(f"[TRAILING] LONG активирован на {best_price:.8f}, стоп на {trailing_stop_price:.8f}")
-
-                # Если trailing активен, двигаем стоп
-                elif is_trailing_active:
-                    new_stop = best_price * (1 - trailing_distance_pct / 100)
-                    if new_stop > trailing_stop_price:
-                        trailing_stop_price = new_stop
-
-            # Проверка срабатывания trailing stop
-            if is_trailing_active and low_price <= trailing_stop_price:
-                result['is_closed'] = True
-                result['close_reason'] = 'trailing_stop'
-                result['close_price'] = trailing_stop_price
-                result['close_time'] = current_time
-                result['pnl_percent'] = ((trailing_stop_price - entry_price) / entry_price) * 100
-                result['pnl_usd'] = position_size * (result['pnl_percent'] / 100) * leverage
-                break
-
-    # Сохраняем максимальный профит и лучшую цену
-    result['max_profit_usd'] = max_profit_usd
-    result['best_price'] = best_price
-
-    # Если не закрылась за 48 часов - таймаут
     if not result['is_closed'] and len(history) > 0:
         hours_passed = (history[-1]['timestamp'] - history[0]['timestamp']).total_seconds() / 3600
         if hours_passed >= 48:
@@ -1104,6 +943,15 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
                 result['pnl_percent'] = ((last_price - entry_price) / entry_price) * 100
 
             result['pnl_usd'] = position_size * (result['pnl_percent'] / 100) * leverage
+
+    # Отладочный вывод для проверки
+    if result['is_closed'] and result['close_reason'] == 'trailing_stop':
+        print(f"[DEBUG] Trailing Stop сработал:")
+        print(f"  - Entry: {entry_price:.8f}")
+        print(f"  - Close: {result['close_price']:.8f}")
+        print(f"  - P&L: ${result['pnl_usd']:.2f}")
+        print(f"  - Max возможный: ${max_profit_usd:.2f} (при цене {absolute_best_price:.8f})")
+        print(f"  - Эффективность: {(result['pnl_usd'] / max_profit_usd * 100) if max_profit_usd > 0 else 0:.1f}%")
 
     return result
 
