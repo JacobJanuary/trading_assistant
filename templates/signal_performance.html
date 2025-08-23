@@ -250,6 +250,10 @@
                 <div class="text-xs text-gray-600">По SL</div>
                 <div class="text-xl font-bold text-red-600">{{ stats.closed_sl }}</div>
             </div>
+            <div class="bg-purple-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600">По Trailing</div>
+                <div class="text-xl font-bold text-purple-600">{{ efficiency.closed_trailing|default(0) }}</div>
+            </div>
             <div class="{% if stats.total_pnl >= 0 %}bg-green-50{% else %}bg-red-50{% endif %} p-3 rounded-lg">
                 <div class="text-xs text-gray-600">P&L</div>
                 <div class="text-xl font-bold {% if stats.total_pnl >= 0 %}text-green-600{% else %}text-red-600{% endif %}">

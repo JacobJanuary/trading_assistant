@@ -401,6 +401,7 @@ def signal_performance():
                     signal_timestamp,
                     leverage as original_leverage,
                     max_potential_profit_usd,
+                    realized_pnl_usd,
 
                     -- Пересчитываем процент изменения цены
                     CASE 
@@ -423,19 +424,38 @@ def signal_performance():
             SELECT 
                 COUNT(*) as total_signals,
                 COUNT(CASE WHEN is_closed = FALSE THEN 1 END) as open_positions,
-                COUNT(CASE WHEN close_reason = 'take_profit' THEN 1 END) as closed_tp,
-                COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as closed_sl,
+
+                -- ИСПРАВЛЕНО: правильный подсчет TP (включая прибыльные trailing_stop)
+                COUNT(CASE 
+                    WHEN close_reason = 'take_profit' THEN 1
+                    WHEN close_reason = 'trailing_stop' AND price_change_percent > 0 THEN 1
+                END) as closed_tp,
+
+                -- ИСПРАВЛЕНО: правильный подсчет SL (включая убыточные trailing_stop)
+                COUNT(CASE 
+                    WHEN close_reason = 'stop_loss' THEN 1
+                    WHEN close_reason = 'trailing_stop' AND price_change_percent <= 0 THEN 1
+                END) as closed_sl,
+
+                -- Отдельный подсчет trailing stops
+                COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as closed_trailing,
 
                 -- P&L с новыми параметрами
                 COALESCE(SUM(
-                    CASE WHEN close_reason = 'take_profit' THEN
-                        %s * (price_change_percent / 100) * %s  -- position_size * percent * leverage
+                    CASE 
+                        WHEN close_reason = 'take_profit' THEN
+                            %s * (price_change_percent / 100) * %s
+                        WHEN close_reason = 'trailing_stop' AND price_change_percent > 0 THEN
+                            %s * (price_change_percent / 100) * %s
                     END
                 ), 0) as tp_realized_profit,
 
                 COALESCE(SUM(
-                    CASE WHEN close_reason = 'stop_loss' THEN
-                        ABS(%s * (price_change_percent / 100) * %s)
+                    CASE 
+                        WHEN close_reason = 'stop_loss' THEN
+                            ABS(%s * (price_change_percent / 100) * %s)
+                        WHEN close_reason = 'trailing_stop' AND price_change_percent <= 0 THEN
+                            ABS(%s * (price_change_percent / 100) * %s)
                     END
                 ), 0) as sl_realized_loss,
 
@@ -451,14 +471,25 @@ def signal_performance():
                 ), 0) as total_max_potential,
 
                 COALESCE(SUM(
-                    CASE WHEN close_reason = 'take_profit' THEN
-                        (max_potential_profit_usd / original_leverage) * %s
+                    CASE 
+                        WHEN close_reason = 'take_profit' 
+                          OR (close_reason = 'trailing_stop' AND price_change_percent > 0) THEN
+                            (max_potential_profit_usd / original_leverage) * %s
                     END
                 ), 0) as tp_max_potential,
 
                 -- Средние проценты
-                AVG(CASE WHEN close_reason = 'take_profit' THEN price_change_percent END) as avg_tp_percent,
-                AVG(CASE WHEN close_reason = 'stop_loss' THEN price_change_percent END) as avg_sl_percent
+                AVG(CASE 
+                    WHEN close_reason = 'take_profit' 
+                      OR (close_reason = 'trailing_stop' AND price_change_percent > 0) 
+                    THEN price_change_percent 
+                END) as avg_tp_percent,
+
+                AVG(CASE 
+                    WHEN close_reason = 'stop_loss' 
+                      OR (close_reason = 'trailing_stop' AND price_change_percent <= 0)
+                    THEN price_change_percent 
+                END) as avg_sl_percent
 
             FROM recalculated_pnl
         """
@@ -468,7 +499,9 @@ def signal_performance():
             efficiency_query,
             (hide_older, hide_younger,  # Временные фильтры
              display_position_size, display_leverage,  # TP profit
+             display_position_size, display_leverage,  # Trailing profit (прибыльные)
              display_position_size, display_leverage,  # SL loss
+             display_position_size, display_leverage,  # Trailing loss (убыточные)
              display_position_size, display_leverage,  # Unrealized
              display_leverage,  # Max potential total
              display_leverage),  # Max potential TP
