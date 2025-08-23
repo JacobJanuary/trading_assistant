@@ -387,139 +387,220 @@ def signal_performance():
                                                  default=float(filters['position_size_usd']))
 
         # ========== СТАТИСТИКА ЭФФЕКТИВНОСТИ С ПОЛНЫМ ПЕРЕСЧЕТОМ ==========
+        # Замените блок efficiency_query в app.py (строки 453-550) на этот исправленный код:
+
+        # ========== СТАТИСТИКА ЭФФЕКТИВНОСТИ С ПОЛНЫМ ПЕРЕСЧЕТОМ ==========
         efficiency_query = """
-            WITH recalculated_pnl AS (
-                SELECT 
-                    signal_id,
-                    pair_symbol,
-                    signal_action,
-                    entry_price,
-                    closing_price,
-                    last_known_price,
-                    is_closed,
-                    close_reason,
-                    signal_timestamp,
-                    leverage as original_leverage,
-                    max_potential_profit_usd,
-                    realized_pnl_usd,
+                    WITH recalculated_pnl AS (
+                        SELECT 
+                            signal_id,
+                            pair_symbol,
+                            signal_action,
+                            entry_price,
+                            closing_price,
+                            last_known_price,
+                            is_closed,
+                            close_reason,
+                            signal_timestamp,
+                            leverage as original_leverage,
+                            max_potential_profit_usd,
+                            realized_pnl_usd,
 
-                    -- Пересчитываем процент изменения цены
-                    CASE 
-                        WHEN signal_action IN ('SELL', 'SHORT') THEN
+                            -- Пересчитываем процент изменения цены
                             CASE 
-                                WHEN is_closed THEN ((entry_price - closing_price) / entry_price * 100)
-                                ELSE ((entry_price - last_known_price) / entry_price * 100)
-                            END
-                        ELSE
+                                WHEN signal_action IN ('SELL', 'SHORT') THEN
+                                    CASE 
+                                        WHEN is_closed THEN ((entry_price - closing_price) / entry_price * 100)
+                                        ELSE ((entry_price - last_known_price) / entry_price * 100)
+                                    END
+                                ELSE
+                                    CASE 
+                                        WHEN is_closed THEN ((closing_price - entry_price) / entry_price * 100)
+                                        ELSE ((last_known_price - entry_price) / entry_price * 100)
+                                    END
+                            END as price_change_percent
+
+                        FROM web.web_signals
+                        WHERE signal_timestamp >= NOW() - (INTERVAL '1 hour' * %s)
+                            AND signal_timestamp <= NOW() - (INTERVAL '1 hour' * %s)
+                    )
+                    SELECT 
+                        COUNT(*) as total_signals,
+                        COUNT(CASE WHEN is_closed = FALSE THEN 1 END) as open_positions,
+
+                        -- ИСПРАВЛЕНО: правильный подсчет TP (включая прибыльные trailing_stop)
+                        COUNT(CASE 
+                            WHEN close_reason = 'take_profit' THEN 1
+                            WHEN close_reason = 'trailing_stop' AND price_change_percent > 0 THEN 1
+                        END) as closed_tp,
+
+                        -- ИСПРАВЛЕНО: правильный подсчет SL (включая убыточные trailing_stop)
+                        COUNT(CASE 
+                            WHEN close_reason = 'stop_loss' THEN 1
+                            WHEN close_reason = 'trailing_stop' AND price_change_percent <= 0 THEN 1
+                        END) as closed_sl,
+
+                        -- ДОБАВЛЕНО: Отдельный подсчет trailing stops
+                        COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as closed_trailing,
+
+                        -- ДОБАВЛЕНО: Детализация trailing stops
+                        COUNT(CASE 
+                            WHEN close_reason = 'trailing_stop' AND price_change_percent > 0 
+                            THEN 1 
+                        END) as trailing_profitable,
+
+                        COUNT(CASE 
+                            WHEN close_reason = 'trailing_stop' AND price_change_percent <= 0 
+                            THEN 1 
+                        END) as trailing_loss,
+
+                        -- P&L с новыми параметрами
+                        COALESCE(SUM(
                             CASE 
-                                WHEN is_closed THEN ((closing_price - entry_price) / entry_price * 100)
-                                ELSE ((last_known_price - entry_price) / entry_price * 100)
+                                WHEN close_reason = 'take_profit' THEN
+                                    %s * (price_change_percent / 100) * %s
+                                WHEN close_reason = 'trailing_stop' AND price_change_percent > 0 THEN
+                                    %s * (price_change_percent / 100) * %s
                             END
-                    END as price_change_percent
+                        ), 0) as tp_realized_profit,
 
-                FROM web.web_signals
-                WHERE signal_timestamp >= NOW() - (INTERVAL '1 hour' * %s)
-                    AND signal_timestamp <= NOW() - (INTERVAL '1 hour' * %s)
-            )
-            SELECT 
-                COUNT(*) as total_signals,
-                COUNT(CASE WHEN is_closed = FALSE THEN 1 END) as open_positions,
+                        COALESCE(SUM(
+                            CASE 
+                                WHEN close_reason = 'stop_loss' THEN
+                                    ABS(%s * (price_change_percent / 100) * %s)
+                                WHEN close_reason = 'trailing_stop' AND price_change_percent <= 0 THEN
+                                    ABS(%s * (price_change_percent / 100) * %s)
+                            END
+                        ), 0) as sl_realized_loss,
 
-                -- ИСПРАВЛЕНО: правильный подсчет TP (включая прибыльные trailing_stop)
-                COUNT(CASE 
-                    WHEN close_reason = 'take_profit' THEN 1
-                    WHEN close_reason = 'trailing_stop' AND price_change_percent > 0 THEN 1
-                END) as closed_tp,
+                        COALESCE(SUM(
+                            CASE WHEN is_closed = FALSE THEN
+                                %s * (price_change_percent / 100) * %s
+                            END
+                        ), 0) as unrealized_pnl,
 
-                -- ИСПРАВЛЕНО: правильный подсчет SL (включая убыточные trailing_stop)
-                COUNT(CASE 
-                    WHEN close_reason = 'stop_loss' THEN 1
-                    WHEN close_reason = 'trailing_stop' AND price_change_percent <= 0 THEN 1
-                END) as closed_sl,
-
-                -- Отдельный подсчет trailing stops
-                COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as closed_trailing,
-
-                -- P&L с новыми параметрами
-                COALESCE(SUM(
-                    CASE 
-                        WHEN close_reason = 'take_profit' THEN
-                            %s * (price_change_percent / 100) * %s
-                        WHEN close_reason = 'trailing_stop' AND price_change_percent > 0 THEN
-                            %s * (price_change_percent / 100) * %s
-                    END
-                ), 0) as tp_realized_profit,
-
-                COALESCE(SUM(
-                    CASE 
-                        WHEN close_reason = 'stop_loss' THEN
-                            ABS(%s * (price_change_percent / 100) * %s)
-                        WHEN close_reason = 'trailing_stop' AND price_change_percent <= 0 THEN
-                            ABS(%s * (price_change_percent / 100) * %s)
-                    END
-                ), 0) as sl_realized_loss,
-
-                COALESCE(SUM(
-                    CASE WHEN is_closed = FALSE THEN
-                        %s * (price_change_percent / 100) * %s
-                    END
-                ), 0) as unrealized_pnl,
-
-                -- Максимальный профит тоже пересчитываем
-                COALESCE(SUM(
-                    (max_potential_profit_usd / original_leverage) * %s
-                ), 0) as total_max_potential,
-
-                COALESCE(SUM(
-                    CASE 
-                        WHEN close_reason = 'take_profit' 
-                          OR (close_reason = 'trailing_stop' AND price_change_percent > 0) THEN
+                        -- Максимальный профит тоже пересчитываем
+                        COALESCE(SUM(
                             (max_potential_profit_usd / original_leverage) * %s
-                    END
-                ), 0) as tp_max_potential,
+                        ), 0) as total_max_potential,
 
-                -- Средние проценты
-                AVG(CASE 
-                    WHEN close_reason = 'take_profit' 
-                      OR (close_reason = 'trailing_stop' AND price_change_percent > 0) 
-                    THEN price_change_percent 
-                END) as avg_tp_percent,
+                        COALESCE(SUM(
+                            CASE 
+                                WHEN close_reason = 'take_profit' 
+                                  OR (close_reason = 'trailing_stop' AND price_change_percent > 0) THEN
+                                    (max_potential_profit_usd / original_leverage) * %s
+                            END
+                        ), 0) as tp_max_potential,
 
-                AVG(CASE 
-                    WHEN close_reason = 'stop_loss' 
-                      OR (close_reason = 'trailing_stop' AND price_change_percent <= 0)
-                    THEN price_change_percent 
-                END) as avg_sl_percent
+                        -- ДОБАВЛЕНО: Средние значения для trailing и fixed TP
+                        COALESCE(AVG(CASE 
+                            WHEN close_reason = 'trailing_stop' AND price_change_percent > 0
+                            THEN %s * (price_change_percent / 100) * %s
+                        END), 0) as trailing_avg_profit,
 
-            FROM recalculated_pnl
-        """
+                        COALESCE(AVG(CASE 
+                            WHEN close_reason = 'take_profit'
+                            THEN %s * (price_change_percent / 100) * %s
+                        END), 0) as tp_avg_profit,
 
-        # Выполняем запрос с новыми параметрами
+                        -- ДОБАВЛЕНО: Эффективность trailing stop
+                        CASE 
+                            WHEN COALESCE(SUM(CASE 
+                                WHEN close_reason = 'trailing_stop' 
+                                THEN (max_potential_profit_usd / original_leverage) * %s 
+                            END), 0) > 0 
+                            THEN (
+                                COALESCE(SUM(CASE 
+                                    WHEN close_reason = 'trailing_stop' 
+                                    THEN %s * (price_change_percent / 100) * %s
+                                END), 0) / 
+                                NULLIF(SUM(CASE 
+                                    WHEN close_reason = 'trailing_stop' 
+                                    THEN (max_potential_profit_usd / original_leverage) * %s 
+                                END), 0) * 100
+                            )
+                            ELSE 0
+                        END as trailing_efficiency,
+
+                        -- ДОБАВЛЕНО: Захват движения для trailing
+                        COALESCE(SUM(CASE 
+                            WHEN close_reason = 'trailing_stop' 
+                            THEN (max_potential_profit_usd / original_leverage) * %s
+                        END), 0) as trailing_max_movement,
+
+                        COALESCE(SUM(CASE 
+                            WHEN close_reason = 'trailing_stop' 
+                            THEN %s * (price_change_percent / 100) * %s
+                        END), 0) as trailing_captured,
+
+                        -- Средние проценты
+                        AVG(CASE 
+                            WHEN close_reason = 'take_profit' 
+                              OR (close_reason = 'trailing_stop' AND price_change_percent > 0) 
+                            THEN price_change_percent 
+                        END) as avg_tp_percent,
+
+                        AVG(CASE 
+                            WHEN close_reason = 'stop_loss' 
+                              OR (close_reason = 'trailing_stop' AND price_change_percent <= 0)
+                            THEN price_change_percent 
+                        END) as avg_sl_percent
+
+                    FROM recalculated_pnl
+                """
+
+        # Выполняем запрос с расширенным набором параметров
         efficiency_stats = db.execute_query(
             efficiency_query,
-            (hide_older, hide_younger,  # Временные фильтры
-             display_position_size, display_leverage,  # TP profit
-             display_position_size, display_leverage,  # Trailing profit (прибыльные)
-             display_position_size, display_leverage,  # SL loss
-             display_position_size, display_leverage,  # Trailing loss (убыточные)
-             display_position_size, display_leverage,  # Unrealized
-             display_leverage,  # Max potential total
-             display_leverage),  # Max potential TP
+            (hide_older, hide_younger,  # 1-2: Временные фильтры
+             display_position_size, display_leverage,  # 3-4: TP profit
+             display_position_size, display_leverage,  # 5-6: Trailing profit (прибыльные)
+             display_position_size, display_leverage,  # 7-8: SL loss
+             display_position_size, display_leverage,  # 9-10: Trailing loss (убыточные)
+             display_position_size, display_leverage,  # 11-12: Unrealized
+             display_leverage,  # 13: Max potential total
+             display_leverage,  # 14: Max potential TP
+             display_position_size, display_leverage,  # 15-16: trailing_avg_profit
+             display_position_size, display_leverage,  # 17-18: tp_avg_profit
+             display_leverage,  # 19: trailing efficiency max potential
+             display_position_size, display_leverage,  # 20-21: trailing efficiency captured
+             display_leverage,  # 22: trailing efficiency denominator
+             display_leverage,  # 23: trailing_max_movement
+             display_position_size, display_leverage),  # 24-25: trailing_captured
             fetch=True
         )[0]
 
-        # Теперь все значения уже пересчитаны с новыми параметрами
+        # Обработка результатов и формирование efficiency_metrics
         tp_realized_profit = float(efficiency_stats['tp_realized_profit'] or 0)
         sl_realized_loss = float(efficiency_stats['sl_realized_loss'] or 0)
         unrealized_pnl = float(efficiency_stats['unrealized_pnl'] or 0)
         total_max_potential = float(efficiency_stats['total_max_potential'] or 0)
         tp_max_potential = float(efficiency_stats['tp_max_potential'] or 0)
 
+        # ДОБАВЛЕНО: Новые метрики для trailing
+        trailing_max_movement = float(efficiency_stats['trailing_max_movement'] or 0)
+        trailing_captured = float(efficiency_stats['trailing_captured'] or 0)
+        trailing_missed = max(0, trailing_max_movement - abs(trailing_captured)) if trailing_max_movement > 0 else 0
+        trailing_capture_rate = (
+                    abs(trailing_captured) / trailing_max_movement * 100) if trailing_max_movement > 0 else 0
+
         efficiency_metrics = {
             'total_signals': efficiency_stats['total_signals'],
             'open_positions': efficiency_stats['open_positions'],
             'closed_tp': efficiency_stats['closed_tp'],
             'closed_sl': efficiency_stats['closed_sl'],
+            'closed_trailing': efficiency_stats['closed_trailing'] or 0,
+
+            # ДОБАВЛЕНО: Все недостающие поля для trailing анализа
+            'trailing_profitable': efficiency_stats['trailing_profitable'] or 0,
+            'trailing_loss': efficiency_stats['trailing_loss'] or 0,
+            'trailing_avg_profit': float(efficiency_stats['trailing_avg_profit'] or 0),
+            'tp_avg_profit': float(efficiency_stats['tp_avg_profit'] or 0),
+            'trailing_efficiency': float(efficiency_stats['trailing_efficiency'] or 0),
+            'trailing_max_movement': trailing_max_movement,
+            'trailing_captured': trailing_captured,
+            'trailing_missed': trailing_missed,
+            'trailing_capture_rate': trailing_capture_rate,
 
             'tp_realized_profit': tp_realized_profit,
             'sl_realized_loss': sl_realized_loss,

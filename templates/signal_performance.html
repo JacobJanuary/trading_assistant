@@ -270,7 +270,183 @@
         {% endif %}
     </div>
 
-    <!-- В templates/signal_performance.html добавляем новый блок после основной статистики -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h2 class="text-xl font-bold text-gray-800 mb-4">
+            <i class="fas fa-chart-area mr-2 text-purple-600"></i>
+            Анализ Trailing Stop
+        </h2>
+
+        <!-- Статистика по Trailing Stop -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+
+            <!-- Эффективность Trailing -->
+            <div class="bg-gradient-to-br from-purple-50 to-indigo-100 p-4 rounded-lg">
+                <div class="flex justify-between items-start mb-3">
+                    <div>
+                        <h3 class="text-sm font-medium text-gray-700">Trailing Stop Эффективность</h3>
+                        <p class="text-2xl font-bold text-purple-700 mt-1">
+                            {% if efficiency.closed_trailing > 0 %}
+                            {{ "%.1f"|format((efficiency.trailing_profitable / efficiency.closed_trailing) * 100) }}%
+                            {% else %}
+                            N/A
+                            {% endif %}
+                        </p>
+                    </div>
+                    <div class="text-purple-600">
+                        <i class="fas fa-wave-square text-2xl"></i>
+                    </div>
+                </div>
+                <div class="text-xs text-gray-600 space-y-1">
+                    <div>Всего Trailing: <span class="font-semibold">{{ efficiency.closed_trailing|default(0) }}</span>
+                    </div>
+                    <div>Прибыльных: <span class="font-semibold text-green-700">{{ efficiency.trailing_profitable|default(0) }}</span>
+                    </div>
+                    <div>Убыточных: <span
+                            class="font-semibold text-red-700">{{ efficiency.trailing_loss|default(0) }}</span></div>
+                </div>
+            </div>
+
+            <!-- Сравнение с Fixed TP -->
+            <div class="bg-gradient-to-br from-blue-50 to-cyan-100 p-4 rounded-lg">
+                <div class="flex justify-between items-start mb-3">
+                    <div>
+                        <h3 class="text-sm font-medium text-gray-700">Trailing vs Fixed TP</h3>
+                        <p class="text-lg font-bold text-blue-700 mt-1">
+                            {% set trailing_avg = efficiency.trailing_avg_profit|default(0) %}
+                            {% set tp_avg = efficiency.tp_avg_profit|default(0) %}
+                            {% if trailing_avg > tp_avg %}
+                            <span class="text-green-600">+{{ "%.1f"|format(((trailing_avg - tp_avg) / tp_avg * 100) if tp_avg > 0 else 0) }}%</span>
+                            {% else %}
+                            <span class="text-red-600">{{ "%.1f"|format(((trailing_avg - tp_avg) / tp_avg * 100) if tp_avg > 0 else 0) }}%</span>
+                            {% endif %}
+                        </p>
+                    </div>
+                    <div class="text-blue-600">
+                        <i class="fas fa-balance-scale text-2xl"></i>
+                    </div>
+                </div>
+                <div class="text-xs text-gray-600 space-y-1">
+                    <div>Ср. Trailing: <span class="font-semibold">${{ "%.2f"|format(trailing_avg) }}</span></div>
+                    <div>Ср. Fixed TP: <span class="font-semibold">${{ "%.2f"|format(tp_avg) }}</span></div>
+                    <div>Разница: <span
+                            class="font-semibold {% if trailing_avg > tp_avg %}text-green-700{% else %}text-red-700{% endif %}">
+                    ${{ "%.2f"|format(trailing_avg - tp_avg) }}
+                </span></div>
+                </div>
+            </div>
+
+            <!-- Упущенный профит по режимам -->
+            <div class="bg-gradient-to-br from-orange-50 to-yellow-100 p-4 rounded-lg">
+                <div class="flex justify-between items-start mb-3">
+                    <div>
+                        <h3 class="text-sm font-medium text-gray-700">Захват движения</h3>
+                        <p class="text-2xl font-bold text-orange-700 mt-1">
+                            {% if efficiency.trailing_capture_rate is defined %}
+                            {{ "%.1f"|format(efficiency.trailing_capture_rate) }}%
+                            {% else %}
+                            N/A
+                            {% endif %}
+                        </p>
+                    </div>
+                    <div class="text-orange-600">
+                        <i class="fas fa-crosshairs text-2xl"></i>
+                    </div>
+                </div>
+                <div class="text-xs text-gray-600 space-y-1">
+                    <div>Max движение: <span class="font-semibold">${{ "%.2f"|format(efficiency.trailing_max_movement|default(0)) }}</span>
+                    </div>
+                    <div>Захвачено: <span class="font-semibold text-green-700">${{ "%.2f"|format(efficiency.trailing_captured|default(0)) }}</span>
+                    </div>
+                    <div>Упущено: <span class="font-semibold text-orange-600">${{ "%.2f"|format(efficiency.trailing_missed|default(0)) }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- График распределения выходов -->
+        <div class="border-t pt-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Распределение точек выхода</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                <!-- Trailing Stop распределение -->
+                <div>
+                    <h4 class="text-xs text-gray-600 mb-2">Trailing Stop выходы по профиту (%)</h4>
+                    <div class="space-y-2">
+                        {% set ranges = [
+                        {'label': '< 0%', 'count': efficiency.trailing_range_negative|default(0), 'color': 'red'},
+                        {'label': '0-1%', 'count': efficiency.trailing_range_0_1|default(0), 'color': 'yellow'},
+                        {'label': '1-2%', 'count': efficiency.trailing_range_1_2|default(0), 'color': 'blue'},
+                        {'label': '2-3%', 'count': efficiency.trailing_range_2_3|default(0), 'color': 'green'},
+                        {'label': '> 3%', 'count': efficiency.trailing_range_3_plus|default(0), 'color': 'emerald'}
+                        ] %}
+
+                        {% for range in ranges %}
+                        <div class="flex items-center">
+                            <span class="text-xs w-16 text-gray-600">{{ range.label }}</span>
+                            <div class="flex-1 bg-gray-200 rounded-full h-4 ml-2 relative">
+                                {% if efficiency.closed_trailing > 0 %}
+                                <div class="bg-{{ range.color }}-500 h-4 rounded-full"
+                                     style="width: {{ (range.count / efficiency.closed_trailing * 100)|round }}%"></div>
+                                {% endif %}
+                            </div>
+                            <span class="text-xs ml-2 w-8 text-right">{{ range.count }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Сравнительная эффективность -->
+                <div>
+                    <h4 class="text-xs text-gray-600 mb-2">Эффективность захвата по режимам</h4>
+                    <div class="space-y-3">
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span>Fixed TP</span>
+                                <span>{{ "%.1f"|format(efficiency.tp_efficiency) }}%</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-3">
+                                <div class="bg-blue-500 h-3 rounded-full"
+                                     style="width: {{ efficiency.tp_efficiency }}%"></div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span>Trailing Stop</span>
+                                <span>{{ "%.1f"|format(efficiency.trailing_efficiency|default(0)) }}%</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-3">
+                                <div class="bg-purple-500 h-3 rounded-full"
+                                     style="width: {{ efficiency.trailing_efficiency|default(0) }}%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Рекомендации по оптимизации -->
+        {% if efficiency.closed_trailing > 5 %}
+        <div class="mt-4 bg-purple-50 p-3 rounded-lg">
+            <div class="text-xs text-gray-700">
+                <i class="fas fa-lightbulb mr-1 text-purple-600"></i>
+                <strong>Анализ Trailing Stop:</strong>
+
+                {% if efficiency.trailing_efficiency|default(0) > efficiency.tp_efficiency %}
+                <span class="text-green-700">✓ Trailing Stop показывает лучшую эффективность (+{{ "%.1f"|format(efficiency.trailing_efficiency - efficiency.tp_efficiency) }}%). Рекомендуется продолжить использование.</span>
+                {% elif efficiency.trailing_efficiency|default(0) < efficiency.tp_efficiency - 10 %}
+                <span class="text-orange-700">⚠ Fixed TP более эффективен. Рассмотрите корректировку параметров trailing (уменьшите distance или увеличьте activation).</span>
+                {% else %}
+                <span class="text-blue-700">≈ Эффективность сопоставима. Выбор зависит от рыночных условий.</span>
+                {% endif %}
+
+                {% if efficiency.trailing_capture_rate|default(0) < 50 %}
+                <br><span class="text-red-600 mt-1">⚠ Низкий захват движения ({{ "%.1f"|format(efficiency.trailing_capture_rate) }}%). Возможно, trailing срабатывает слишком рано.</span>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
 
     <!-- Статистика эффективности (новый блок) -->
     <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
@@ -890,7 +1066,36 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('trailingDistance')?.addEventListener('input', updateTrailingInfo);
 });
 
-    // Проверяем соединение каждые 30 секунд
-    setInterval(checkConnection, 30000);
+// Функция для обновления статистики trailing в реальном времени
+function updateTrailingStats() {
+    fetch('/api/get_trailing_stats')
+        .then(response => response.json())
+        .then(data => {
+            // Обновляем значения на странице
+            document.querySelectorAll('[data-trailing-stat]').forEach(el => {
+                const stat = el.dataset.trailingStat;
+                if (data[stat] !== undefined) {
+                    el.textContent = formatValue(data[stat], el.dataset.format || 'number');
+                }
+            });
+        })
+        .catch(console.error);
+}
+
+// Форматирование значений
+function formatValue(value, format) {
+    switch(format) {
+        case 'percent':
+            return `${value.toFixed(1)}%`;
+        case 'currency':
+            return `$${value.toFixed(2)}`;
+        case 'number':
+        default:
+            return value.toString();
+    }
+}
+
+// Обновляем каждые 30 секунд
+setInterval(updateTrailingStats, 30000);
 </script>
 {% endblock %}
