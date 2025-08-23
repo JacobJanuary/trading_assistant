@@ -737,69 +737,74 @@ def build_scoring_filter_conditions(filters):
     params = []
 
     # Отладочный вывод
-    print(f"\n[DEBUG] Обработка фильтра: {filters}")
+    print(f"\n[DEBUG] Обработка фильтра:")
+    print(f"  Order Type: {filters.get('order_type')}")
+    print(f"  Market: {filters.get('market', 'Не указан')}")
+    print(f"  Recommended Action: {filters.get('recommended_action', 'Не указано')}")
 
-    # Базовое условие для типа ордера
+    # Базовое условие - начинаем с пустой скобки
+    # Теперь market НЕ обязательный
     if filters.get('order_type') not in ['BUY', 'SELL']:
-        print("[DEBUG] Не указан или неверный order_type!")
+        print("[DEBUG] ОШИБКА: Не указан или неверный order_type!")
         return "", []
 
-    base_condition = "(mr.regime = %s"
+    # Собираем все условия
+    all_conditions = []
 
-    # ВАЖНО: market должен быть строкой
-    market = filters.get('market')
-    if not market:
-        print("[DEBUG] Не указан market!")
-        return "", []
+    # Market - теперь опциональный
+    if filters.get('market'):
+        all_conditions.append("mr.regime = %s")
+        params.append(str(filters['market']))
+        print(f"[DEBUG] Добавлено условие market: {filters['market']}")
 
-    # Убеждаемся что market это строка
-    market = str(market)
-    params.append(market)
+    # Recommended Action - опциональный
+    if filters.get('recommended_action'):
+        all_conditions.append("sh.recommended_action = %s")
+        params.append(filters['recommended_action'])
+        print(f"[DEBUG] Добавлено условие recommended_action: {filters['recommended_action']}")
 
-    # Добавляем условия для scores
-    score_conditions = []
-
-    # Total score - преобразуем в числа
+    # Total score
     if filters.get('total_score_min') is not None:
-        score_conditions.append("sh.total_score >= %s")
+        all_conditions.append("sh.total_score >= %s")
         params.append(float(filters['total_score_min']))
     if filters.get('total_score_max') is not None:
-        score_conditions.append("sh.total_score <= %s")
+        all_conditions.append("sh.total_score <= %s")
         params.append(float(filters['total_score_max']))
 
     # Indicator score
     if filters.get('indicator_score_min') is not None:
-        score_conditions.append("sh.indicator_score >= %s")
+        all_conditions.append("sh.indicator_score >= %s")
         params.append(float(filters['indicator_score_min']))
     if filters.get('indicator_score_max') is not None:
-        score_conditions.append("sh.indicator_score <= %s")
+        all_conditions.append("sh.indicator_score <= %s")
         params.append(float(filters['indicator_score_max']))
 
     # Pattern score
     if filters.get('pattern_score_min') is not None:
-        score_conditions.append("sh.pattern_score >= %s")
+        all_conditions.append("sh.pattern_score >= %s")
         params.append(float(filters['pattern_score_min']))
     if filters.get('pattern_score_max') is not None:
-        score_conditions.append("sh.pattern_score <= %s")
+        all_conditions.append("sh.pattern_score <= %s")
         params.append(float(filters['pattern_score_max']))
 
     # Combination score
     if filters.get('combination_score_min') is not None:
-        score_conditions.append("sh.combination_score >= %s")
+        all_conditions.append("sh.combination_score >= %s")
         params.append(float(filters['combination_score_min']))
     if filters.get('combination_score_max') is not None:
-        score_conditions.append("sh.combination_score <= %s")
+        all_conditions.append("sh.combination_score <= %s")
         params.append(float(filters['combination_score_max']))
 
+    # Если нет условий вообще - возвращаем пустое условие
+    if not all_conditions:
+        print("[DEBUG] Нет условий для фильтрации!")
+        return "", []
+
     # Собираем полное условие
-    if score_conditions:
-        full_condition = base_condition + " AND " + " AND ".join(score_conditions) + ")"
-    else:
-        full_condition = base_condition + ")"
+    full_condition = "(" + " AND ".join(all_conditions) + ")"
 
     print(f"[DEBUG] Сформированное условие: {full_condition}")
-    print(f"[DEBUG] Параметры условия: {params}")
-    print(f"[DEBUG] Типы параметров: {[type(p).__name__ for p in params]}")
+    print(f"[DEBUG] Количество параметров: {len(params)}")
 
     return full_condition, params
 
@@ -843,6 +848,7 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
             sh.*,
             tp.pair_symbol as symbol,
             mr.regime AS market_regime,
+            sh.recommended_action,
             CASE 
     """
 
