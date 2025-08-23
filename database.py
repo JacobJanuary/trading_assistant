@@ -842,11 +842,13 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
         print("[DEBUG] Нет активных фильтров")
         return []
 
-    # Строим полный запрос
+    # Строим полный запрос с информацией о бирже
     query = """
         SELECT
             sh.*,
             tp.pair_symbol as symbol,
+            tp.exchange_id,
+            ex.name as exchange_name,
             mr.regime AS market_regime,
             sh.recommended_action,
             CASE 
@@ -856,6 +858,7 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
             END as signal_action
         FROM fas.scoring_history AS sh
         JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
+        JOIN public.exchanges ex ON ex.id = tp.exchange_id
         LEFT JOIN LATERAL (
             SELECT regime
             FROM fas.market_regime mr
@@ -866,7 +869,7 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
         ) AS mr ON true
         WHERE sh.timestamp::date = %s
             AND tp.contract_type_id = 1
-            AND tp.exchange_id = 1
+            AND tp.exchange_id IN (1, 2)  -- Binance и Bybit
             AND (
     """
 
@@ -879,7 +882,7 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
     all_params.append(date_filter)  # Дата для WHERE
     all_params.extend(case_params)  # Те же параметры для WHERE условий
 
-    # ОТЛАДОЧНЫЙ ВЫВОД
+    # ОТЛАДОЧНЫЙ ВЫВОД с типами
     print("\n" + "=" * 80)
     print("[DEBUG] ИТОГОВЫЙ SQL ЗАПРОС (с плейсхолдерами %s):")
     print("=" * 80)
@@ -891,7 +894,6 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
 
     # СОЗДАЕМ SQL С ПОДСТАВЛЕННЫМИ ЗНАЧЕНИЯМИ ДЛЯ ОТЛАДКИ
     debug_query = query
-    # Заменяем все %s на реальные значения по порядку
     for param in all_params:
         if isinstance(param, str):
             value = f"'{param}'"
@@ -902,7 +904,6 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
         else:
             value = f"'{param}'"
 
-        # Заменяем первое вхождение %s
         debug_query = debug_query.replace('%s', value, 1)
 
     print("\n" + "=" * 80)
@@ -910,13 +911,6 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
     print("=" * 80)
     print(debug_query)
     print("=" * 80)
-
-    # Дополнительная проверка - убедимся что все %s заменены
-    remaining_placeholders = debug_query.count('%s')
-    if remaining_placeholders > 0:
-        print(f"[WARNING] Остались незамененные плейсхолдеры: {remaining_placeholders}")
-        print(f"[WARNING] Всего параметров: {len(all_params)}")
-        print(f"[WARNING] Плейсхолдеров в исходном запросе: {query.count('%s')}")
 
     print("\n[DEBUG] Выполняем запрос...")
 
@@ -926,13 +920,22 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
         print(f"[DEBUG] Найдено сигналов: {len(results) if results else 0}")
 
         if results and len(results) > 0:
+            # Группируем по биржам для статистики
+            exchanges_count = {}
+            for signal in results:
+                exchange = signal.get('exchange_name', 'Unknown')
+                exchanges_count[exchange] = exchanges_count.get(exchange, 0) + 1
+
+            print("\n[DEBUG] Распределение по биржам:")
+            for exchange, count in exchanges_count.items():
+                print(f"  {exchange}: {count} сигналов")
+
             print("\n[DEBUG] Примеры найденных сигналов (первые 5):")
             for i, signal in enumerate(results[:5]):
                 print(f"  {i + 1}. {signal.get('symbol', 'N/A'):10s} | "
+                      f"Exchange: {signal.get('exchange_name', 'N/A'):7s} | "
                       f"Time: {signal.get('timestamp').strftime('%H:%M') if signal.get('timestamp') else 'N/A'} | "
                       f"Total: {float(signal.get('total_score', 0)):6.1f} | "
-                      f"Ind: {float(signal.get('indicator_score', 0)):6.1f} | "
-                      f"Pat: {float(signal.get('pattern_score', 0)):6.1f} | "
                       f"Market: {signal.get('market_regime', 'N/A'):7s}")
 
         return results
@@ -1109,6 +1112,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                 signal['trading_pair_id'],
                 signal['signal_action'],
                 signal['market_regime'],
+                signal.get('exchange_name', 'Unknown'),
                 float(signal.get('total_score', 0)),
                 float(signal.get('indicator_score', 0)),
                 float(signal.get('pattern_score', 0)),
@@ -1183,33 +1187,18 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
 
 def _insert_batch_results(db, batch_data):
     """Вспомогательная функция для batch insert"""
-    insert_query = """
-        INSERT INTO web.scoring_analysis_results (
-            session_id, user_id, signal_timestamp, pair_symbol, trading_pair_id,
-            signal_action, market_regime,
-            total_score, indicator_score, pattern_score, combination_score,
-            entry_price, best_price, close_price, close_time,
-            is_closed, close_reason, hours_to_close,
-            pnl_percent, pnl_usd,
-            max_potential_profit_percent, max_potential_profit_usd,
-            tp_percent, sl_percent, position_size, leverage
-        ) VALUES %s
-    """
-
-    # psycopg3 поддерживает execute_values через другой синтаксис
-    # Используем execute_batch или построим запрос вручную
     for data in batch_data:
         single_insert = """
             INSERT INTO web.scoring_analysis_results (
                 session_id, user_id, signal_timestamp, pair_symbol, trading_pair_id,
-                signal_action, market_regime,
+                signal_action, market_regime, exchange_name,
                 total_score, indicator_score, pattern_score, combination_score,
                 entry_price, best_price, close_price, close_time,
                 is_closed, close_reason, hours_to_close,
                 pnl_percent, pnl_usd,
                 max_potential_profit_percent, max_potential_profit_usd,
                 tp_percent, sl_percent, position_size, leverage
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         db.execute_query(single_insert, data)
 

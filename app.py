@@ -857,6 +857,7 @@ def api_scoring_apply_filters():
                 formatted_signals.append({
                     'timestamp': signal['signal_timestamp'],
                     'pair_symbol': signal['pair_symbol'],
+                    'exchange_name': signal.get('exchange_name', 'Unknown'),
                     'signal_action': signal['signal_action'],
                     'market_regime': signal['market_regime'],
                     'total_score': float(signal['total_score'] or 0),
