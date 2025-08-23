@@ -1158,6 +1158,122 @@ def api_scoring_get_date_info():
         logger.error(f"Ошибка получения информации о дате: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+
+# Добавьте эти endpoints в app.py после существующих API routes
+
+@app.route('/api/initialize_signals_trailing', methods=['POST'])
+@login_required
+def api_initialize_signals_trailing():
+    """Инициализация с поддержкой Trailing Stop"""
+    if not current_user.is_admin:
+        return jsonify({'status': 'error', 'message': 'Только для администраторов'}), 403
+
+    try:
+        data = request.get_json() or {}
+
+        # Получаем параметры
+        hours_back = data.get('hours', 48)
+        use_trailing_stop = data.get('use_trailing_stop', False)
+
+        # Сохраняем настройки пользователя
+        if use_trailing_stop:
+            # Режим Trailing Stop
+            trailing_distance = data.get('trailing_distance', 2.0)
+            trailing_activation = data.get('trailing_activation', 1.0)
+            insurance_sl = data.get('insurance_sl', 3.0)
+
+            update_query = """
+                INSERT INTO web.user_signal_filters (
+                    user_id, use_trailing_stop, 
+                    trailing_distance_pct, trailing_activation_pct,
+                    stop_loss_percent
+                ) VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    use_trailing_stop = EXCLUDED.use_trailing_stop,
+                    trailing_distance_pct = EXCLUDED.trailing_distance_pct,
+                    trailing_activation_pct = EXCLUDED.trailing_activation_pct,
+                    stop_loss_percent = EXCLUDED.stop_loss_percent,
+                    updated_at = NOW()
+            """
+            db.execute_query(update_query, (
+                current_user.id, True, trailing_distance,
+                trailing_activation, insurance_sl
+            ))
+
+            mode_text = f"Trailing Stop (активация: {trailing_activation}%, дистанция: {trailing_distance}%)"
+        else:
+            # Режим Fixed TP/SL
+            tp_percent = data.get('take_profit', 4.0)
+            sl_percent = data.get('stop_loss', 3.0)
+
+            update_query = """
+                INSERT INTO web.user_signal_filters (
+                    user_id, use_trailing_stop,
+                    stop_loss_percent, take_profit_percent
+                ) VALUES (%s, %s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    use_trailing_stop = EXCLUDED.use_trailing_stop,
+                    stop_loss_percent = EXCLUDED.stop_loss_percent,
+                    take_profit_percent = EXCLUDED.take_profit_percent,
+                    updated_at = NOW()
+            """
+            db.execute_query(update_query, (
+                current_user.id, False, sl_percent, tp_percent
+            ))
+
+            mode_text = f"Fixed TP/SL (TP: {tp_percent}%, SL: {sl_percent}%)"
+
+        # Переинициализация сигналов
+        from database import initialize_signals_with_trailing
+        result = initialize_signals_with_trailing(
+            db, hours_back=hours_back, user_id=current_user.id
+        )
+
+        return jsonify({
+            'status': 'success',
+            'stats': result,
+            'message': f"Инициализировано {result['initialized']} сигналов в режиме {mode_text}"
+        })
+
+    except Exception as e:
+        logger.error(f"Ошибка при инициализации с trailing: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/get_user_trading_mode')
+@login_required
+def api_get_user_trading_mode():
+    """Получение текущего режима торговли пользователя"""
+    try:
+        query = """
+            SELECT use_trailing_stop, trailing_distance_pct, 
+                   trailing_activation_pct, stop_loss_percent,
+                   take_profit_percent
+            FROM web.user_signal_filters
+            WHERE user_id = %s
+        """
+        result = db.execute_query(query, (current_user.id,), fetch=True)
+
+        if result:
+            data = result[0]
+            return jsonify({
+                'use_trailing_stop': data['use_trailing_stop'] or False,
+                'trailing_distance_pct': float(data['trailing_distance_pct'] or 2.0),
+                'trailing_activation_pct': float(data['trailing_activation_pct'] or 1.0),
+                'insurance_sl': float(data['stop_loss_percent'] or 3.0),
+                'take_profit_percent': float(data['take_profit_percent'] or 4.0)
+            })
+        else:
+            return jsonify({
+                'use_trailing_stop': False,
+                'take_profit_percent': 4.0,
+                'stop_loss_percent': 3.0
+            })
+
+    except Exception as e:
+        logger.error(f"Ошибка получения режима торговли: {e}")
+        return jsonify({'error': str(e)}), 500
+
 # Обработка ошибок
 @app.errorhandler(404)
 def not_found(error):
