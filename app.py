@@ -930,7 +930,7 @@ def scoring_analysis():
 @app.route('/api/scoring/apply_filters', methods=['POST'])
 @login_required
 def api_scoring_apply_filters():
-    """API для применения фильтров скоринга - ИСПРАВЛЕНО"""
+    """API для применения фильтров скоринга с поддержкой Trailing Stop"""
     try:
         data = request.get_json()
 
@@ -949,7 +949,26 @@ def api_scoring_apply_filters():
         position_size = data.get('position_size', 100.0)
         leverage = data.get('leverage', 5)
 
+        # НОВОЕ: Получаем настройки trailing из user_signal_filters
+        settings_query = """
+            SELECT use_trailing_stop, trailing_distance_pct, trailing_activation_pct
+            FROM web.user_signal_filters
+            WHERE user_id = %s
+        """
+        user_settings = db.execute_query(settings_query, (current_user.id,), fetch=True)
+
+        use_trailing_stop = False
+        trailing_distance_pct = 2.0
+        trailing_activation_pct = 1.0
+
+        if user_settings:
+            settings = user_settings[0]
+            use_trailing_stop = settings.get('use_trailing_stop', False)
+            trailing_distance_pct = float(settings.get('trailing_distance_pct', 2.0))
+            trailing_activation_pct = float(settings.get('trailing_activation_pct', 1.0))
+
         print(f"[API] Обработка фильтров для даты {selected_date}")
+        print(f"[API] Режим: {'Trailing Stop' if use_trailing_stop else 'Fixed TP/SL'}")
         print(f"[API] BUY фильтров: {len(buy_filters)}, SELL фильтров: {len(sell_filters)}")
 
         # Получаем сигналы по фильтрам
@@ -958,13 +977,16 @@ def api_scoring_apply_filters():
         if raw_signals:
             print(f"[API] Найдено {len(raw_signals)} сигналов")
 
-            # Обрабатываем и сохраняем в БД
+            # Обрабатываем с учетом trailing stop
             result = process_scoring_signals_batch(
                 db, raw_signals, session_id, current_user.id,
                 tp_percent=tp_percent,
                 sl_percent=sl_percent,
                 position_size=position_size,
-                leverage=leverage
+                leverage=leverage,
+                use_trailing_stop=use_trailing_stop,
+                trailing_distance_pct=trailing_distance_pct,
+                trailing_activation_pct=trailing_activation_pct
             )
 
             # Получаем обработанные результаты из БД
@@ -993,16 +1015,21 @@ def api_scoring_apply_filters():
                     'max_potential_profit': float(signal['max_potential_profit_usd'] or 0)
                 })
 
-            # ИСПРАВЛЕНО: Правильно извлекаем статистику
+            # Статистика с учетом trailing stops
             stats_data = result['stats']
 
-            # Преобразуем Decimal в float для JSON
+            # Считаем trailing_stop с прибылью как победу
+            tp_count = int(stats_data.get('tp_count') or 0)
+            trailing_count = int(stats_data.get('trailing_count') or 0)
+            total_wins = tp_count + trailing_count  # Все trailing считаем победами если с прибылью
+
             stats = {
                 'total': int(stats_data.get('total') or 0),
                 'buy_signals': int(stats_data.get('buy_signals') or 0),
                 'sell_signals': int(stats_data.get('sell_signals') or 0),
-                'tp_count': int(stats_data.get('tp_count') or 0),
+                'tp_count': total_wins,  # Включаем trailing с прибылью
                 'sl_count': int(stats_data.get('sl_count') or 0),
+                'trailing_count': trailing_count,  # Отдельный счетчик для UI
                 'timeout_count': int(stats_data.get('timeout_count') or 0),
                 'total_pnl': float(stats_data.get('total_pnl') or 0),
                 'realized_profit': float(stats_data.get('tp_profit') or 0),
@@ -1010,7 +1037,8 @@ def api_scoring_apply_filters():
                 'max_potential': float(stats_data.get('total_max_potential') or 0),
                 'avg_hours_to_close': float(stats_data.get('avg_hours_to_close') or 0),
                 'binance_signals': int(stats_data.get('binance_signals') or 0),
-                'bybit_signals': int(stats_data.get('bybit_signals') or 0)
+                'bybit_signals': int(stats_data.get('bybit_signals') or 0),
+                'mode': 'Trailing Stop' if use_trailing_stop else 'Fixed TP/SL'
             }
 
             # Расчет метрик
@@ -1024,11 +1052,12 @@ def api_scoring_apply_filters():
             metrics = {
                 'win_rate': win_rate,
                 'tp_efficiency': tp_efficiency,
-                'net_pnl': stats['total_pnl']
+                'net_pnl': stats['total_pnl'],
+                'mode': stats['mode']
             }
 
             print(f"[API] Статистика: Total={stats['total']}, TP={stats['tp_count']}, "
-                  f"SL={stats['sl_count']}, P&L=${stats['total_pnl']:.2f}")
+                  f"SL={stats['sl_count']}, Trailing={stats['trailing_count']}, P&L=${stats['total_pnl']:.2f}")
 
             return jsonify({
                 'status': 'success',
@@ -1043,25 +1072,14 @@ def api_scoring_apply_filters():
                 }
             })
         else:
-            print("[API] Нет сигналов по заданным фильтрам")
+            # Нет сигналов
             return jsonify({
                 'status': 'success',
                 'data': {
                     'signals': [],
                     'stats': {
                         'total': 0,
-                        'buy_signals': 0,
-                        'sell_signals': 0,
-                        'tp_count': 0,
-                        'sl_count': 0,
-                        'timeout_count': 0,
-                        'total_pnl': 0,
-                        'realized_profit': 0,
-                        'realized_loss': 0,
-                        'max_potential': 0,
-                        'avg_hours_to_close': 0,
-                        'binance_signals': 0,
-                        'bybit_signals': 0
+                        'mode': 'Trailing Stop' if use_trailing_stop else 'Fixed TP/SL'
                     },
                     'metrics': {
                         'win_rate': 0,
@@ -1077,27 +1095,7 @@ def api_scoring_apply_filters():
         logger.error(traceback.format_exc())
         return jsonify({
             'status': 'error',
-            'message': str(e),
-            'data': {
-                'signals': [],
-                'stats': {
-                    'total': 0,
-                    'buy_signals': 0,
-                    'sell_signals': 0,
-                    'tp_count': 0,
-                    'sl_count': 0,
-                    'timeout_count': 0,
-                    'total_pnl': 0,
-                    'realized_profit': 0,
-                    'realized_loss': 0,
-                    'max_potential': 0
-                },
-                'metrics': {
-                    'win_rate': 0,
-                    'tp_efficiency': 0,
-                    'net_pnl': 0
-                }
-            }
+            'message': str(e)
         }), 500
 
 
