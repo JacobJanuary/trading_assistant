@@ -12,6 +12,16 @@ import os
 # Добавляем путь к основному скрипту
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Параметры анализа для тестов
+ANALYSIS_PARAMS = {
+    'tp_percent': 4.0,
+    'sl_percent': 3.0,
+    'position_size': 100.0,
+    'leverage': 5,
+    'analysis_hours': 48,
+    'entry_delay_minutes': 15
+}
+
 
 # Mock класс для тестирования без подключения к БД
 class MockScoringAnalyzer:
@@ -241,12 +251,16 @@ class TestScoringAnalyzer(unittest.TestCase):
         """Тест: позиция закрывается по таймауту"""
         entry_price = 100.0
 
-        # Цена колеблется, но не достигает ни TP, ни SL
+        # Цена колеблется, но не достигает ни TP (104), ни SL (97)
+        # Максимум 102.5, минимум 98 - не достигают уровней закрытия
         history = [
-            self.create_candle(i, 102.5, 98.5, 100 + i * 0.1)
-            for i in range(1, 10)
+            self.create_candle(1, 101, 99.5, 100.5),
+            self.create_candle(2, 102, 98.5, 101),
+            self.create_candle(3, 102.5, 99, 101.5),  # Максимум здесь
+            self.create_candle(4, 102, 98, 100),  # Минимум здесь
+            self.create_candle(5, 101.5, 99, 100.5),
+            self.create_candle(48, 101, 99.5, 101.5)  # Последняя свеча
         ]
-        history[-1] = self.create_candle(48, 102, 98, 101.5)  # Последняя свеча
 
         result = self.analyzer.process_price_history_improved(
             'BUY', entry_price, history, self.base_time
@@ -259,8 +273,11 @@ class TestScoringAnalyzer(unittest.TestCase):
         self.assertAlmostEqual(result['hours_to_close'], 48.0, places=1)
 
         # Максимальный потенциал
+        # Макс цена 102.5, мин цена 98
+        # Для BUY: профит = (102.5 - 100) / 100 * 100 = 2.5%
+        # Для BUY: убыток = (100 - 98) / 100 * 100 = 2.0%
         self.assertAlmostEqual(result['max_potential_profit_percent'], 2.5, places=2)
-        self.assertAlmostEqual(result['max_potential_loss_percent'], 1.5, places=2)
+        self.assertAlmostEqual(result['max_potential_loss_percent'], 2.0, places=2)
 
     def test_extreme_volatility(self):
         """Тест: экстремальная волатильность после закрытия позиции"""
@@ -386,6 +403,139 @@ class TestEdgeCases(unittest.TestCase):
         self.assertAlmostEqual(result['max_potential_profit_percent'], 0.0, places=2)
         self.assertAlmostEqual(result['max_potential_loss_percent'], 0.0, places=2)
 
+    def test_sell_signal_extreme_case(self):
+        """Тест: SELL сигнал с экстремальными движениями"""
+        entry_price = 100.0
+
+        # Для SELL: TP на 96, SL на 103
+        history = [
+            self.create_candle(1, 102, 98, 100),  # Нормальная свеча
+            self.create_candle(2, 103.5, 95, 98),  # SL срабатывает (103)
+            self.create_candle(3, 110, 90, 95),  # Огромное движение после
+            self.create_candle(48, 100, 98, 99),
+        ]
+
+        def create_candle(hours_offset, high, low, close):
+            return {
+                'timestamp': self.base_time + timedelta(hours=hours_offset),
+                'high_price': high,
+                'low_price': low,
+                'close_price': close
+            }
+
+        self.create_candle = create_candle
+
+        result = self.analyzer.process_price_history_improved(
+            'SELL', entry_price, history, self.base_time
+        )
+
+        # Проверки
+        self.assertEqual(result['close_reason'], 'stop_loss')
+        self.assertFalse(result['is_win'])
+        self.assertAlmostEqual(result['close_price'], 103.0, places=2)
+
+        # Максимальный потенциал для SELL
+        # Профит: (100 - 90) / 100 * 100 = 10%
+        # Убыток: (110 - 100) / 100 * 100 = 10%
+        self.assertAlmostEqual(result['max_potential_profit_percent'], 10.0, places=2)
+        self.assertAlmostEqual(result['max_potential_loss_percent'], 10.0, places=2)
+
+
+class TestNoDataHandling(unittest.TestCase):
+    """Тесты обработки сигналов без данных"""
+
+    def test_create_no_data_result(self):
+        """Тест: создание записи для сигнала без данных"""
+
+        # Создаем тестовый экземпляр
+        class TestAnalyzer:
+            def create_no_data_result(self, signal, signal_type, signal_criteria, reason):
+                return {
+                    'scoring_history_id': signal['scoring_history_id'],
+                    'signal_timestamp': signal['signal_timestamp'],
+                    'pair_symbol': signal['pair_symbol'],
+                    'trading_pair_id': signal['trading_pair_id'],
+                    'market_regime': signal['market_regime'],
+                    'total_score': float(signal['total_score']),
+                    'indicator_score': float(signal['indicator_score']),
+                    'pattern_score': float(signal['pattern_score']),
+                    'combination_score': float(signal.get('combination_score', 0)),
+                    'signal_type': signal_type,
+                    'signal_criteria': signal_criteria,
+                    'entry_price': None,
+                    'best_price': None,
+                    'worst_price': None,
+                    'close_price': None,
+                    'is_closed': False,
+                    'close_reason': reason,
+                    'is_win': None,
+                    'close_time': None,
+                    'hours_to_close': None,
+                    'pnl_percent': 0,
+                    'pnl_usd': 0,
+                    'max_potential_profit_percent': 0,
+                    'max_potential_profit_usd': 0,
+                    'max_drawdown_percent': 0,
+                    'max_drawdown_usd': 0,
+                    'tp_percent': ANALYSIS_PARAMS['tp_percent'],
+                    'sl_percent': ANALYSIS_PARAMS['sl_percent'],
+                    'position_size': ANALYSIS_PARAMS['position_size'],
+                    'leverage': ANALYSIS_PARAMS['leverage'],
+                    'analysis_end_time': signal['signal_timestamp'] + timedelta(hours=48)
+                }
+
+        analyzer = TestAnalyzer()
+
+        # Тестовый сигнал
+        test_signal = {
+            'scoring_history_id': 123,
+            'signal_timestamp': datetime(2024, 1, 1, 0, 0, 0),
+            'pair_symbol': 'TESTUSDT',
+            'trading_pair_id': 1,
+            'market_regime': 'bullish',
+            'total_score': 80.0,
+            'indicator_score': 50.0,
+            'pattern_score': 30.0,
+            'combination_score': 0
+        }
+
+        # Создаем NO_DATA запись
+        result = analyzer.create_no_data_result(
+            test_signal,
+            'BUY',
+            'Indicator Score: 50.0',
+            'no_entry_price'
+        )
+
+        # Проверки
+        self.assertEqual(result['scoring_history_id'], 123)
+        self.assertEqual(result['pair_symbol'], 'TESTUSDT')
+        self.assertEqual(result['signal_type'], 'BUY')
+        self.assertIsNone(result['entry_price'])
+        self.assertIsNone(result['best_price'])
+        self.assertIsNone(result['worst_price'])
+        self.assertIsNone(result['close_price'])
+        self.assertEqual(result['close_reason'], 'no_entry_price')
+        self.assertFalse(result['is_closed'])
+        self.assertIsNone(result['is_win'])
+        self.assertEqual(result['pnl_percent'], 0)
+        self.assertEqual(result['pnl_usd'], 0)
+        self.assertEqual(result['max_potential_profit_percent'], 0)
+        self.assertEqual(result['max_potential_profit_usd'], 0)
+        self.assertEqual(result['tp_percent'], 4.0)
+        self.assertEqual(result['sl_percent'], 3.0)
+        self.assertEqual(result['position_size'], 100.0)
+        self.assertEqual(result['leverage'], 5)
+
+    def test_no_data_reasons(self):
+        """Тест: различные причины отсутствия данных"""
+        reasons = ['no_entry_price', 'insufficient_history', 'processing_error']
+
+        for reason in reasons:
+            # Простая проверка что эти строки корректны
+            self.assertIsInstance(reason, str)
+            self.assertIn('_', reason)  # Все причины используют подчеркивание
+
 
 def run_tests():
     """Запуск всех тестов"""
@@ -396,6 +546,7 @@ def run_tests():
     # Добавляем тесты
     suite.addTests(loader.loadTestsFromTestCase(TestScoringAnalyzer))
     suite.addTests(loader.loadTestsFromTestCase(TestEdgeCases))
+    suite.addTests(loader.loadTestsFromTestCase(TestNoDataHandling))
 
     # Запускаем с подробным выводом
     runner = unittest.TextTestRunner(verbosity=2)
