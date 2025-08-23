@@ -135,13 +135,13 @@ class ScoringAnalyzer:
         НОВАЯ ЛОГИКА: Определение типа сигнала ТОЛЬКО на основе total_score
         ВСЕ сигналы обрабатываются!
         """
-        total_score = float(signal.get('total_score', 0))
+        indicator_score = float(signal.get('indicator_score', 0))
 
         # КРИТИЧЕСКИ ВАЖНО: единственный критерий
-        if total_score >= 0:
-            return 'BUY', f"Total Score: {total_score:.1f}"
+        if indicator_score >= 0:
+            return 'BUY', f"Total Score: {indicator_score:.1f}"
         else:
-            return 'SELL', f"Total Score: {total_score:.1f}"
+            return 'SELL', f"Total Score: {indicator_score:.1f}"
 
     def get_entry_price(self, trading_pair_id: int, signal_time: datetime,
                         signal_type: str) -> Optional[Dict]:
