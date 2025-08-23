@@ -848,7 +848,7 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
             sh.*,
             tp.pair_symbol as symbol,
             tp.exchange_id,
-            ex.name as exchange_name,
+            ex.exchange_name as exchange_name,
             mr.regime AS market_regime,
             sh.recommended_action,
             CASE 
