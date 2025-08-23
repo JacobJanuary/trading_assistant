@@ -816,7 +816,7 @@ def scoring_analysis():
 @app.route('/api/scoring/apply_filters', methods=['POST'])
 @login_required
 def api_scoring_apply_filters():
-    """API для применения фильтров скоринга"""
+    """API для применения фильтров скоринга - ИСПРАВЛЕНО"""
     try:
         data = request.get_json()
 
@@ -835,10 +835,15 @@ def api_scoring_apply_filters():
         position_size = data.get('position_size', 100.0)
         leverage = data.get('leverage', 5)
 
+        print(f"[API] Обработка фильтров для даты {selected_date}")
+        print(f"[API] BUY фильтров: {len(buy_filters)}, SELL фильтров: {len(sell_filters)}")
+
         # Получаем сигналы по фильтрам
         raw_signals = get_scoring_signals(db, selected_date, buy_filters, sell_filters)
 
         if raw_signals:
+            print(f"[API] Найдено {len(raw_signals)} сигналов")
+
             # Обрабатываем и сохраняем в БД
             result = process_scoring_signals_batch(
                 db, raw_signals, session_id, current_user.id,
@@ -855,7 +860,7 @@ def api_scoring_apply_filters():
             formatted_signals = []
             for signal in signals_data:
                 formatted_signals.append({
-                    'timestamp': signal['signal_timestamp'],
+                    'timestamp': signal['signal_timestamp'].isoformat() if signal['signal_timestamp'] else None,
                     'pair_symbol': signal['pair_symbol'],
                     'exchange_name': signal.get('exchange_name', 'Unknown'),
                     'signal_action': signal['signal_action'],
@@ -874,43 +879,57 @@ def api_scoring_apply_filters():
                     'max_potential_profit': float(signal['max_potential_profit_usd'] or 0)
                 })
 
-            # Статистика
-            stats = result['stats']
+            # ИСПРАВЛЕНО: Правильно извлекаем статистику
+            stats_data = result['stats']
+
+            # Преобразуем Decimal в float для JSON
+            stats = {
+                'total': int(stats_data.get('total') or 0),
+                'buy_signals': int(stats_data.get('buy_signals') or 0),
+                'sell_signals': int(stats_data.get('sell_signals') or 0),
+                'tp_count': int(stats_data.get('tp_count') or 0),
+                'sl_count': int(stats_data.get('sl_count') or 0),
+                'timeout_count': int(stats_data.get('timeout_count') or 0),
+                'total_pnl': float(stats_data.get('total_pnl') or 0),
+                'realized_profit': float(stats_data.get('tp_profit') or 0),
+                'realized_loss': float(stats_data.get('sl_loss') or 0),
+                'max_potential': float(stats_data.get('total_max_potential') or 0),
+                'avg_hours_to_close': float(stats_data.get('avg_hours_to_close') or 0),
+                'binance_signals': int(stats_data.get('binance_signals') or 0),
+                'bybit_signals': int(stats_data.get('bybit_signals') or 0)
+            }
 
             # Расчет метрик
-            win_rate = 0
-            if stats['tp_count'] + stats['sl_count'] > 0:
-                win_rate = (stats['tp_count'] / (stats['tp_count'] + stats['sl_count'])) * 100
+            total_closed = stats['tp_count'] + stats['sl_count']
+            win_rate = (stats['tp_count'] / total_closed * 100) if total_closed > 0 else 0
 
             tp_efficiency = 0
-            if stats['total_max_potential'] and stats['total_max_potential'] > 0:
-                tp_efficiency = (float(stats['tp_profit'] or 0) / float(stats['total_max_potential'])) * 100
+            if stats['max_potential'] > 0:
+                tp_efficiency = (stats['realized_profit'] / stats['max_potential']) * 100
+
+            metrics = {
+                'win_rate': win_rate,
+                'tp_efficiency': tp_efficiency,
+                'net_pnl': stats['total_pnl']
+            }
+
+            print(f"[API] Статистика: Total={stats['total']}, TP={stats['tp_count']}, "
+                  f"SL={stats['sl_count']}, P&L=${stats['total_pnl']:.2f}")
 
             return jsonify({
                 'status': 'success',
                 'data': {
                     'signals': formatted_signals,
-                    'stats': {
-                        'total': stats['total'],
-                        'buy_signals': stats['buy_signals'],
-                        'sell_signals': stats['sell_signals'],
-                        'tp_count': stats['tp_count'],
-                        'sl_count': stats['sl_count'],
-                        'timeout_count': stats['timeout_count'],
-                        'total_pnl': float(stats['total_pnl'] or 0),
-                        'realized_profit': float(stats['tp_profit'] or 0),
-                        'realized_loss': float(stats['sl_loss'] or 0),
-                        'max_potential': float(stats['total_max_potential'] or 0),
-                        'avg_hours_to_close': float(stats['avg_hours_to_close'] or 0)
-                    },
-                    'metrics': {
-                        'win_rate': win_rate,
-                        'tp_efficiency': tp_efficiency,
-                        'net_pnl': float(stats['total_pnl'] or 0)
+                    'stats': stats,
+                    'metrics': metrics,
+                    'exchange_breakdown': {
+                        'Binance': stats['binance_signals'],
+                        'Bybit': stats['bybit_signals']
                     }
                 }
             })
         else:
+            print("[API] Нет сигналов по заданным фильтрам")
             return jsonify({
                 'status': 'success',
                 'data': {
@@ -919,7 +938,16 @@ def api_scoring_apply_filters():
                         'total': 0,
                         'buy_signals': 0,
                         'sell_signals': 0,
-                        'total_pnl': 0
+                        'tp_count': 0,
+                        'sl_count': 0,
+                        'timeout_count': 0,
+                        'total_pnl': 0,
+                        'realized_profit': 0,
+                        'realized_loss': 0,
+                        'max_potential': 0,
+                        'avg_hours_to_close': 0,
+                        'binance_signals': 0,
+                        'bybit_signals': 0
                     },
                     'metrics': {
                         'win_rate': 0,
@@ -933,7 +961,30 @@ def api_scoring_apply_filters():
         logger.error(f"Ошибка API скоринга: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'data': {
+                'signals': [],
+                'stats': {
+                    'total': 0,
+                    'buy_signals': 0,
+                    'sell_signals': 0,
+                    'tp_count': 0,
+                    'sl_count': 0,
+                    'timeout_count': 0,
+                    'total_pnl': 0,
+                    'realized_profit': 0,
+                    'realized_loss': 0,
+                    'max_potential': 0
+                },
+                'metrics': {
+                    'win_rate': 0,
+                    'tp_efficiency': 0,
+                    'net_pnl': 0
+                }
+            }
+        }), 500
 
 
 @app.route('/api/scoring/save_filters', methods=['POST'])

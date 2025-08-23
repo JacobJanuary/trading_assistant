@@ -374,31 +374,49 @@
 
     <!-- Таблица сигналов -->
     <div class="bg-white rounded-lg shadow-lg overflow-hidden">
-        <div class="px-6 py-4 border-b border-gray-200">
-            <h2 class="text-lg font-semibold text-gray-800">
-                <i class="fas fa-list mr-2 text-blue-600"></i>
-                Сигналы
-            </h2>
-        </div>
-        <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50">
+    <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
+        <h2 class="text-lg font-semibold text-gray-800">
+            <i class="fas fa-list mr-2 text-blue-600"></i>
+            Сигналы
+        </h2>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
                 <tr>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Время</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Биржа</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Пара</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Сигнал</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Рынок</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Scores</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Вход</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Закрытие</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">P&L</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Макс. профит</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Статус</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Время до закр.</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Время / Биржа
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Пара
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Сигнал
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Рынок
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Scores
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Вход
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Закрытие
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        P&L
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Макс. профит
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Статус
+                    </th>
                 </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-gray-200" id="signalsTableBody">
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200" id="signalsTableBody">
                 {% for signal in signals %}
                 <tr class="hover:bg-gray-50">
                     <td class="px-4 py-3 text-sm text-gray-900">{{ signal.timestamp.strftime('%H:%M:%S') }}</td>
@@ -458,6 +476,30 @@
         </div>
     </div>
 </div>
+<style>
+    /* Добавляем плавные переходы */
+    tbody tr {
+        transition: background-color 0.2s ease;
+    }
+
+    /* Улучшаем читаемость моноширинного шрифта */
+    .font-mono {
+        font-variant-numeric: tabular-nums;
+        letter-spacing: -0.025em;
+    }
+
+    /* Делаем badges более заметными */
+    .rounded-full {
+        box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    }
+
+    /* Улучшаем отображение на мобильных */
+    @media (max-width: 768px) {
+        .overflow-x-auto {
+            -webkit-overflow-scrolling: touch;
+        }
+    }
+</style>
 {% endblock %}
 
 {% block scripts %}
@@ -878,72 +920,170 @@ function applyFilters() {
 
 // Обновление результатов
 function updateResults(data) {
-    // ... обновление статистики остается без изменений ...
+    // ИСПРАВЛЕНО: Обновляем статистику
+    const stats = data.stats;
+    const metrics = data.metrics;
 
-    // Обновляем таблицу
+    // Обновляем основную статистику
+    document.getElementById('statTotal').textContent = stats.total || 0;
+    document.getElementById('statBuy').textContent = stats.buy_signals || 0;
+    document.getElementById('statSell').textContent = stats.sell_signals || 0;
+    document.getElementById('statTP').textContent = stats.tp_count || 0;
+    document.getElementById('statSL').textContent = stats.sl_count || 0;
+    document.getElementById('statTimeout').textContent = stats.timeout_count || 0;
+
+    // Обновляем P&L с правильным форматированием и цветом
+    const pnlElement = document.getElementById('statPnL');
+    const totalPnL = stats.total_pnl || 0;
+    pnlElement.textContent = (totalPnL >= 0 ? '+' : '') + '$' + totalPnL.toFixed(2);
+
+    // Меняем цвет фона в зависимости от P&L
+    const pnlContainer = pnlElement.parentElement;
+    if (totalPnL >= 0) {
+        pnlContainer.className = 'bg-green-50 p-3 rounded-lg';
+        pnlElement.className = 'text-xl font-bold text-green-600';
+    } else {
+        pnlContainer.className = 'bg-red-50 p-3 rounded-lg';
+        pnlElement.className = 'text-xl font-bold text-red-600';
+    }
+
+    // Обновляем дополнительные метрики
+    document.getElementById('statWinRate').textContent = (metrics.win_rate || 0).toFixed(1) + '%';
+    document.getElementById('statEfficiency').textContent = (metrics.tp_efficiency || 0).toFixed(1) + '%';
+    document.getElementById('statMaxPotential').textContent = '$' + (stats.max_potential || 0).toFixed(2);
+
+    // Обновляем таблицу с улучшенным форматированием
     const tbody = document.getElementById('signalsTableBody');
+
+    if (!data.signals || data.signals.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="10" class="px-4 py-8 text-center text-gray-500">
+                    Нет сигналов по заданным фильтрам
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
     tbody.innerHTML = data.signals.map(signal => {
-        const maxProfitPercent = ((signal.max_potential_profit || 0) / (100 * 5) * 100).toFixed(2);
+        const time = new Date(signal.timestamp).toLocaleTimeString('ru-RU', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
 
         // Определяем цвет для биржи
         const exchangeColor = signal.exchange_name === 'Binance' ?
-            'bg-yellow-100 text-yellow-800' : 'bg-blue-100 text-blue-800';
+            'text-yellow-600' : 'text-blue-600';
+
+        // Форматируем P&L
+        const pnlColor = signal.pnl_usd >= 0 ? 'text-green-600' : 'text-red-600';
+        const pnlPrefix = signal.pnl_usd >= 0 ? '+' : '';
+
+        // Определяем статус
+        let statusBadge = '';
+        if (signal.close_reason === 'take_profit') {
+            statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800 font-medium">TP</span>';
+        } else if (signal.close_reason === 'stop_loss') {
+            statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800 font-medium">SL</span>';
+        } else if (signal.close_reason === 'timeout') {
+            statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-orange-100 text-orange-800 font-medium">TIMEOUT</span>';
+        } else {
+            statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800 font-medium">ОТКРЫТА</span>';
+        }
+
+        // Рассчитываем процент от максимального профита
+        const maxProfitPercent = signal.max_potential_profit ?
+            ((signal.max_potential_profit / (100 * 5)) * 100).toFixed(1) : '0.0';
 
         return `
-        <tr class="hover:bg-gray-50">
-            <td class="px-4 py-3 text-sm text-gray-900">${new Date(signal.timestamp).toLocaleTimeString()}</td>
-            <td class="px-4 py-3 text-sm">
-                <span class="px-2 py-1 text-xs rounded-full ${exchangeColor}">
-                    ${signal.exchange_name || 'Unknown'}
-                </span>
-            </td>
-            <td class="px-4 py-3 text-sm font-medium text-gray-900">${signal.pair_symbol}</td>
-            <td class="px-4 py-3 text-sm">
-                <span class="px-2 py-1 text-xs rounded-full ${signal.signal_action === 'BUY' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
-                    ${signal.signal_action}
-                </span>
-            </td>
-            <td class="px-4 py-3 text-sm">
-                <span class="px-2 py-1 text-xs rounded-full ${
-                    signal.market_regime === 'BULL' ? 'bg-green-100 text-green-800' :
-                    signal.market_regime === 'BEAR' ? 'bg-red-100 text-red-800' :
-                    'bg-gray-100 text-gray-800'
-                }">
-                    ${signal.market_regime}
-                </span>
-            </td>
-            <td class="px-4 py-3 text-xs">
-                <div class="space-y-1">
-                    <div>T: <span class="font-medium">${signal.total_score.toFixed(1)}</span></div>
-                    <div>I: <span class="font-medium">${signal.indicator_score.toFixed(1)}</span></div>
-                    <div>P: <span class="font-medium">${signal.pattern_score.toFixed(1)}</span></div>
-                </div>
-            </td>
-            <td class="px-4 py-3 text-sm text-gray-900">${signal.entry_price.toFixed(8)}</td>
-            <td class="px-4 py-3 text-sm text-gray-900">${signal.current_price.toFixed(8)}</td>
-            <td class="px-4 py-3 text-sm font-medium ${signal.pnl_usd >= 0 ? 'text-green-600' : 'text-red-600'}">
-                ${signal.pnl_usd >= 0 ? '+' : ''}$${signal.pnl_usd.toFixed(2)}
-                <div class="text-xs">${signal.pnl_percent.toFixed(2)}%</div>
-            </td>
-            <td class="px-4 py-3 text-sm font-medium text-blue-600">
-                $${(signal.max_potential_profit || 0).toFixed(2)}
-                <div class="text-xs">${maxProfitPercent}%</div>
-            </td>
-            <td class="px-4 py-3 text-sm">
-                ${signal.close_reason === 'take_profit' ?
-                    '<span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">TP</span>' :
-                  signal.close_reason === 'stop_loss' ?
-                    '<span class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">SL</span>' :
-                  signal.close_reason === 'timeout' ?
-                    '<span class="px-2 py-1 text-xs rounded-full bg-orange-100 text-orange-800">TIMEOUT</span>' :
-                    '<span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">ОТКРЫТА</span>'
-                }
-            </td>
-            <td class="px-4 py-3 text-sm text-gray-600">
-                ${(signal.hours_to_close || 0).toFixed(1)}ч
-            </td>
-        </tr>
-    `}).join('');
+            <tr class="hover:bg-gray-50 transition-colors">
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <div class="flex flex-col">
+                        <span class="text-sm font-medium text-gray-900">${time}</span>
+                        <span class="text-xs ${exchangeColor} font-medium">${signal.exchange_name || 'Unknown'}</span>
+                    </div>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <span class="text-sm font-medium text-gray-900">${signal.pair_symbol}</span>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <span class="px-2 py-1 text-xs rounded-full font-medium ${
+                        signal.signal_action === 'BUY' ?
+                        'bg-green-100 text-green-800' :
+                        'bg-red-100 text-red-800'
+                    }">
+                        ${signal.signal_action}
+                    </span>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <span class="px-2 py-1 text-xs rounded-full ${
+                        signal.market_regime === 'BULL' ? 'bg-green-100 text-green-800' :
+                        signal.market_regime === 'BEAR' ? 'bg-red-100 text-red-800' :
+                        'bg-gray-100 text-gray-800'
+                    }">
+                        ${signal.market_regime}
+                    </span>
+                </td>
+                <td class="px-4 py-3">
+                    <div class="flex flex-col space-y-0.5 text-xs">
+                        <div class="flex items-center">
+                            <span class="text-gray-500 w-5">T:</span>
+                            <span class="font-semibold ${signal.total_score >= 0 ? 'text-green-600' : 'text-red-600'}">
+                                ${signal.total_score.toFixed(1)}
+                            </span>
+                        </div>
+                        <div class="flex items-center">
+                            <span class="text-gray-500 w-5">I:</span>
+                            <span class="font-medium">${signal.indicator_score.toFixed(1)}</span>
+                        </div>
+                        <div class="flex items-center">
+                            <span class="text-gray-500 w-5">P:</span>
+                            <span class="font-medium">${signal.pattern_score.toFixed(1)}</span>
+                        </div>
+                    </div>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-900 font-mono">
+                    ${signal.entry_price.toFixed(8)}
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-900 font-mono">
+                    ${signal.current_price.toFixed(8)}
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <div class="flex flex-col">
+                        <span class="text-sm font-bold ${pnlColor}">
+                            ${pnlPrefix}$${Math.abs(signal.pnl_usd).toFixed(2)}
+                        </span>
+                        <span class="text-xs ${pnlColor}">
+                            ${signal.pnl_percent.toFixed(2)}%
+                        </span>
+                    </div>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <div class="flex flex-col">
+                        <span class="text-sm font-medium text-blue-600">
+                            $${(signal.max_potential_profit || 0).toFixed(2)}
+                        </span>
+                        <span class="text-xs text-gray-500">
+                            ${maxProfitPercent}%
+                        </span>
+                    </div>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <div class="flex items-center space-x-2">
+                        ${statusBadge}
+                        ${signal.hours_to_close ?
+                            `<span class="text-xs text-gray-500">${signal.hours_to_close.toFixed(1)}ч</span>` :
+                            ''
+                        }
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    // Показываем уведомление об успехе
+    showNotification(`Обработано ${stats.total} сигналов`, 'success');
 }
 
     // Сохранение текущих фильтров

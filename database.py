@@ -367,7 +367,7 @@ def get_recent_large_trades(db, limit=100, time_filter=None, min_value_usd=None,
 
 def initialize_signals_with_params(db, hours_back=48, tp_percent=4.0, sl_percent=3.0):
     """
-    Полная инициализация системы с расширенной статистикой
+    Полная инициализация системы с использованием fas.market_data_aggregated
     """
     try:
         print(f"[INIT] ========== НАЧАЛО ИНИЦИАЛИЗАЦИИ ==========")
@@ -384,14 +384,17 @@ def initialize_signals_with_params(db, hours_back=48, tp_percent=4.0, sl_percent
                 sh.pair_symbol,
                 sh.trading_pair_id,
                 pr.signal_type as signal_action,
-                pr.created_at as signal_timestamp
+                pr.created_at as signal_timestamp,
+                tp.exchange_id,
+                ex.exchange_name
             FROM smart_ml.predictions pr
             JOIN fas.scoring_history sh ON sh.id = pr.signal_id
-            JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id 
+            JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
+            JOIN public.exchanges ex ON ex.id = tp.exchange_id
             WHERE pr.created_at >= NOW() - (INTERVAL '1 hour' * %s)
                 AND pr.prediction = true
                 AND tp.contract_type_id = 1
-                AND tp.exchange_id = 1
+                AND tp.exchange_id IN (1, 2)
             ORDER BY pr.created_at DESC
         """
 
@@ -409,26 +412,30 @@ def initialize_signals_with_params(db, hours_back=48, tp_percent=4.0, sl_percent
             'errors': 0,
             'total_max_profit': 0,
             'total_realized_profit': 0,
-            'missed_profit': 0  # Сколько профита упустили
+            'missed_profit': 0,
+            'by_exchange': {'Binance': 0, 'Bybit': 0}
         }
 
         for idx, signal in enumerate(signals):
             try:
+                # Добавляем exchange_name в сигнал
+                signal_with_exchange = dict(signal)
+
                 result = process_signal_complete(
                     db,
-                    signal,
+                    signal_with_exchange,
                     tp_percent=tp_percent,
                     sl_percent=sl_percent
                 )
 
                 if result['success']:
                     stats['initialized'] += 1
+                    stats['by_exchange'][signal['exchange_name']] += 1
 
                     if result['is_closed']:
                         if result['close_reason'] == 'take_profit':
                             stats['closed_tp'] += 1
                             stats['total_realized_profit'] += result.get('realized_pnl', 0)
-                            # Считаем упущенный профит
                             if result.get('max_profit', 0) > result.get('realized_pnl', 0):
                                 stats['missed_profit'] += (result['max_profit'] - result['realized_pnl'])
                         elif result['close_reason'] == 'stop_loss':
@@ -456,6 +463,8 @@ def initialize_signals_with_params(db, hours_back=48, tp_percent=4.0, sl_percent
 
         print(f"[INIT] ========== РЕЗУЛЬТАТЫ ==========")
         print(f"[INIT] Инициализировано: {stats['initialized']}")
+        print(f"[INIT]   - Binance: {stats['by_exchange']['Binance']}")
+        print(f"[INIT]   - Bybit: {stats['by_exchange']['Bybit']}")
         print(f"[INIT] Закрыто по TP: {stats['closed_tp']}")
         print(f"[INIT] Закрыто по SL: {stats['closed_sl']}")
         print(f"[INIT] Остались открытыми: {stats['open']}")
@@ -478,7 +487,7 @@ def initialize_signals_with_params(db, hours_back=48, tp_percent=4.0, sl_percent
 def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
                             position_size=100.0, leverage=5):
     """
-    ПРАВИЛЬНАЯ обработка сигнала с корректным расчетом максимального профита
+    Обработка сигнала с использованием fas.market_data_aggregated и high/low для точной проверки TP/SL
     """
     try:
         signal_id = signal['signal_id']
@@ -486,15 +495,17 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
         pair_symbol = signal['pair_symbol']
         signal_action = signal['signal_action']
         signal_timestamp = signal['signal_timestamp']
+        exchange_name = signal.get('exchange_name', 'Unknown')
 
-        # Получаем цену входа
+        # Получаем цену входа из fas.market_data_aggregated
         entry_price_query = """
-            SELECT mark_price
-            FROM public.market_data 
+            SELECT open_price
+            FROM fas.market_data_aggregated
             WHERE trading_pair_id = %s 
-                AND capture_time >= %s - INTERVAL '1 minute'
-                AND capture_time <= %s + INTERVAL '1 minute'
-            ORDER BY ABS(EXTRACT(EPOCH FROM (capture_time - %s))) ASC
+                AND timeframe = '15m'
+                AND timestamp >= %s - INTERVAL '15 minutes'
+                AND timestamp <= %s + INTERVAL '15 minutes'
+            ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
             LIMIT 1
         """
 
@@ -505,14 +516,15 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
         )
 
         if not price_result:
-            # Ищем ближайшую цену в пределах часа
+            # Расширенный поиск
             fallback_query = """
-                SELECT mark_price
-                FROM public.market_data 
+                SELECT open_price
+                FROM fas.market_data_aggregated
                 WHERE trading_pair_id = %s
-                    AND capture_time >= %s - INTERVAL '1 hour'
-                    AND capture_time <= %s + INTERVAL '1 hour'
-                ORDER BY ABS(EXTRACT(EPOCH FROM (capture_time - %s))) ASC
+                    AND timeframe = '15m'
+                    AND timestamp >= %s - INTERVAL '1 hour'
+                    AND timestamp <= %s + INTERVAL '1 hour'
+                ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
                 LIMIT 1
             """
             price_result = db.execute_query(
@@ -522,26 +534,26 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
             )
 
         if not price_result:
-            print(f"[PROCESS] Нет цены для {pair_symbol}")
+            print(f"[PROCESS] Нет цены для {pair_symbol} ({exchange_name})")
             return {'success': False}
 
-        entry_price = float(price_result[0]['mark_price'])
+        entry_price = float(price_result[0]['open_price'])
 
-        # ВАЖНО: Получаем ВСЮ историю цен, не ограничиваясь моментом закрытия
-        # Берем историю до текущего момента для расчета максимального профита
+        # Получаем историю до текущего момента
         history_query = """
-            SELECT capture_time, mark_price
-            FROM public.market_data
+            SELECT timestamp, open_price, high_price, low_price, close_price
+            FROM fas.market_data_aggregated
             WHERE trading_pair_id = %s
-                AND capture_time >= %s
-                AND capture_time <= NOW()  -- До текущего момента!
-            ORDER BY capture_time ASC
+                AND timeframe = '15m'
+                AND timestamp >= %s
+                AND timestamp <= NOW()
+            ORDER BY timestamp ASC
         """
 
         history = db.execute_query(history_query, (trading_pair_id, signal_timestamp), fetch=True)
 
         if not history:
-            # Если нет истории, сохраняем с начальными данными
+            # Сохраняем с начальными данными
             insert_query = """
                 INSERT INTO web.web_signals (
                     signal_id, pair_symbol, signal_action, signal_timestamp,
@@ -561,90 +573,103 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
         # Переменные для отслеживания
         max_profit = 0
         max_profit_price = entry_price
-        max_profit_time = signal_timestamp
-
         is_closed = False
         close_price = None
         close_time = None
         close_reason = None
         realized_pnl = 0
-
-        # Лучшая цена для расчета максимального профита
         best_price_ever = entry_price
 
-        # Проходим по всей истории
-        for idx, price_point in enumerate(history):
-            current_price = float(price_point['mark_price'])
-            current_time = price_point['capture_time']
+        # Рассчитываем уровни TP и SL
+        if signal_action in ['SELL', 'SHORT']:
+            tp_price = entry_price * (1 - tp_percent / 100)
+            sl_price = entry_price * (1 + sl_percent / 100)
+        else:  # BUY, LONG
+            tp_price = entry_price * (1 + tp_percent / 100)
+            sl_price = entry_price * (1 - sl_percent / 100)
 
-            # СНАЧАЛА обновляем лучшую цену независимо от закрытия
+        # Проходим по всей истории
+        for candle in history:
+            current_time = candle['timestamp']
+            high_price = float(candle['high_price'])
+            low_price = float(candle['low_price'])
+
+            # Обновляем лучшую цену и максимальный профит
             if signal_action in ['SELL', 'SHORT']:
-                # Для SHORT лучшая цена = минимальная
-                if current_price < best_price_ever:
-                    best_price_ever = current_price
-                    # Рассчитываем максимальный профит
+                if low_price < best_price_ever:
+                    best_price_ever = low_price
                     max_profit_percent = ((entry_price - best_price_ever) / entry_price) * 100
                     potential_max_profit = position_size * (max_profit_percent / 100) * leverage
                     if potential_max_profit > max_profit:
                         max_profit = potential_max_profit
                         max_profit_price = best_price_ever
-                        max_profit_time = current_time
+
+                # Проверка закрытия для SHORT
+                if not is_closed:
+                    if low_price <= tp_price:
+                        is_closed = True
+                        close_reason = 'take_profit'
+                        close_price = tp_price
+                        close_time = current_time
+                    elif high_price >= sl_price:
+                        is_closed = True
+                        close_reason = 'stop_loss'
+                        close_price = sl_price
+                        close_time = current_time
             else:  # BUY, LONG
-                # Для LONG лучшая цена = максимальная
-                if current_price > best_price_ever:
-                    best_price_ever = current_price
-                    # Рассчитываем максимальный профит
+                if high_price > best_price_ever:
+                    best_price_ever = high_price
                     max_profit_percent = ((best_price_ever - entry_price) / entry_price) * 100
                     potential_max_profit = position_size * (max_profit_percent / 100) * leverage
                     if potential_max_profit > max_profit:
                         max_profit = potential_max_profit
                         max_profit_price = best_price_ever
-                        max_profit_time = current_time
 
-            # ПОТОМ проверяем условия закрытия (только если еще не закрыта)
-            if not is_closed:
-                # Рассчитываем текущий P&L
-                if signal_action in ['SELL', 'SHORT']:
-                    current_profit_percent = ((entry_price - current_price) / entry_price) * 100
-                else:  # BUY, LONG
-                    current_profit_percent = ((current_price - entry_price) / entry_price) * 100
-
-                current_pnl = position_size * (current_profit_percent / 100) * leverage
-
-                # Проверяем TP
-                if current_profit_percent >= tp_percent:
-                    is_closed = True
-                    close_price = current_price
-                    close_time = current_time
-                    close_reason = 'take_profit'
-                    realized_pnl = current_pnl
-                    # НЕ прерываем цикл! Продолжаем искать максимальный профит
-
-                # Проверяем SL
-                elif current_profit_percent <= -sl_percent:
-                    is_closed = True
-                    close_price = current_price
-                    close_time = current_time
-                    close_reason = 'stop_loss'
-                    realized_pnl = current_pnl
-                    # НЕ прерываем цикл! Продолжаем искать максимальный профит
+                # Проверка закрытия для LONG
+                if not is_closed:
+                    if high_price >= tp_price:
+                        is_closed = True
+                        close_reason = 'take_profit'
+                        close_price = tp_price
+                        close_time = current_time
+                    elif low_price <= sl_price:
+                        is_closed = True
+                        close_reason = 'stop_loss'
+                        close_price = sl_price
+                        close_time = current_time
 
         # Последняя известная цена
-        last_price = float(history[-1]['mark_price'])
+        last_price = float(history[-1]['close_price'])
 
-        # Если позиция не закрылась, рассчитываем unrealized P&L
+        # Если позиция не закрылась, проверяем таймаут (48 часов)
+        if not is_closed:
+            hours_passed = (history[-1]['timestamp'] - signal_timestamp).total_seconds() / 3600
+            if hours_passed >= 48:
+                is_closed = True
+                close_reason = 'timeout'
+                close_price = last_price
+                close_time = history[-1]['timestamp']
+
+        # Рассчитываем realized PnL если закрыта
+        if is_closed:
+            if signal_action in ['SELL', 'SHORT']:
+                pnl_percent = ((entry_price - close_price) / entry_price) * 100
+            else:
+                pnl_percent = ((close_price - entry_price) / entry_price) * 100
+            realized_pnl = position_size * (pnl_percent / 100) * leverage
+
+        # Рассчитываем unrealized PnL если открыта
+        unrealized_pnl = 0
         if not is_closed:
             if signal_action in ['SELL', 'SHORT']:
                 unrealized_percent = ((entry_price - last_price) / entry_price) * 100
             else:
                 unrealized_percent = ((last_price - entry_price) / entry_price) * 100
             unrealized_pnl = position_size * (unrealized_percent / 100) * leverage
-        else:
-            unrealized_pnl = 0
 
         # Отладочный вывод для закрытых по TP позиций
-        if close_reason == 'take_profit' and max_profit > realized_pnl * 1.1:  # Если макс профит > 110% от realized
-            print(f"[PROCESS] {pair_symbol}: TP at {close_price:.8f} (profit: ${realized_pnl:.2f}), "
+        if close_reason == 'take_profit' and max_profit > realized_pnl * 1.1:
+            print(f"[PROCESS] {pair_symbol} ({exchange_name}): TP at {close_price:.8f} (profit: ${realized_pnl:.2f}), "
                   f"but max was {max_profit_price:.8f} (potential: ${max_profit:.2f})")
 
         # Сохраняем в БД
@@ -688,16 +713,9 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
             close_reason,
             realized_pnl if is_closed else 0,
             unrealized_pnl if not is_closed else 0,
-            max_profit,  # Это РЕАЛЬНЫЙ максимум за всю историю
+            max_profit,
             last_price
         ))
-
-        # Для статистики
-        if is_closed and close_reason == 'take_profit':
-            efficiency = (realized_pnl / max_profit * 100) if max_profit > 0 else 100
-            if efficiency < 80:  # Если поймали меньше 80% от максимума
-                print(f"[PROCESS] {pair_symbol}: Эффективность TP = {efficiency:.1f}% "
-                      f"(взяли ${realized_pnl:.2f} из возможных ${max_profit:.2f})")
 
         return {
             'success': True,
@@ -812,6 +830,7 @@ def build_scoring_filter_conditions(filters):
 def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
     """
     Получение сигналов на основе фильтров скоринга
+    ИСПРАВЛЕНО: Корректная работа с Bybit и правильное получение exchange_name
     """
 
     # Сначала собираем все условия и параметры для CASE
@@ -842,14 +861,24 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
         print("[DEBUG] Нет активных фильтров")
         return []
 
-    # Строим полный запрос с информацией о бирже
+    # ИСПРАВЛЕННЫЙ запрос с правильным получением exchange_name
     query = """
+        WITH market_regime_data AS (
+            SELECT DISTINCT ON (DATE_TRUNC('hour', timestamp))
+                DATE_TRUNC('hour', timestamp) as hour_bucket,
+                regime,
+                timestamp
+            FROM fas.market_regime
+            WHERE timeframe = '4h'
+                AND timestamp::date = %s
+            ORDER BY DATE_TRUNC('hour', timestamp), timestamp DESC
+        )
         SELECT
             sh.*,
             tp.pair_symbol as symbol,
             tp.exchange_id,
-            ex.exchange_name as exchange_name,
-            mr.regime AS market_regime,
+            ex.exchange_name,
+            COALESCE(mr.regime, 'NEUTRAL') AS market_regime,
             sh.recommended_action,
             CASE 
     """
@@ -861,15 +890,14 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
         JOIN public.exchanges ex ON ex.id = tp.exchange_id
         LEFT JOIN LATERAL (
             SELECT regime
-            FROM fas.market_regime mr
-            WHERE mr.timestamp <= sh.timestamp
-                AND mr.timeframe = '4h'
-            ORDER BY mr.timestamp DESC
+            FROM market_regime_data mr
+            WHERE mr.hour_bucket <= DATE_TRUNC('hour', sh.timestamp)
+            ORDER BY mr.hour_bucket DESC
             LIMIT 1
         ) AS mr ON true
         WHERE sh.timestamp::date = %s
             AND tp.contract_type_id = 1
-            AND tp.exchange_id IN (1, 2)  -- Binance и Bybit
+            AND tp.exchange_id IN (1, 2)
             AND (
     """
 
@@ -878,48 +906,25 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
 
     # Собираем все параметры в правильном порядке
     all_params = []
+    all_params.append(date_filter)  # Для market_regime CTE
     all_params.extend(case_params)  # Параметры для CASE
     all_params.append(date_filter)  # Дата для WHERE
     all_params.extend(case_params)  # Те же параметры для WHERE условий
 
-    # ОТЛАДОЧНЫЙ ВЫВОД с типами
+    # Отладочный вывод
     print("\n" + "=" * 80)
-    print("[DEBUG] ИТОГОВЫЙ SQL ЗАПРОС (с плейсхолдерами %s):")
+    print(f"[DEBUG] Выполняем запрос для даты: {date_filter}")
+    print(f"[DEBUG] Количество BUY фильтров: {len(buy_filters) if buy_filters else 0}")
+    print(f"[DEBUG] Количество SELL фильтров: {len(sell_filters) if sell_filters else 0}")
     print("=" * 80)
-    print(query)
-    print("\n[DEBUG] ПАРАМЕТРЫ:")
-    for i, param in enumerate(all_params):
-        param_type = type(param).__name__
-        print(f"  Параметр {i + 1}: {param} (тип: {param_type})")
-
-    # СОЗДАЕМ SQL С ПОДСТАВЛЕННЫМИ ЗНАЧЕНИЯМИ ДЛЯ ОТЛАДКИ
-    debug_query = query
-    for param in all_params:
-        if isinstance(param, str):
-            value = f"'{param}'"
-        elif param is None:
-            value = "NULL"
-        elif isinstance(param, (int, float)):
-            value = str(param)
-        else:
-            value = f"'{param}'"
-
-        debug_query = debug_query.replace('%s', value, 1)
-
-    print("\n" + "=" * 80)
-    print("[DEBUG] SQL С ПОДСТАВЛЕННЫМИ ЗНАЧЕНИЯМИ (для проверки в БД):")
-    print("=" * 80)
-    print(debug_query)
-    print("=" * 80)
-
-    print("\n[DEBUG] Выполняем запрос...")
 
     # Выполняем запрос
     try:
         results = db.execute_query(query, tuple(all_params), fetch=True)
-        print(f"[DEBUG] Найдено сигналов: {len(results) if results else 0}")
 
-        if results and len(results) > 0:
+        if results:
+            print(f"[DEBUG] Найдено сигналов: {len(results)}")
+
             # Группируем по биржам для статистики
             exchanges_count = {}
             for signal in results:
@@ -930,15 +935,8 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
             for exchange, count in exchanges_count.items():
                 print(f"  {exchange}: {count} сигналов")
 
-            print("\n[DEBUG] Примеры найденных сигналов (первые 5):")
-            for i, signal in enumerate(results[:5]):
-                print(f"  {i + 1}. {signal.get('symbol', 'N/A'):10s} | "
-                      f"Exchange: {signal.get('exchange_name', 'N/A'):7s} | "
-                      f"Time: {signal.get('timestamp').strftime('%H:%M') if signal.get('timestamp') else 'N/A'} | "
-                      f"Total: {float(signal.get('total_score', 0)):6.1f} | "
-                      f"Market: {signal.get('market_regime', 'N/A'):7s}")
+        return results if results else []
 
-        return results
     except Exception as e:
         print(f"[DEBUG] ОШИБКА выполнения запроса: {e}")
         import traceback
@@ -950,8 +948,11 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                                   tp_percent=4.0, sl_percent=3.0,
                                   position_size=100.0, leverage=5):
     """
-    Пакетная обработка сигналов скоринга с сохранением в БД
-    Анализирует только 48 часов после каждого сигнала
+    Пакетная обработка сигналов скоринга с использованием fas.market_data_aggregated
+    ИСПРАВЛЕНО:
+    - Используем fas.market_data_aggregated с timeframe='15m'
+    - Проверяем high/low для точного определения TP/SL
+    - Сохраняем exchange_name
     """
 
     # Очищаем предыдущие результаты для этой сессии
@@ -966,20 +967,26 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
 
     processed_count = 0
     error_count = 0
+    exchange_stats = {'Binance': 0, 'Bybit': 0, 'errors': {}}
 
     # Подготавливаем данные для batch insert
     batch_data = []
 
     for idx, signal in enumerate(signals):
         try:
-            # Получаем цену входа
+            exchange_name = signal.get('exchange_name', 'Unknown')
+
+            # Получаем цену входа из fas.market_data_aggregated
             entry_price_query = """
-                SELECT mark_price
-                FROM public.market_data
+                SELECT 
+                    open_price as entry_price,
+                    timestamp
+                FROM fas.market_data_aggregated
                 WHERE trading_pair_id = %s
-                    AND capture_time >= %s - INTERVAL '5 minutes'
-                    AND capture_time <= %s + INTERVAL '5 minutes'
-                ORDER BY ABS(EXTRACT(EPOCH FROM (capture_time - %s))) ASC
+                    AND timeframe = '15m'
+                    AND timestamp >= %s - INTERVAL '15 minutes'
+                    AND timestamp <= %s + INTERVAL '15 minutes'
+                ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
                 LIMIT 1
             """
 
@@ -991,18 +998,49 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
             )
 
             if not price_result:
-                continue
+                # Расширенный поиск для редких пар
+                extended_query = """
+                    SELECT 
+                        open_price as entry_price,
+                        timestamp
+                    FROM fas.market_data_aggregated
+                    WHERE trading_pair_id = %s
+                        AND timeframe = '15m'
+                        AND timestamp >= %s - INTERVAL '1 hour'
+                        AND timestamp <= %s + INTERVAL '1 hour'
+                    ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
+                    LIMIT 1
+                """
+                price_result = db.execute_query(
+                    extended_query,
+                    (signal['trading_pair_id'], signal['timestamp'],
+                     signal['timestamp'], signal['timestamp']),
+                    fetch=True
+                )
 
-            entry_price = float(price_result[0]['mark_price'])
+                if not price_result:
+                    error_count += 1
+                    if exchange_name not in exchange_stats['errors']:
+                        exchange_stats['errors'][exchange_name] = []
+                    exchange_stats['errors'][exchange_name].append(signal['symbol'])
+                    continue
 
-            # ВАЖНО: Получаем историю ТОЛЬКО за 48 часов после сигнала
+            entry_price = float(price_result[0]['entry_price'])
+
+            # Получаем историю за 48 часов с использованием high/low для точной проверки TP/SL
             history_query = """
-                SELECT capture_time, mark_price
-                FROM public.market_data
+                SELECT 
+                    timestamp,
+                    open_price,
+                    high_price,
+                    low_price,
+                    close_price
+                FROM fas.market_data_aggregated
                 WHERE trading_pair_id = %s
-                    AND capture_time >= %s
-                    AND capture_time <= %s + INTERVAL '48 hours'
-                ORDER BY capture_time ASC
+                    AND timeframe = '15m'
+                    AND timestamp >= %s
+                    AND timestamp <= %s + INTERVAL '48 hours'
+                ORDER BY timestamp ASC
             """
 
             history = db.execute_query(
@@ -1011,80 +1049,102 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                 fetch=True
             )
 
-            if not history:
+            if not history or len(history) < 2:
+                error_count += 1
                 continue
 
-            # Переменные для отслеживания ЗАКРЫТИЯ позиции
+            # Переменные для отслеживания
             is_closed = False
             close_reason = None
             close_price = None
             close_time = None
             hours_to_close = None
 
-            # Переменные для отслеживания МАКСИМАЛЬНОГО профита (независимо от закрытия)
-            best_price = entry_price
+            # Для отслеживания максимального профита
             max_profit_percent = 0
             max_profit_usd = 0
+            best_price_reached = entry_price
 
-            # Проходим по всей истории
-            for price_point in history:
-                current_price = float(price_point['mark_price'])
-                current_time = price_point['capture_time']
+            # Рассчитываем уровни TP и SL
+            if signal['signal_action'] == 'SELL':
+                tp_price = entry_price * (1 - tp_percent / 100)
+                sl_price = entry_price * (1 + sl_percent / 100)
+            else:  # BUY
+                tp_price = entry_price * (1 + tp_percent / 100)
+                sl_price = entry_price * (1 - sl_percent / 100)
+
+            for candle in history:
+                current_time = candle['timestamp']
                 hours_passed = (current_time - signal['timestamp']).total_seconds() / 3600
 
-                # ВСЕГДА обновляем лучшую цену для расчета максимального профита
+                high_price = float(candle['high_price'])
+                low_price = float(candle['low_price'])
+                close_price_candle = float(candle['close_price'])
+
+                # Обновляем максимальный достигнутый профит
                 if signal['signal_action'] == 'SELL':
-                    if current_price < best_price:
-                        best_price = current_price
-                        temp_profit_percent = ((entry_price - best_price) / entry_price) * 100
+                    # Для SHORT лучшая цена = минимальная
+                    if low_price < best_price_reached:
+                        best_price_reached = low_price
+                        temp_profit_percent = ((entry_price - best_price_reached) / entry_price) * 100
                         temp_profit_usd = position_size * (temp_profit_percent / 100) * leverage
                         if temp_profit_usd > max_profit_usd:
                             max_profit_percent = temp_profit_percent
                             max_profit_usd = temp_profit_usd
+
+                    # Проверка TP/SL для SHORT
+                    if not is_closed:
+                        # Проверяем достижение TP (цена упала достаточно)
+                        if low_price <= tp_price:
+                            is_closed = True
+                            close_reason = 'take_profit'
+                            close_price = tp_price  # Закрываемся по уровню TP
+                            close_time = current_time
+                            hours_to_close = hours_passed
+                        # Проверяем достижение SL (цена поднялась слишком высоко)
+                        elif high_price >= sl_price:
+                            is_closed = True
+                            close_reason = 'stop_loss'
+                            close_price = sl_price  # Закрываемся по уровню SL
+                            close_time = current_time
+                            hours_to_close = hours_passed
+
                 else:  # BUY
-                    if current_price > best_price:
-                        best_price = current_price
-                        temp_profit_percent = ((best_price - entry_price) / entry_price) * 100
+                    # Для LONG лучшая цена = максимальная
+                    if high_price > best_price_reached:
+                        best_price_reached = high_price
+                        temp_profit_percent = ((best_price_reached - entry_price) / entry_price) * 100
                         temp_profit_usd = position_size * (temp_profit_percent / 100) * leverage
                         if temp_profit_usd > max_profit_usd:
                             max_profit_percent = temp_profit_percent
                             max_profit_usd = temp_profit_usd
 
-                # Проверяем условия закрытия (только если еще не закрыта)
-                # ВАЖНО: Фиксируем параметры закрытия только ОДИН РАЗ!
-                if not is_closed:
-                    if signal['signal_action'] == 'SELL':
-                        price_change_percent = ((entry_price - current_price) / entry_price) * 100
-                    else:  # BUY
-                        price_change_percent = ((current_price - entry_price) / entry_price) * 100
-
-                    # Проверяем TP
-                    if price_change_percent >= tp_percent:
-                        is_closed = True
-                        close_reason = 'take_profit'
-                        close_price = current_price  # Фиксируем цену закрытия
-                        close_time = current_time  # Фиксируем время закрытия
-                        hours_to_close = hours_passed  # Фиксируем время до закрытия
-                        # Продолжаем цикл для поиска максимального профита, но НЕ меняем параметры закрытия
-
-                    # Проверяем SL
-                    elif price_change_percent <= -sl_percent:
-                        is_closed = True
-                        close_reason = 'stop_loss'
-                        close_price = current_price  # Фиксируем цену закрытия
-                        close_time = current_time  # Фиксируем время закрытия
-                        hours_to_close = hours_passed  # Фиксируем время до закрытия
-                        # Продолжаем цикл для поиска максимального профита, но НЕ меняем параметры закрытия
+                    # Проверка TP/SL для LONG
+                    if not is_closed:
+                        # Проверяем достижение TP (цена выросла достаточно)
+                        if high_price >= tp_price:
+                            is_closed = True
+                            close_reason = 'take_profit'
+                            close_price = tp_price  # Закрываемся по уровню TP
+                            close_time = current_time
+                            hours_to_close = hours_passed
+                        # Проверяем достижение SL (цена упала слишком низко)
+                        elif low_price <= sl_price:
+                            is_closed = True
+                            close_reason = 'stop_loss'
+                            close_price = sl_price  # Закрываемся по уровню SL
+                            close_time = current_time
+                            hours_to_close = hours_passed
 
             # Если не закрылась за 48 часов - закрываем по таймауту
             if not is_closed:
                 is_closed = True
                 close_reason = 'timeout'
-                close_price = float(history[-1]['mark_price'])
-                close_time = history[-1]['capture_time']
+                close_price = float(history[-1]['close_price'])
+                close_time = history[-1]['timestamp']
                 hours_to_close = 48.0
 
-            # Рассчитываем финальный P&L на момент закрытия (используем зафиксированную close_price)
+            # Рассчитываем финальный P&L
             if signal['signal_action'] == 'SELL':
                 final_pnl_percent = ((entry_price - close_price) / entry_price) * 100
             else:
@@ -1092,18 +1152,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
 
             final_pnl_usd = position_size * (final_pnl_percent / 100) * leverage
 
-            # Отладочная информация
-            if close_reason == 'take_profit':
-                if abs(final_pnl_percent - tp_percent) > 0.5:  # Если отклонение больше 0.5%
-                    print(f"[WARNING] {signal['symbol']}: TP отклонение! "
-                          f"Ожидалось {tp_percent}%, получилось {final_pnl_percent:.2f}%")
-
-                if max_profit_usd > final_pnl_usd * 1.2:  # Если макс профит больше на 20%
-                    print(f"[INFO] {signal['symbol']}: Упущенный профит! "
-                          f"TP=${final_pnl_usd:.2f} ({final_pnl_percent:.2f}%), "
-                          f"Макс=${max_profit_usd:.2f} ({max_profit_percent:.2f}%)")
-
-            # Добавляем в batch
+            # Добавляем в batch с ПРАВИЛЬНЫМ exchange_name
             batch_data.append((
                 session_id,
                 user_id,
@@ -1111,19 +1160,19 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                 signal['symbol'],
                 signal['trading_pair_id'],
                 signal['signal_action'],
-                signal['market_regime'],
-                signal.get('exchange_name', 'Unknown'),
+                signal.get('market_regime', 'NEUTRAL'),
+                exchange_name,  # Используем exchange_name из сигнала
                 float(signal.get('total_score', 0)),
                 float(signal.get('indicator_score', 0)),
                 float(signal.get('pattern_score', 0)),
                 float(signal.get('combination_score', 0)),
                 entry_price,
-                best_price,
-                close_price,  # Используем зафиксированную цену закрытия
-                close_time,  # Используем зафиксированное время закрытия
+                best_price_reached,
+                close_price,
+                close_time,
                 is_closed,
                 close_reason,
-                hours_to_close,  # Используем зафиксированное время до закрытия
+                hours_to_close,
                 final_pnl_percent,
                 final_pnl_usd,
                 max_profit_percent,
@@ -1135,23 +1184,44 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
             ))
 
             processed_count += 1
+            exchange_stats[exchange_name] = exchange_stats.get(exchange_name, 0) + 1
 
-            # Вставляем пачками по 100
-            if len(batch_data) >= 100:
+            # Вставляем пачками по 50
+            if len(batch_data) >= 50:
                 _insert_batch_results(db, batch_data)
                 batch_data = []
                 print(f"[SCORING] Обработано {processed_count}/{len(signals)} сигналов...")
 
+            # Отладочная информация для первых нескольких сигналов
+            if idx < 3:
+                print(f"[DEBUG] Сигнал {signal['symbol']} ({exchange_name}):")
+                print(f"  Entry: {entry_price:.8f}, TP: {tp_price:.8f}, SL: {sl_price:.8f}")
+                print(f"  Close: {close_price:.8f} ({close_reason}), PnL: ${final_pnl_usd:.2f}")
+                print(f"  Max profit: ${max_profit_usd:.2f} at {best_price_reached:.8f}")
+
         except Exception as e:
             error_count += 1
-            print(f"[SCORING] Ошибка обработки сигнала {signal.get('symbol', 'UNKNOWN')}: {e}")
+            print(f"[SCORING] Ошибка обработки сигнала {signal.get('symbol', 'UNKNOWN')} "
+                  f"({signal.get('exchange_name', 'Unknown')}): {e}")
             continue
 
     # Вставляем оставшиеся данные
     if batch_data:
         _insert_batch_results(db, batch_data)
 
-    print(f"[SCORING] Обработка завершена: {processed_count} успешно, {error_count} ошибок")
+    print(f"\n[SCORING] Обработка завершена:")
+    print(f"  Успешно: {processed_count}")
+    print(f"  Ошибок: {error_count}")
+    print(f"  По биржам:")
+    for exchange, count in exchange_stats.items():
+        if exchange != 'errors':
+            print(f"    {exchange}: {count}")
+
+    if exchange_stats.get('errors'):
+        print(f"  Пары с ошибками:")
+        for exchange, pairs in exchange_stats['errors'].items():
+            unique_pairs = list(set(pairs))[:5]
+            print(f"    {exchange}: {', '.join(unique_pairs)}")
 
     # Возвращаем статистику
     stats_query = """
@@ -1167,11 +1237,9 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
             SUM(CASE WHEN close_reason = 'stop_loss' THEN ABS(pnl_usd) ELSE 0 END) as sl_loss,
             SUM(max_potential_profit_usd) as total_max_potential,
             AVG(hours_to_close) FILTER (WHERE close_reason != 'timeout') as avg_hours_to_close,
-
-            -- Метрики упущенного профита
-            SUM(max_potential_profit_usd - pnl_usd) FILTER (WHERE close_reason = 'take_profit') as missed_profit_tp,
-            AVG((max_potential_profit_usd - pnl_usd) / NULLIF(pnl_usd, 0) * 100) 
-                FILTER (WHERE close_reason = 'take_profit' AND pnl_usd > 0) as avg_missed_percent
+            -- Дополнительная статистика по биржам
+            COUNT(CASE WHEN exchange_name = 'Binance' THEN 1 END) as binance_signals,
+            COUNT(CASE WHEN exchange_name = 'Bybit' THEN 1 END) as bybit_signals
         FROM web.scoring_analysis_results
         WHERE session_id = %s AND user_id = %s
     """
@@ -1181,26 +1249,35 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
     return {
         'processed': processed_count,
         'errors': error_count,
-        'stats': stats
+        'stats': stats,
+        'exchange_breakdown': exchange_stats
     }
 
 
 def _insert_batch_results(db, batch_data):
-    """Вспомогательная функция для batch insert"""
+    """
+    Вспомогательная функция для batch insert с правильным сохранением exchange_name
+    """
+    insert_query = """
+        INSERT INTO web.scoring_analysis_results (
+            session_id, user_id, signal_timestamp, pair_symbol, trading_pair_id,
+            signal_action, market_regime, exchange_name,
+            total_score, indicator_score, pattern_score, combination_score,
+            entry_price, best_price, close_price, close_time,
+            is_closed, close_reason, hours_to_close,
+            pnl_percent, pnl_usd,
+            max_potential_profit_percent, max_potential_profit_usd,
+            tp_percent, sl_percent, position_size, leverage
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """
+
     for data in batch_data:
-        single_insert = """
-            INSERT INTO web.scoring_analysis_results (
-                session_id, user_id, signal_timestamp, pair_symbol, trading_pair_id,
-                signal_action, market_regime, exchange_name,
-                total_score, indicator_score, pattern_score, combination_score,
-                entry_price, best_price, close_price, close_time,
-                is_closed, close_reason, hours_to_close,
-                pnl_percent, pnl_usd,
-                max_potential_profit_percent, max_potential_profit_usd,
-                tp_percent, sl_percent, position_size, leverage
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        db.execute_query(single_insert, data)
+        try:
+            db.execute_query(insert_query, data)
+        except Exception as e:
+            print(f"[INSERT] Ошибка вставки записи: {e}")
+            # Продолжаем со следующей записью
+            continue
 
 
 def get_scoring_analysis_results(db, session_id, user_id):
