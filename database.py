@@ -1567,6 +1567,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                                   trailing_activation_pct=1.0):
     """
     Пакетная обработка сигналов скоринга с поддержкой Trailing Stop
+    ИСПРАВЛЕНО: Корректная обработка результатов trailing stop
     """
 
     # Очищаем предыдущие результаты для этой сессии
@@ -1585,6 +1586,17 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
     processed_count = 0
     error_count = 0
     exchange_stats = {'Binance': 0, 'Bybit': 0, 'errors': {}}
+
+    # Счетчики для отладки
+    debug_stats = {
+        'total': 0,
+        'trailing_activated': 0,
+        'closed_trailing': 0,
+        'closed_tp': 0,
+        'closed_sl': 0,
+        'closed_timeout': 0,
+        'still_open': 0
+    }
 
     # Подготавливаем данные для batch insert
     batch_data = []
@@ -1667,63 +1679,86 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                 error_count += 1
                 continue
 
+            debug_stats['total'] += 1
+
             # ВЫБОР ЛОГИКИ: Trailing Stop или Fixed TP/SL
             if use_trailing_stop:
-                # Используем функцию trailing stop
+                # Используем функцию trailing stop с передачей timestamp
                 result = calculate_trailing_stop_exit(
-                    entry_price, history, signal['signal_action'],
-                    trailing_distance_pct, trailing_activation_pct,
-                    sl_percent, position_size, leverage,
-                    signal_timestamp=signal['timestamp']  # ВАЖНО: передаем timestamp сигнала
+                    entry_price,
+                    history,
+                    signal['signal_action'],
+                    trailing_distance_pct,
+                    trailing_activation_pct,
+                    sl_percent,
+                    position_size,
+                    leverage,
+                    signal_timestamp=signal['timestamp']  # ВАЖНО: передаем timestamp
                 )
 
+                # ИСПРАВЛЕНО: Правильно извлекаем все данные из результата
                 is_closed = result['is_closed']
                 close_price = result['close_price']
                 close_time = result['close_time']
                 close_reason = result['close_reason']
+                best_price_reached = result['absolute_best_price']  # Используем absolute_best_price
+                max_profit_usd = result['max_profit_usd']
 
-                # ВАЖНО: берем финальный P&L и максимальный профит из результата
+                # Рассчитываем финальный P&L
                 if is_closed:
                     final_pnl_percent = result['pnl_percent']
                     final_pnl_usd = result['pnl_usd']
+                    hours_to_close = (close_time - signal['timestamp']).total_seconds() / 3600 if close_time else None
                 else:
-                    # Для открытых позиций рассчитываем unrealized
+                    # Для открытых позиций (не должно быть при правильной работе таймаута)
                     last_price = float(history[-1]['close_price'])
+                    close_price = last_price  # Для отображения текущей цены
+                    close_time = history[-1]['timestamp']
+
                     if signal['signal_action'] in ['SELL', 'SHORT']:
                         final_pnl_percent = ((entry_price - last_price) / entry_price) * 100
                     else:
                         final_pnl_percent = ((last_price - entry_price) / entry_price) * 100
                     final_pnl_usd = position_size * (final_pnl_percent / 100) * leverage
+                    hours_to_close = 48.0  # Максимальное время
 
-                # Максимальный профит из trailing расчета
-                max_profit_percent = (result['max_profit_usd'] / (
-                            position_size * leverage)) * 100 if position_size * leverage > 0 else 0
-                max_profit_usd = result['max_profit_usd']
-                best_price_reached = result['absolute_best_price']
-                hours_to_close = (close_time - signal['timestamp']).total_seconds() / 3600 if close_time else 48.0
+                # Расчет max_profit_percent для сохранения
+                max_profit_percent = (max_profit_usd / (position_size * leverage)) * 100 if (
+                                                                                                        position_size * leverage) > 0 else 0
 
-                if idx < 5:  # Первые 5 сигналов
+                # Обновляем счетчики для отладки
+                if result.get('trailing_activated', False):
+                    debug_stats['trailing_activated'] += 1
+
+                if is_closed:
+                    if close_reason == 'trailing_stop':
+                        debug_stats['closed_trailing'] += 1
+                    elif close_reason == 'stop_loss':
+                        debug_stats['closed_sl'] += 1
+                    elif close_reason == 'timeout':
+                        debug_stats['closed_timeout'] += 1
+                else:
+                    debug_stats['still_open'] += 1
+
+                # Отладка для первых сигналов
+                if idx < 3:
                     print(f"\n[DEBUG] Сигнал {signal['symbol']} ({signal['signal_action']}):")
                     print(f"  Entry price: {entry_price:.8f}")
                     print(f"  Trailing activated: {result.get('trailing_activated', False)}")
-                    print(f"  Is closed: {result['is_closed']}")
-                    print(f"  Close reason: {result.get('close_reason', 'N/A')}")
-                    print(f"  Max profit: ${result['max_profit_usd']:.2f}")
-                    print(f"  History length: {len(history)} candles")
+                    print(f"  Is closed: {is_closed}")
+                    print(f"  Close reason: {close_reason}")
+                    print(f"  Close price: {close_price:.8f if close_price else 'N/A'}")
+                    print(f"  Final P&L: ${final_pnl_usd:.2f} ({final_pnl_percent:.2f}%)")
+                    print(f"  Max profit: ${max_profit_usd:.2f}")
+                    print(f"  Hours to close: {hours_to_close:.1f if hours_to_close else 'N/A'}")
 
-                    # Проверяем параметры
-                    print(f"  Activation %: {trailing_activation_pct}%")
-                    print(f"  Distance %: {trailing_distance_pct}%")
-                    print(f"  Insurance SL %: {sl_percent}%")
             else:
-                # СУЩЕСТВУЮЩАЯ ЛОГИКА Fixed TP/SL
+                # СУЩЕСТВУЮЩАЯ ЛОГИКА Fixed TP/SL (оставляем как есть)
                 is_closed = False
                 close_reason = None
                 close_price = None
                 close_time = None
                 hours_to_close = None
-
-                # Для отслеживания максимального профита
                 max_profit_percent = 0
                 max_profit_usd = 0
                 best_price_reached = entry_price
@@ -1736,10 +1771,10 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                     tp_price = entry_price * (1 + tp_percent / 100)
                     sl_price = entry_price * (1 - sl_percent / 100)
 
+                # ... остальная логика Fixed TP/SL ...
                 for candle in history:
                     current_time = candle['timestamp']
                     hours_passed = (current_time - signal['timestamp']).total_seconds() / 3600
-
                     high_price = float(candle['high_price'])
                     low_price = float(candle['low_price'])
 
@@ -1761,12 +1796,14 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                                 close_price = tp_price
                                 close_time = current_time
                                 hours_to_close = hours_passed
+                                debug_stats['closed_tp'] += 1
                             elif high_price >= sl_price:
                                 is_closed = True
                                 close_reason = 'stop_loss'
                                 close_price = sl_price
                                 close_time = current_time
                                 hours_to_close = hours_passed
+                                debug_stats['closed_sl'] += 1
 
                     else:  # BUY, LONG
                         if high_price > best_price_reached:
@@ -1785,43 +1822,41 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                                 close_price = tp_price
                                 close_time = current_time
                                 hours_to_close = hours_passed
+                                debug_stats['closed_tp'] += 1
                             elif low_price <= sl_price:
                                 is_closed = True
                                 close_reason = 'stop_loss'
                                 close_price = sl_price
                                 close_time = current_time
                                 hours_to_close = hours_passed
+                                debug_stats['closed_sl'] += 1
 
                 # Если не закрылась, проверяем таймаут
                 if not is_closed:
+                    last_price = float(history[-1]['close_price'])
                     hours_passed = (history[-1]['timestamp'] - signal['timestamp']).total_seconds() / 3600
                     if hours_passed >= 48:
                         is_closed = True
                         close_reason = 'timeout'
-                        close_price = float(history[-1]['close_price'])
+                        close_price = last_price
                         close_time = history[-1]['timestamp']
                         hours_to_close = 48.0
+                        debug_stats['closed_timeout'] += 1
+                    else:
+                        # Остается открытой (не должно быть для исторических данных)
+                        close_price = last_price
+                        close_time = history[-1]['timestamp']
+                        hours_to_close = hours_passed
+                        debug_stats['still_open'] += 1
 
                 # Рассчитываем финальный P&L
-                if is_closed:
-                    if signal['signal_action'] in ['SELL', 'SHORT']:
-                        final_pnl_percent = ((entry_price - close_price) / entry_price) * 100
-                    else:
-                        final_pnl_percent = ((close_price - entry_price) / entry_price) * 100
-                    final_pnl_usd = position_size * (final_pnl_percent / 100) * leverage
+                if signal['signal_action'] in ['SELL', 'SHORT']:
+                    final_pnl_percent = ((entry_price - close_price) / entry_price) * 100
                 else:
-                    # Для открытых позиций
-                    last_price = float(history[-1]['close_price'])
-                    if signal['signal_action'] in ['SELL', 'SHORT']:
-                        final_pnl_percent = ((entry_price - last_price) / entry_price) * 100
-                    else:
-                        final_pnl_percent = ((last_price - entry_price) / entry_price) * 100
-                    final_pnl_usd = position_size * (final_pnl_percent / 100) * leverage
-                    close_price = last_price
-                    close_time = history[-1]['timestamp']
-                    hours_to_close = 48.0
+                    final_pnl_percent = ((close_price - entry_price) / entry_price) * 100
+                final_pnl_usd = position_size * (final_pnl_percent / 100) * leverage
 
-            # Добавляем в batch
+            # Добавляем в batch с КОРРЕКТНЫМИ данными
             batch_data.append((
                 session_id,
                 user_id,
@@ -1839,8 +1874,8 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                 best_price_reached,
                 close_price,
                 close_time,
-                is_closed,
-                close_reason,
+                is_closed,  # ВАЖНО: используем правильное значение
+                close_reason,  # ВАЖНО: используем правильное значение
                 hours_to_close,
                 final_pnl_percent,
                 final_pnl_usd,
@@ -1864,19 +1899,28 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
         except Exception as e:
             error_count += 1
             print(f"[SCORING] Ошибка обработки сигнала {signal.get('symbol', 'UNKNOWN')}: {e}")
+            import traceback
+            traceback.print_exc()
             continue
 
     # Вставляем оставшиеся данные
     if batch_data:
         _insert_batch_results(db, batch_data)
 
-    print(f"\n[SCORING] Обработка завершена:")
-    print(f"  Успешно: {processed_count}")
-    print(f"  Ошибок: {error_count}")
+    # Выводим итоговую статистику
+    print(f"\n[SCORING] ===== ИТОГОВАЯ СТАТИСТИКА =====")
+    print(f"[SCORING] Обработано сигналов: {debug_stats['total']}")
     if use_trailing_stop:
-        print(f"  Режим: Trailing Stop")
+        print(f"[SCORING] Trailing активирован: {debug_stats['trailing_activated']}")
+        print(f"[SCORING] Закрыто по trailing: {debug_stats['closed_trailing']}")
+    else:
+        print(f"[SCORING] Закрыто по TP: {debug_stats['closed_tp']}")
+    print(f"[SCORING] Закрыто по SL: {debug_stats['closed_sl']}")
+    print(f"[SCORING] Закрыто по timeout: {debug_stats['closed_timeout']}")
+    print(f"[SCORING] Остались открытыми: {debug_stats['still_open']}")
+    print(f"[SCORING] Ошибок: {error_count}")
 
-    # Получаем статистику
+    # Возвращаем статистику из БД
     stats_query = """
         SELECT 
             COUNT(*) as total,
@@ -1886,6 +1930,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
             COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_count,
             COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as trailing_count,
             COUNT(CASE WHEN close_reason = 'timeout' THEN 1 END) as timeout_count,
+            COUNT(CASE WHEN is_closed = FALSE THEN 1 END) as open_count,
             SUM(pnl_usd) as total_pnl,
             SUM(CASE WHEN close_reason IN ('take_profit', 'trailing_stop') AND pnl_usd > 0 THEN pnl_usd ELSE 0 END) as tp_profit,
             SUM(CASE WHEN close_reason = 'stop_loss' THEN ABS(pnl_usd) ELSE 0 END) as sl_loss,
