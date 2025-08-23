@@ -409,21 +409,31 @@ class TestEdgeCases(unittest.TestCase):
 
         # Для SELL: TP на 96, SL на 103
         history = [
-            self.create_candle(1, 102, 98, 100),  # Нормальная свеча
-            self.create_candle(2, 103.5, 95, 98),  # SL срабатывает (103)
-            self.create_candle(3, 110, 90, 95),  # Огромное движение после
-            self.create_candle(48, 100, 98, 99),
-        ]
-
-        def create_candle(hours_offset, high, low, close):
-            return {
-                'timestamp': self.base_time + timedelta(hours=hours_offset),
-                'high_price': high,
-                'low_price': low,
-                'close_price': close
+            {
+                'timestamp': self.base_time + timedelta(hours=1),
+                'high_price': 102,
+                'low_price': 98,
+                'close_price': 100
+            },
+            {
+                'timestamp': self.base_time + timedelta(hours=2),
+                'high_price': 103.5,  # SL срабатывает (103)
+                'low_price': 95,
+                'close_price': 98
+            },
+            {
+                'timestamp': self.base_time + timedelta(hours=3),
+                'high_price': 110,  # Огромное движение после
+                'low_price': 90,
+                'close_price': 95
+            },
+            {
+                'timestamp': self.base_time + timedelta(hours=48),
+                'high_price': 100,
+                'low_price': 98,
+                'close_price': 99
             }
-
-        self.create_candle = create_candle
+        ]
 
         result = self.analyzer.process_price_history_improved(
             'SELL', entry_price, history, self.base_time
