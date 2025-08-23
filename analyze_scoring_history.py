@@ -178,6 +178,44 @@ class ScoringAnalyzer:
             logger.error(f"❌ Ошибка получения цены входа: {e}")
             return None
 
+    def create_no_data_result(self, signal: Dict, signal_type: str, signal_criteria: str, reason: str) -> Dict:
+        """
+        Создает запись для сигналов без данных, чтобы они не обрабатывались повторно
+        """
+        return {
+            'scoring_history_id': signal['scoring_history_id'],
+            'signal_timestamp': signal['signal_timestamp'],
+            'pair_symbol': signal['pair_symbol'],
+            'trading_pair_id': signal['trading_pair_id'],
+            'market_regime': signal['market_regime'],
+            'total_score': float(signal['total_score']),
+            'indicator_score': float(signal['indicator_score']),
+            'pattern_score': float(signal['pattern_score']),
+            'combination_score': float(signal.get('combination_score', 0)),
+            'signal_type': signal_type,
+            'signal_criteria': signal_criteria,
+            'entry_price': None,  # NULL
+            'best_price': None,
+            'worst_price': None,
+            'close_price': None,
+            'is_closed': False,
+            'close_reason': reason,  # 'no_entry_price' или 'insufficient_history'
+            'is_win': None,
+            'close_time': None,
+            'hours_to_close': None,
+            'pnl_percent': 0,
+            'pnl_usd': 0,
+            'max_potential_profit_percent': 0,
+            'max_potential_profit_usd': 0,
+            'max_drawdown_percent': 0,
+            'max_drawdown_usd': 0,
+            'tp_percent': ANALYSIS_PARAMS['tp_percent'],
+            'sl_percent': ANALYSIS_PARAMS['sl_percent'],
+            'position_size': ANALYSIS_PARAMS['position_size'],
+            'leverage': ANALYSIS_PARAMS['leverage'],
+            'analysis_end_time': signal['signal_timestamp'] + timedelta(hours=48)
+        }
+
     def process_price_history_improved(self, signal_type: str, entry_price: float,
                                        history: List[Dict], actual_entry_time) -> Dict:
         """
@@ -378,7 +416,8 @@ class ScoringAnalyzer:
             if not entry_data:
                 logger.warning(f"⚠️ Нет цены входа для {signal['pair_symbol']} @ {signal['signal_timestamp']}")
                 self.skipped_count += 1
-                return None
+                # ВАЖНО: Возвращаем запись с пометкой NO_DATA для сохранения в БД
+                return self.create_no_data_result(signal, signal_type, signal_criteria, 'no_entry_price')
 
             entry_price = entry_data['entry_price']
             actual_entry_time = entry_data['entry_time']
@@ -409,7 +448,8 @@ class ScoringAnalyzer:
             if not history or len(history) < 10:  # Минимум 10 свечей для анализа
                 logger.warning(f"⚠️ Недостаточно истории для {signal['pair_symbol']}")
                 self.skipped_count += 1
-                return None
+                # ВАЖНО: Возвращаем запись с пометкой NO_DATA для сохранения в БД
+                return self.create_no_data_result(signal, signal_type, signal_criteria, 'insufficient_history')
 
             # Используем ИСПРАВЛЕННЫЙ метод анализа
             result = self.process_price_history_improved(
@@ -439,10 +479,14 @@ class ScoringAnalyzer:
         except Exception as e:
             logger.error(f"❌ Ошибка анализа сигнала {signal['pair_symbol']}: {e}")
             self.error_count += 1
-            return None
+            # В случае ошибки тоже сохраняем запись, чтобы не зацикливаться
+            try:
+                return self.create_no_data_result(signal, 'UNKNOWN', 'error', 'processing_error')
+            except:
+                return None
 
     def save_results(self, results: List[Dict]):
-        """Сохранение результатов в БД"""
+        """Сохранение результатов в БД с поддержкой записей NO_DATA"""
         if not results:
             return
 
@@ -468,13 +512,20 @@ class ScoringAnalyzer:
                 max_potential_profit_usd = EXCLUDED.max_potential_profit_usd,
                 max_drawdown_percent = EXCLUDED.max_drawdown_percent,
                 max_drawdown_usd = EXCLUDED.max_drawdown_usd,
+                close_reason = EXCLUDED.close_reason,
                 processed_at = NOW()
         """
 
         saved_count = 0
+        no_data_count = 0
+
         with self.conn.cursor() as cur:
             for result in results:
                 try:
+                    # Проверяем, является ли это записью NO_DATA
+                    if result['close_reason'] in ['no_entry_price', 'insufficient_history']:
+                        no_data_count += 1
+
                     cur.execute(insert_query, (
                         result['scoring_history_id'],
                         result['signal_timestamp'],
@@ -487,15 +538,15 @@ class ScoringAnalyzer:
                         result['combination_score'],
                         result['signal_type'],
                         result['signal_criteria'],
-                        result['entry_price'],
-                        result['best_price'],
-                        result['worst_price'],
-                        result['close_price'],
+                        result.get('entry_price'),  # Может быть None
+                        result.get('best_price'),
+                        result.get('worst_price'),
+                        result.get('close_price'),
                         result['is_closed'],
                         result['close_reason'],
-                        result['is_win'],
-                        result['close_time'],
-                        result['hours_to_close'],
+                        result.get('is_win'),
+                        result.get('close_time'),
+                        result.get('hours_to_close'),
                         result['pnl_percent'],
                         result['pnl_usd'],
                         result['max_potential_profit_percent'],
@@ -515,7 +566,11 @@ class ScoringAnalyzer:
 
         self.conn.commit()
         self.new_signals_count += saved_count
-        logger.info(f"💾 Сохранено {saved_count} результатов из {len(results)}")
+
+        if no_data_count > 0:
+            logger.info(f"💾 Сохранено {saved_count} результатов из {len(results)} (включая {no_data_count} без данных)")
+        else:
+            logger.info(f"💾 Сохранено {saved_count} результатов из {len(results)}")
 
     def print_enhanced_statistics(self):
         """Вывод расширенной статистики с анализом максимального потенциала"""
@@ -528,19 +583,20 @@ class ScoringAnalyzer:
                         COUNT(CASE WHEN signal_type = 'SELL' THEN 1 END) as sell_signals,
                         COUNT(CASE WHEN is_win = true THEN 1 END) as wins,
                         COUNT(CASE WHEN is_win = false THEN 1 END) as losses,
-                        COUNT(CASE WHEN is_win IS NULL THEN 1 END) as timeouts,
-                        AVG(pnl_usd) as avg_pnl,
-                        SUM(pnl_usd) as total_pnl,
+                        COUNT(CASE WHEN is_win IS NULL AND close_reason = 'timeout' THEN 1 END) as timeouts,
+                        COUNT(CASE WHEN close_reason IN ('no_entry_price', 'insufficient_history') THEN 1 END) as no_data,
+                        AVG(CASE WHEN entry_price IS NOT NULL THEN pnl_usd END) as avg_pnl,
+                        SUM(CASE WHEN entry_price IS NOT NULL THEN pnl_usd END) as total_pnl,
                         AVG(CASE WHEN is_win = true THEN pnl_usd END) as avg_win_profit,
                         AVG(CASE WHEN is_win = false THEN pnl_usd END) as avg_loss,
                         MAX(pnl_usd) as max_profit,
                         MIN(pnl_usd) as max_loss,
-                        AVG(max_potential_profit_usd) as avg_max_potential_profit,
-                        AVG(max_drawdown_usd) as avg_max_potential_loss,
-                        AVG(hours_to_close) FILTER (WHERE close_reason != 'timeout') as avg_hours_to_close,
+                        AVG(CASE WHEN entry_price IS NOT NULL THEN max_potential_profit_usd END) as avg_max_potential_profit,
+                        AVG(CASE WHEN entry_price IS NOT NULL THEN max_drawdown_usd END) as avg_max_potential_loss,
+                        AVG(hours_to_close) FILTER (WHERE close_reason NOT IN ('timeout', 'no_entry_price', 'insufficient_history')) as avg_hours_to_close,
                         -- Новые метрики
-                        AVG(max_potential_profit_percent) as avg_max_potential_profit_pct,
-                        AVG(max_drawdown_percent) as avg_max_potential_loss_pct,
+                        AVG(CASE WHEN entry_price IS NOT NULL THEN max_potential_profit_percent END) as avg_max_potential_profit_pct,
+                        AVG(CASE WHEN entry_price IS NOT NULL THEN max_drawdown_percent END) as avg_max_potential_loss_pct,
                         COUNT(CASE WHEN max_potential_profit_usd > pnl_usd AND pnl_usd > 0 THEN 1 END) as missed_profit_count,
                         AVG(CASE WHEN max_potential_profit_usd > pnl_usd AND pnl_usd > 0 
                             THEN max_potential_profit_usd - pnl_usd END) as avg_missed_profit
@@ -563,9 +619,11 @@ class ScoringAnalyzer:
                 logger.info(
                     f"   ├─ BUY: {stats['buy_signals']} ({stats['buy_signals'] / stats['total_signals'] * 100:.1f}%)")
                 logger.info(
-                    f"   └─ SELL: {stats['sell_signals']} ({stats['sell_signals'] / stats['total_signals'] * 100:.1f}%)")
+                    f"   ├─ SELL: {stats['sell_signals']} ({stats['sell_signals'] / stats['total_signals'] * 100:.1f}%)")
+                logger.info(
+                    f"   └─ Без данных: {stats['no_data']} ({stats['no_data'] / stats['total_signals'] * 100:.1f}%)")
 
-                logger.info(f"\n🎯 Результаты торговли:")
+                logger.info(f"\n🎯 Результаты торговли (только сигналы с данными):")
                 logger.info(f"   ├─ Победы (TP): {stats['wins']}")
                 logger.info(f"   ├─ Поражения (SL): {stats['losses']}")
                 logger.info(f"   └─ Таймауты: {stats['timeouts']}")
@@ -574,29 +632,32 @@ class ScoringAnalyzer:
                     win_rate = stats['wins'] / (stats['wins'] + stats['losses']) * 100
                     logger.info(f"\n🏆 Win Rate: {win_rate:.1f}%")
 
-                logger.info(f"\n💰 Фактические результаты:")
-                logger.info(f"   ├─ Общий P&L: ${stats['total_pnl']:.2f}")
-                logger.info(f"   ├─ Средний P&L: ${stats['avg_pnl']:.2f}")
-                logger.info(f"   ├─ Средний профит: ${stats['avg_win_profit']:.2f}" if stats[
-                    'avg_win_profit'] else "   ├─ Средний профит: N/A")
-                logger.info(f"   └─ Средний убыток: ${stats['avg_loss']:.2f}" if stats[
-                    'avg_loss'] else "   └─ Средний убыток: N/A")
+                if stats['avg_pnl'] is not None:
+                    logger.info(f"\n💰 Фактические результаты:")
+                    logger.info(f"   ├─ Общий P&L: ${stats['total_pnl']:.2f}" if stats[
+                        'total_pnl'] else "   ├─ Общий P&L: $0.00")
+                    logger.info(f"   ├─ Средний P&L: ${stats['avg_pnl']:.2f}")
+                    logger.info(f"   ├─ Средний профит: ${stats['avg_win_profit']:.2f}" if stats[
+                        'avg_win_profit'] else "   ├─ Средний профит: N/A")
+                    logger.info(f"   └─ Средний убыток: ${stats['avg_loss']:.2f}" if stats[
+                        'avg_loss'] else "   └─ Средний убыток: N/A")
 
-                logger.info(f"\n🚀 МАКСИМАЛЬНЫЙ ПОТЕНЦИАЛ (без TP/SL):")
-                logger.info(
-                    f"   ├─ Средний макс. возможный профит: ${stats['avg_max_potential_profit']:.2f} ({stats['avg_max_potential_profit_pct']:.1f}%)")
-                logger.info(
-                    f"   ├─ Средний макс. возможный убыток: ${stats['avg_max_potential_loss']:.2f} ({stats['avg_max_potential_loss_pct']:.1f}%)")
+                if stats['avg_max_potential_profit']:
+                    logger.info(f"\n🚀 МАКСИМАЛЬНЫЙ ПОТЕНЦИАЛ (без TP/SL):")
+                    logger.info(
+                        f"   ├─ Средний макс. возможный профит: ${stats['avg_max_potential_profit']:.2f} ({stats['avg_max_potential_profit_pct']:.1f}%)")
+                    logger.info(
+                        f"   ├─ Средний макс. возможный убыток: ${stats['avg_max_potential_loss']:.2f} ({stats['avg_max_potential_loss_pct']:.1f}%)")
 
-                if stats['missed_profit_count']:
-                    logger.info(f"   ├─ Сигналов с упущенным профитом: {stats['missed_profit_count']}")
-                    logger.info(f"   └─ Средний упущенный профит: ${stats['avg_missed_profit']:.2f}")
+                    if stats['missed_profit_count']:
+                        logger.info(f"   ├─ Сигналов с упущенным профитом: {stats['missed_profit_count']}")
+                        logger.info(f"   └─ Средний упущенный профит: ${stats['avg_missed_profit']:.2f}")
 
-                # Эффективность использования потенциала
-                if stats['avg_max_potential_profit'] > 0:
-                    efficiency = (stats['avg_pnl'] / stats['avg_max_potential_profit']) * 100 if stats[
-                                                                                                     'avg_pnl'] > 0 else 0
-                    logger.info(f"\n📊 Эффективность использования потенциала: {efficiency:.1f}%")
+                    # Эффективность использования потенциала
+                    if stats['avg_max_potential_profit'] > 0 and stats['avg_pnl']:
+                        efficiency = (stats['avg_pnl'] / stats['avg_max_potential_profit']) * 100 if stats[
+                                                                                                         'avg_pnl'] > 0 else 0
+                        logger.info(f"\n📊 Эффективность использования потенциала: {efficiency:.1f}%")
 
                 if stats['avg_hours_to_close']:
                     logger.info(f"\n⏱️ Среднее время до закрытия: {stats['avg_hours_to_close']:.1f} часов")
