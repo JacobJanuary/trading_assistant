@@ -858,7 +858,7 @@ function countSignals(callback) {
     });
 }
 
-// Применение фильтров с предупреждением
+// Обновленная функция применения фильтров с учетом режима
 function applyFilters() {
     // Сначала проверяем наличие фильтров
     if (buyFilters.length === 0 && sellFilters.length === 0) {
@@ -872,68 +872,86 @@ function applyFilters() {
     const positionSize = parseFloat(document.getElementById('positionSize').value);
     const leverage = parseInt(document.getElementById('leverage').value);
 
-    // Получаем количество сигналов
+    // Сначала получаем количество сигналов
     countSignals(function(signalCount) {
         if (signalCount === 0) {
             alert('Не найдено сигналов по заданным фильтрам');
             return;
         }
 
-        // Показываем предупреждение
-        const message = `Будет обработано ${signalCount} сигналов.\n` +
-                      `Параметры:\n` +
-                      `- TP: ${tp}%\n` +
-                      `- SL: ${sl}%\n` +
-                      `- Позиция: $${positionSize}\n` +
-                      `- Leverage: ${leverage}x\n\n` +
-                      `Это может занять некоторое время. Продолжить?`;
+        // Показываем предупреждение с информацией о режиме
+        fetch('/api/get_user_trading_mode')
+            .then(response => response.json())
+            .then(modeData => {
+                const modeText = modeData.use_trailing_stop ?
+                    `Trailing Stop (Activation: ${modeData.trailing_activation_pct}%, Distance: ${modeData.trailing_distance_pct}%)` :
+                    `Fixed TP/SL`;
 
-        if (!confirm(message)) {
-            return;
-        }
+                const message = `Будет обработано ${signalCount} сигналов.\n` +
+                              `Режим: ${modeText}\n` +
+                              `Параметры:\n` +
+                              `- TP: ${tp}%\n` +
+                              `- SL: ${sl}%\n` +
+                              `- Позиция: $${positionSize}\n` +
+                              `- Leverage: ${leverage}x\n\n` +
+                              `Это может занять некоторое время. Продолжить?`;
 
-        // Показываем индикатор загрузки
-        const button = document.querySelector('button[onclick="applyFilters()"]');
-        const originalText = button.innerHTML;
-        button.disabled = true;
-        button.innerHTML = `<i class="fas fa-spinner fa-spin mr-2"></i>Обработка ${signalCount} сигналов...`;
+                if (!confirm(message)) {
+                    return;
+                }
 
-        // Отправляем запрос на обработку
-        fetch('/api/scoring/apply_filters', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                date: date,
-                buy_filters: buyFilters,
-                sell_filters: sellFilters,
-                tp_percent: tp,
-                sl_percent: sl,
-                position_size: positionSize,
-                leverage: leverage
-            })
-        })
-        .then(response => response.json())
-        .then(result => {
-            if (result.status === 'success') {
-                updateResults(result.data);
-                showNotification(`Успешно обработано ${result.data.stats.total} сигналов`, 'success');
-            } else {
-                alert('Ошибка: ' + result.message);
-            }
-        })
-        .catch(error => {
-            alert('Ошибка сети: ' + error);
-        })
-        .finally(() => {
-            button.disabled = false;
-            button.innerHTML = originalText;
-        });
+                // Показываем индикатор загрузки
+                const button = document.querySelector('button[onclick="applyFilters()"]');
+                const originalText = button.innerHTML;
+                button.disabled = true;
+                button.innerHTML = `<i class="fas fa-spinner fa-spin mr-2"></i>Обработка ${signalCount} сигналов...`;
+
+                // Отправляем запрос на обработку
+                fetch('/api/scoring/apply_filters', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        date: date,
+                        buy_filters: buyFilters,
+                        sell_filters: sellFilters,
+                        tp_percent: tp,
+                        sl_percent: sl,
+                        position_size: positionSize,
+                        leverage: leverage
+                    })
+                })
+                .then(response => response.json())
+                .then(result => {
+                    if (result.status === 'success') {
+                        updateResults(result.data);
+
+                        // Показываем сообщение с учетом режима
+                        const stats = result.data.stats;
+                        let successMsg = `Обработано ${stats.total} сигналов`;
+                        if (stats.mode && stats.mode.includes('Trailing')) {
+                            successMsg += ` (Режим: Trailing Stop, ${stats.trailing_count || 0} trailing stops)`;
+                        }
+                        showNotification(successMsg, 'success');
+                    } else {
+                        alert('Ошибка: ' + result.message);
+                    }
+                })
+                .catch(error => {
+                    alert('Ошибка сети: ' + error);
+                })
+                .finally(() => {
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                });
+            });
     });
 }
 
 // Обновление результатов
+// В файле scoring_analysis.html найдите функцию updateResults и замените её на эту исправленную версию:
+
 function updateResults(data) {
-    // ИСПРАВЛЕНО: Обновляем статистику
+    // ИСПРАВЛЕНО: Обновляем статистику с учетом trailing stops
     const stats = data.stats;
     const metrics = data.metrics;
 
@@ -941,11 +959,14 @@ function updateResults(data) {
     document.getElementById('statTotal').textContent = stats.total || 0;
     document.getElementById('statBuy').textContent = stats.buy_signals || 0;
     document.getElementById('statSell').textContent = stats.sell_signals || 0;
+
+    // ВАЖНО: tp_count уже включает прибыльные trailing stops
     document.getElementById('statTP').textContent = stats.tp_count || 0;
+    // ВАЖНО: sl_count уже включает убыточные trailing stops
     document.getElementById('statSL').textContent = stats.sl_count || 0;
     document.getElementById('statTimeout').textContent = stats.timeout_count || 0;
 
-    // Обновляем P&L с правильным форматированием и цветом
+    // Обновляем P&L
     const pnlElement = document.getElementById('statPnL');
     const totalPnL = stats.total_pnl || 0;
     pnlElement.textContent = (totalPnL >= 0 ? '+' : '') + '$' + totalPnL.toFixed(2);
@@ -960,15 +981,60 @@ function updateResults(data) {
         pnlElement.className = 'text-xl font-bold text-red-600';
     }
 
-    // Обновляем дополнительные метрики
+    // Обновляем метрики
     document.getElementById('statWinRate').textContent = (metrics.win_rate || 0).toFixed(1) + '%';
     document.getElementById('statEfficiency').textContent = (metrics.tp_efficiency || 0).toFixed(1) + '%';
     document.getElementById('statMaxPotential').textContent = '$' + (stats.max_potential || 0).toFixed(2);
 
-    // Обновляем таблицу с улучшенным форматированием
+    // ДОБАВЛЕНО: Показываем режим работы
+    if (stats.mode) {
+        const modeIndicator = document.getElementById('currentMode');
+        if (modeIndicator) {
+            modeIndicator.textContent = stats.mode;
+            if (stats.mode.includes('Trailing')) {
+                modeIndicator.className = 'px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800';
+            } else {
+                modeIndicator.className = 'px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800';
+            }
+        }
+    }
+
+    // ДОБАВЛЕНО: Если есть trailing stops, показываем дополнительную информацию
+    if (stats.trailing_count && stats.trailing_count > 0) {
+        // Создаем дополнительный блок с информацией о trailing stops
+        const trailingInfo = `
+            <div class="bg-purple-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600">Trailing Stops</div>
+                <div class="text-xl font-bold text-purple-600">${stats.trailing_count}</div>
+                <div class="text-xs text-gray-500 mt-1">
+                    Прибыльных: ${stats.tp_count - (stats.tp_count - stats.trailing_count > 0 ? stats.tp_count - stats.trailing_count : 0)}<br>
+                    Убыточных: ${stats.sl_count - (stats.sl_count - stats.trailing_count > 0 ? stats.sl_count - stats.trailing_count : 0)}
+                </div>
+            </div>
+        `;
+
+        // Можно вставить этот блок в статистику, если есть подходящий контейнер
+        const statsContainer = document.querySelector('.grid.grid-cols-2.md\\:grid-cols-4.lg\\:grid-cols-7');
+        if (statsContainer && !document.getElementById('trailingStatsBlock')) {
+            const div = document.createElement('div');
+            div.id = 'trailingStatsBlock';
+            div.innerHTML = trailingInfo;
+            statsContainer.appendChild(div.firstElementChild);
+        }
+    }
+
+    // Обновляем таблицу сигналов
+    updateSignalsTable(data.signals);
+
+    // Показываем уведомление об успехе
+    showNotification(`Обработано ${stats.total} сигналов`, 'success');
+}
+
+// Также добавьте функцию для обновления таблицы сигналов:
+function updateSignalsTable(signals) {
     const tbody = document.getElementById('signalsTableBody');
 
-    if (!data.signals || data.signals.length === 0) {
+    if (!signals || signals.length === 0) {
         tbody.innerHTML = `
             <tr>
                 <td colspan="10" class="px-4 py-8 text-center text-gray-500">
@@ -979,44 +1045,103 @@ function updateResults(data) {
         return;
     }
 
-    tbody.innerHTML = data.signals.map(signal => {
+    tbody.innerHTML = signals.map(signal => {
         const time = new Date(signal.timestamp).toLocaleTimeString('ru-RU', {
             hour: '2-digit',
             minute: '2-digit'
         });
 
-        // Определяем цвет для биржи
-        const exchangeColor = signal.exchange_name === 'Binance' ?
-            'text-yellow-600' : 'text-blue-600';
-
-        // Форматируем P&L
-        const pnlColor = signal.pnl_usd >= 0 ? 'text-green-600' : 'text-red-600';
-        const pnlPrefix = signal.pnl_usd >= 0 ? '+' : '';
-
-        // Определяем статус
+        // Определяем статус badge
         let statusBadge = '';
         if (signal.close_reason === 'take_profit') {
             statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800 font-medium">TP</span>';
         } else if (signal.close_reason === 'stop_loss') {
             statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800 font-medium">SL</span>';
+        } else if (signal.close_reason === 'trailing_stop') {
+            // Определяем цвет trailing stop по P&L
+            const trailingColor = signal.pnl_usd >= 0 ? 'bg-purple-100 text-purple-800' : 'bg-orange-100 text-orange-800';
+            statusBadge = `<span class="px-2 py-1 text-xs rounded-full ${trailingColor} font-medium">TRAIL</span>`;
         } else if (signal.close_reason === 'timeout') {
-            statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-orange-100 text-orange-800 font-medium">TIMEOUT</span>';
+            statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-800 font-medium">TIMEOUT</span>';
         } else {
             statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800 font-medium">ОТКРЫТА</span>';
         }
 
-            // Добавляем отображение trailing stops если есть
-    if (data.stats.trailing_count > 0) {
-        // Можно добавить отдельный индикатор для trailing stops
-        const trailingInfo = document.createElement('div');
-        trailingInfo.className = 'bg-purple-50 p-3 rounded-lg';
-        trailingInfo.innerHTML = `
-            <div class="text-xs text-gray-600">Trailing Stops</div>
-            <div class="text-xl font-bold text-purple-600">${data.stats.trailing_count}</div>
-        `;
-        // Добавляем в блок статистики
-    }
+        const pnlColor = signal.pnl_usd >= 0 ? 'text-green-600' : 'text-red-600';
+        const pnlPrefix = signal.pnl_usd >= 0 ? '+' : '';
 
+        return `
+            <tr class="hover:bg-gray-50 transition-colors">
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <div class="flex flex-col">
+                        <span class="text-sm font-medium text-gray-900">${time}</span>
+                        <span class="text-xs text-gray-500">${signal.exchange_name || 'Unknown'}</span>
+                    </div>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <span class="text-sm font-medium text-gray-900">${signal.pair_symbol}</span>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <span class="px-2 py-1 text-xs rounded-full font-medium ${
+                        signal.signal_action === 'BUY' ?
+                        'bg-green-100 text-green-800' :
+                        'bg-red-100 text-red-800'
+                    }">
+                        ${signal.signal_action}
+                    </span>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <span class="px-2 py-1 text-xs rounded-full ${
+                        signal.market_regime === 'BULL' ? 'bg-green-100 text-green-800' :
+                        signal.market_regime === 'BEAR' ? 'bg-red-100 text-red-800' :
+                        'bg-gray-100 text-gray-800'
+                    }">
+                        ${signal.market_regime}
+                    </span>
+                </td>
+                <td class="px-4 py-3">
+                    <div class="flex flex-col space-y-0.5 text-xs">
+                        <div>T: <span class="font-semibold">${signal.total_score.toFixed(1)}</span></div>
+                        <div>I: ${signal.indicator_score.toFixed(1)}</div>
+                        <div>P: ${signal.pattern_score.toFixed(1)}</div>
+                    </div>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-900 font-mono">
+                    ${signal.entry_price.toFixed(8)}
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-900 font-mono">
+                    ${signal.current_price.toFixed(8)}
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <div class="flex flex-col">
+                        <span class="text-sm font-bold ${pnlColor}">
+                            ${pnlPrefix}$${Math.abs(signal.pnl_usd).toFixed(2)}
+                        </span>
+                        <span class="text-xs ${pnlColor}">
+                            ${signal.pnl_percent.toFixed(2)}%
+                        </span>
+                    </div>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <div class="flex flex-col">
+                        <span class="text-sm font-medium text-blue-600">
+                            $${(signal.max_potential_profit || 0).toFixed(2)}
+                        </span>
+                    </div>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <div class="flex items-center space-x-2">
+                        ${statusBadge}
+                        ${signal.hours_to_close ?
+                            `<span class="text-xs text-gray-500">${signal.hours_to_close.toFixed(1)}ч</span>` :
+                            ''
+                        }
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
         // Рассчитываем процент от максимального профита
         const maxProfitPercent = signal.max_potential_profit ?
             ((signal.max_potential_profit / (100 * 5)) * 100).toFixed(1) : '0.0';
@@ -1157,40 +1282,91 @@ function showNotification(message, type) {
     }, 3000);
 }
 
+// Функция загрузки текущего режима при инициализации страницы
 function loadCurrentMode() {
     fetch('/api/get_user_trading_mode')
         .then(response => response.json())
         .then(data => {
             const modeElement = document.getElementById('currentMode');
-            if (data.use_trailing_stop) {
-                modeElement.className = 'px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800';
-                modeElement.textContent = `Trailing Stop (Act: ${data.trailing_activation_pct}%, Dist: ${data.trailing_distance_pct}%)`;
-            } else {
-                modeElement.className = 'px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800';
-                modeElement.textContent = `Fixed TP/SL (TP: ${data.take_profit_percent}%, SL: ${data.stop_loss_percent}%)`;
+            if (!modeElement) {
+                // Создаем элемент если его нет
+                const container = document.querySelector('.mt-4.pt-4.border-t');
+                if (container) {
+                    const modeDiv = document.createElement('div');
+                    modeDiv.className = 'flex items-center space-x-4 mb-4';
+                    modeDiv.innerHTML = `
+                        <div class="flex items-center">
+                            <span class="text-sm font-medium text-gray-700 mr-3">Режим стратегии:</span>
+                            <span id="currentMode" class="px-3 py-1 rounded-full text-sm font-medium">
+                                <!-- Заполнится через JS -->
+                            </span>
+                        </div>
+                        <button onclick="switchTradingMode()"
+                                class="text-blue-600 hover:text-blue-700 text-sm underline">
+                            Изменить в настройках сигналов
+                        </button>
+                    `;
+                    container.insertBefore(modeDiv, container.firstChild);
+                }
             }
+
+            updateModeDisplay(data);
+        })
+        .catch(error => {
+            console.error('Ошибка загрузки режима:', error);
         });
 }
 
+// Функция обновления отображения режима
+function updateModeDisplay(modeData) {
+    const modeElement = document.getElementById('currentMode');
+    if (!modeElement) return;
+
+    if (modeData.use_trailing_stop) {
+        modeElement.className = 'px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800';
+        modeElement.innerHTML = `
+            <i class="fas fa-chart-line mr-1"></i>
+            Trailing Stop (Act: ${modeData.trailing_activation_pct}%, Dist: ${modeData.trailing_distance_pct}%)
+        `;
+    } else {
+        modeElement.className = 'px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800';
+        modeElement.innerHTML = `
+            <i class="fas fa-lock mr-1"></i>
+            Fixed TP/SL (TP: ${modeData.take_profit_percent}%, SL: ${modeData.stop_loss_percent || modeData.insurance_sl}%)
+        `;
+    }
+}
+
+// Функция переключения на страницу настроек
 function switchTradingMode() {
     if (confirm('Перейти в настройки сигналов для изменения режима?')) {
         window.location.href = '/signal_performance';
     }
 }
 
-// Инициализация при загрузке страницы
 document.addEventListener('DOMContentLoaded', function() {
     // Инициализируем списки фильтров
-    loadCurrentMode();
     updateBuyFiltersList();
     updateSellFiltersList();
 
     // Загружаем информацию о режимах рынка для текущей даты
     updateDateInfo();
 
-    // НЕ добавляем никаких дополнительных обработчиков для dateFilter
-    // Обработчик onchange уже установлен в HTML
+    // ДОБАВЛЕНО: Загружаем текущий режим торговли
+    loadCurrentMode();
+
+    // Проверяем есть ли статистика от предыдущей обработки
+    const existingStats = document.getElementById('statTotal');
+    if (existingStats && existingStats.textContent !== '0') {
+        // Если есть статистика, обновляем индикатор режима из данных
+        const modeFromStats = document.querySelector('[data-mode]');
+        if (modeFromStats) {
+            const mode = modeFromStats.dataset.mode;
+            updateModeDisplay({use_trailing_stop: mode.includes('Trailing')});
+        }
+    }
 });
+
     // Загрузка сохраненного фильтра
     function loadSavedFilter() {
         const select = document.getElementById('savedFilters');

@@ -1747,10 +1747,17 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                     print(f"  Trailing activated: {result.get('trailing_activated', False)}")
                     print(f"  Is closed: {is_closed}")
                     print(f"  Close reason: {close_reason}")
-                    print(f"  Close price: {close_price:.8f if close_price else 'N/A'}")
+                    # ИСПРАВЛЕННАЯ СТРОКА:
+                    if close_price is not None and close_price != 0:
+                        print(f"  Close price: {close_price:.8f}")
+                    else:
+                        print(f"  Close price: N/A")
                     print(f"  Final P&L: ${final_pnl_usd:.2f} ({final_pnl_percent:.2f}%)")
                     print(f"  Max profit: ${max_profit_usd:.2f}")
-                    print(f"  Hours to close: {hours_to_close:.1f if hours_to_close else 'N/A'}")
+                    if hours_to_close is not None:
+                        print(f"  Hours to close: {hours_to_close:.1f}")
+                    else:
+                        print(f"  Hours to close: N/A")
 
             else:
                 # СУЩЕСТВУЮЩАЯ ЛОГИКА Fixed TP/SL (оставляем как есть)
@@ -1921,26 +1928,57 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
     print(f"[SCORING] Ошибок: {error_count}")
 
     # Возвращаем статистику из БД
+    # В функции process_scoring_signals_batch в database.py
+    # найдите блок с возвратом статистики (около строки 2040-2080)
+    # и замените запрос stats_query на исправленный:
+
+    # Возвращаем статистику из БД
     stats_query = """
-        SELECT 
-            COUNT(*) as total,
-            COUNT(CASE WHEN signal_action = 'BUY' THEN 1 END) as buy_signals,
-            COUNT(CASE WHEN signal_action = 'SELL' THEN 1 END) as sell_signals,
-            COUNT(CASE WHEN close_reason = 'take_profit' THEN 1 END) as tp_count,
-            COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_count,
-            COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as trailing_count,
-            COUNT(CASE WHEN close_reason = 'timeout' THEN 1 END) as timeout_count,
-            COUNT(CASE WHEN is_closed = FALSE THEN 1 END) as open_count,
-            SUM(pnl_usd) as total_pnl,
-            SUM(CASE WHEN close_reason IN ('take_profit', 'trailing_stop') AND pnl_usd > 0 THEN pnl_usd ELSE 0 END) as tp_profit,
-            SUM(CASE WHEN close_reason = 'stop_loss' THEN ABS(pnl_usd) ELSE 0 END) as sl_loss,
-            SUM(max_potential_profit_usd) as total_max_potential,
-            AVG(hours_to_close) FILTER (WHERE close_reason != 'timeout') as avg_hours_to_close,
-            COUNT(CASE WHEN exchange_name = 'Binance' THEN 1 END) as binance_signals,
-            COUNT(CASE WHEN exchange_name = 'Bybit' THEN 1 END) as bybit_signals
-        FROM web.scoring_analysis_results
-        WHERE session_id = %s AND user_id = %s
-    """
+            SELECT 
+                COUNT(*) as total,
+                COUNT(CASE WHEN signal_action = 'BUY' THEN 1 END) as buy_signals,
+                COUNT(CASE WHEN signal_action = 'SELL' THEN 1 END) as sell_signals,
+
+                -- ИСПРАВЛЕНО: Считаем прибыльные trailing stops как TP
+                COUNT(CASE 
+                    WHEN close_reason = 'take_profit' THEN 1
+                    WHEN close_reason = 'trailing_stop' AND pnl_usd > 0 THEN 1
+                END) as tp_count,
+
+                -- ИСПРАВЛЕНО: Считаем убыточные trailing stops как SL
+                COUNT(CASE 
+                    WHEN close_reason = 'stop_loss' THEN 1
+                    WHEN close_reason = 'trailing_stop' AND pnl_usd <= 0 THEN 1
+                END) as sl_count,
+
+                -- Отдельный счетчик для всех trailing stops
+                COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as trailing_count,
+
+                COUNT(CASE WHEN close_reason = 'timeout' THEN 1 END) as timeout_count,
+                COUNT(CASE WHEN is_closed = FALSE THEN 1 END) as open_count,
+                COALESCE(SUM(pnl_usd), 0) as total_pnl,
+
+                -- Прибыль от TP и прибыльных trailing
+                COALESCE(SUM(CASE 
+                    WHEN close_reason = 'take_profit' THEN pnl_usd
+                    WHEN close_reason = 'trailing_stop' AND pnl_usd > 0 THEN pnl_usd
+                    ELSE 0
+                END), 0) as tp_profit,
+
+                -- Убытки от SL и убыточных trailing
+                COALESCE(SUM(CASE 
+                    WHEN close_reason = 'stop_loss' THEN ABS(pnl_usd)
+                    WHEN close_reason = 'trailing_stop' AND pnl_usd <= 0 THEN ABS(pnl_usd)
+                    ELSE 0
+                END), 0) as sl_loss,
+
+                SUM(max_potential_profit_usd) as total_max_potential,
+                AVG(hours_to_close) FILTER (WHERE close_reason != 'timeout') as avg_hours_to_close,
+                COUNT(CASE WHEN exchange_name = 'Binance' THEN 1 END) as binance_signals,
+                COUNT(CASE WHEN exchange_name = 'Bybit' THEN 1 END) as bybit_signals
+            FROM web.scoring_analysis_results
+            WHERE session_id = %s AND user_id = %s
+        """
 
     stats = db.execute_query(stats_query, (session_id, user_id), fetch=True)[0]
 
