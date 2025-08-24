@@ -947,9 +947,8 @@ function applyFilters() {
     });
 }
 
-// Обновление результатов
-// В файле scoring_analysis.html найдите функцию updateResults и замените её на эту исправленную версию:
 
+// Обновление результатов
 function updateResults(data) {
     // ИСПРАВЛЕНО: Обновляем статистику с учетом trailing stops
     const stats = data.stats;
@@ -1029,8 +1028,6 @@ function updateResults(data) {
     // Показываем уведомление об успехе
     showNotification(`Обработано ${stats.total} сигналов`, 'success');
 }
-
-// Также добавьте функцию для обновления таблицы сигналов:
 function updateSignalsTable(signals) {
     const tbody = document.getElementById('signalsTableBody');
 
@@ -1142,100 +1139,6 @@ function updateSignalsTable(signals) {
         `;
     }).join('');
 }
-        // Рассчитываем процент от максимального профита
-        const maxProfitPercent = signal.max_potential_profit ?
-            ((signal.max_potential_profit / (100 * 5)) * 100).toFixed(1) : '0.0';
-
-        return `
-            <tr class="hover:bg-gray-50 transition-colors">
-                <td class="px-4 py-3 whitespace-nowrap">
-                    <div class="flex flex-col">
-                        <span class="text-sm font-medium text-gray-900">${time}</span>
-                        <span class="text-xs ${exchangeColor} font-medium">${signal.exchange_name || 'Unknown'}</span>
-                    </div>
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap">
-                    <span class="text-sm font-medium text-gray-900">${signal.pair_symbol}</span>
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap">
-                    <span class="px-2 py-1 text-xs rounded-full font-medium ${
-                        signal.signal_action === 'BUY' ?
-                        'bg-green-100 text-green-800' :
-                        'bg-red-100 text-red-800'
-                    }">
-                        ${signal.signal_action}
-                    </span>
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap">
-                    <span class="px-2 py-1 text-xs rounded-full ${
-                        signal.market_regime === 'BULL' ? 'bg-green-100 text-green-800' :
-                        signal.market_regime === 'BEAR' ? 'bg-red-100 text-red-800' :
-                        'bg-gray-100 text-gray-800'
-                    }">
-                        ${signal.market_regime}
-                    </span>
-                </td>
-                <td class="px-4 py-3">
-                    <div class="flex flex-col space-y-0.5 text-xs">
-                        <div class="flex items-center">
-                            <span class="text-gray-500 w-5">T:</span>
-                            <span class="font-semibold ${signal.total_score >= 0 ? 'text-green-600' : 'text-red-600'}">
-                                ${signal.total_score.toFixed(1)}
-                            </span>
-                        </div>
-                        <div class="flex items-center">
-                            <span class="text-gray-500 w-5">I:</span>
-                            <span class="font-medium">${signal.indicator_score.toFixed(1)}</span>
-                        </div>
-                        <div class="flex items-center">
-                            <span class="text-gray-500 w-5">P:</span>
-                            <span class="font-medium">${signal.pattern_score.toFixed(1)}</span>
-                        </div>
-                    </div>
-                </td>
-                <td class="px-4 py-3 text-sm text-gray-900 font-mono">
-                    ${signal.entry_price.toFixed(8)}
-                </td>
-                <td class="px-4 py-3 text-sm text-gray-900 font-mono">
-                    ${signal.current_price.toFixed(8)}
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap">
-                    <div class="flex flex-col">
-                        <span class="text-sm font-bold ${pnlColor}">
-                            ${pnlPrefix}$${Math.abs(signal.pnl_usd).toFixed(2)}
-                        </span>
-                        <span class="text-xs ${pnlColor}">
-                            ${signal.pnl_percent.toFixed(2)}%
-                        </span>
-                    </div>
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap">
-                    <div class="flex flex-col">
-                        <span class="text-sm font-medium text-blue-600">
-                            $${(signal.max_potential_profit || 0).toFixed(2)}
-                        </span>
-                        <span class="text-xs text-gray-500">
-                            ${maxProfitPercent}%
-                        </span>
-                    </div>
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap">
-                    <div class="flex items-center space-x-2">
-                        ${statusBadge}
-                        ${signal.hours_to_close ?
-                            `<span class="text-xs text-gray-500">${signal.hours_to_close.toFixed(1)}ч</span>` :
-                            ''
-                        }
-                    </div>
-                </td>
-            </tr>
-        `;
-    }).join('');
-
-    // Показываем уведомление об успехе
-    showNotification(`Обработано ${stats.total} сигналов`, 'success');
-}
-
     // Сохранение текущих фильтров
     function saveCurrentFilters() {
         const filterName = prompt('Введите название для фильтра:');
@@ -1317,6 +1220,13 @@ function loadCurrentMode() {
         });
 }
 
+// Функция переключения на страницу настроек
+function switchTradingMode() {
+    if (confirm('Перейти в настройки сигналов для изменения режима?')) {
+        window.location.href = '/signal_performance';
+    }
+}
+
 // Функция обновления отображения режима
 function updateModeDisplay(modeData) {
     const modeElement = document.getElementById('currentMode');
@@ -1337,13 +1247,13 @@ function updateModeDisplay(modeData) {
     }
 }
 
-// Функция переключения на страницу настроек
 function switchTradingMode() {
     if (confirm('Перейти в настройки сигналов для изменения режима?')) {
         window.location.href = '/signal_performance';
     }
 }
 
+// Добавьте в блок инициализации (DOMContentLoaded):
 document.addEventListener('DOMContentLoaded', function() {
     // Инициализируем списки фильтров
     updateBuyFiltersList();
