@@ -289,6 +289,26 @@ class PatternWinRateAnalyzer:
     def analyze_pattern(self, pattern: Dict) -> Optional[Dict]:
         """Анализ одного паттерна для LONG и SHORT позиций"""
         try:
+            # Базовая структура результата (заполним NULL если нет данных)
+            base_result = {
+                'id': pattern['id'],
+                'trading_pair_id': pattern['trading_pair_id'],
+                'timestamp': pattern['timestamp'],
+                'pattern_type': pattern['pattern_type'],
+                'timeframe': pattern['timeframe'],
+                'strength': float(pattern['strength']) if pattern['strength'] else None,
+                'confidence': float(pattern['confidence']) if pattern['confidence'] else None,
+                'score_impact': float(pattern['score_impact']) if pattern['score_impact'] else None,
+                'details': pattern['details'],
+                'trigger_values': pattern['trigger_values'],
+                'sell_tp': False,
+                'sell_sl': False,
+                'sell_result': None,
+                'buy_tp': False,
+                'buy_sl': False,
+                'buy_result': None
+            }
+
             # Получаем цену входа для LONG
             long_entry_data = self.get_entry_price(
                 pattern['trading_pair_id'],
@@ -306,7 +326,7 @@ class PatternWinRateAnalyzer:
             if not long_entry_data or not short_entry_data:
                 logger.warning(f"⚠️ Нет цены входа для паттерна {pattern['id']}")
                 self.skipped_count += 1
-                return None
+                return base_result  # Возвращаем с NULL результатами
 
             # Получаем историю цен за 48 часов
             history_query = """
@@ -334,7 +354,7 @@ class PatternWinRateAnalyzer:
             if not history or len(history) < 10:
                 logger.warning(f"⚠️ Недостаточно истории для паттерна {pattern['id']}")
                 self.skipped_count += 1
-                return None
+                return base_result  # Возвращаем с NULL результатами
 
             # Анализируем LONG позицию
             long_results = self.analyze_position(
@@ -525,7 +545,14 @@ class PatternWinRateAnalyzer:
 
                 logger.info(f"📊 В пакете #{batch_number}: {len(patterns)} паттернов")
 
+                # Для отладки - показываем ID первых паттернов
+                if len(patterns) <= 30:
+                    pattern_ids = [p['id'] for p in patterns]
+                    logger.info(f"🔍 ID паттернов в пакете: {pattern_ids}")
+
                 results = []
+                batch_processed = 0
+                batch_skipped = 0
 
                 for i, pattern in enumerate(patterns):
                     if i % 100 == 0 and i > 0:
@@ -535,7 +562,10 @@ class PatternWinRateAnalyzer:
                     result = self.analyze_pattern(pattern)
                     if result:
                         results.append(result)
+                        batch_processed += 1
                         self.processed_count += 1
+                    else:
+                        batch_skipped += 1
 
                     if len(results) >= save_batch_size:
                         self.save_results(results)
@@ -544,7 +574,12 @@ class PatternWinRateAnalyzer:
                 if results:
                     self.save_results(results)
 
-                logger.info(f"✅ Пакет #{batch_number} обработан")
+                logger.info(f"✅ Пакет #{batch_number} обработан: {batch_processed} успешно, {batch_skipped} пропущено")
+
+                # Защита от зацикливания
+                if batch_processed == 0 and batch_skipped == 0:
+                    logger.error(f"❌ Пакет #{batch_number} не содержал обрабатываемых паттернов! Прерывание.")
+                    break
 
                 if current_unprocessed > batch_size:
                     time.sleep(2)
