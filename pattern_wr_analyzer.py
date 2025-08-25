@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Pattern Win Rate Analyzer v1.0
+Pattern Win Rate Analyzer v1.1
 Анализирует эффективность торговых паттернов для LONG и SHORT позиций
-Оптимизированная версия с векторизацией и параллельной обработкой
+Исправлены ошибки импорта и SQL запросов
 """
 
 import os
 import sys
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.extras import execute_values  # Импорт в начале файла
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import logging
@@ -68,7 +69,8 @@ class PatternWinRateAnalyzer:
             'processed': 0,
             'errors': 0,
             'no_data': 0,
-            'analyzed': 0
+            'analyzed': 0,
+            'no_data_patterns': []  # Для отслеживания паттернов без данных
         }
 
     def connect(self):
@@ -149,6 +151,8 @@ class PatternWinRateAnalyzer:
             ON fas.test_patterns_wr(pattern_type);
         CREATE INDEX IF NOT EXISTS idx_patterns_wr_results 
             ON fas.test_patterns_wr(sell_result, buy_result);
+        CREATE INDEX IF NOT EXISTS idx_patterns_wr_sufficient_data
+            ON fas.test_patterns_wr(has_sufficient_data);
         """
 
         try:
@@ -174,7 +178,7 @@ class PatternWinRateAnalyzer:
             sp.score_impact,
             sp.details,
             sp.trigger_values,
-            tp.pair_symbol as pair_symbol
+            tp.pair_symbol
         FROM fas.signal_patterns sp
         JOIN public.trading_pairs tp ON sp.trading_pair_id = tp.id
         WHERE sp.timestamp <= NOW() - INTERVAL '48 hours'
@@ -192,7 +196,7 @@ class PatternWinRateAnalyzer:
             cur.execute(query)
             patterns = cur.fetchall()
 
-        logger.info(f"📊 Найдено {len(patterns)} необработанных паттернов")
+        logger.info(f"📊 Найдено {len(patterns)} необработанных паттернов старше 48 часов")
         return patterns
 
     def get_price_data_vectorized(self, trading_pair_id: int,
@@ -341,8 +345,14 @@ class PatternWinRateAnalyzer:
             )
 
             if price_data is None or len(price_data) == 0:
-                logger.warning(f"⚠️ Недостаточно данных для паттерна {pattern['id']}")
+                logger.warning(f"⚠️ Недостаточно данных для паттерна {pattern['id']} "
+                               f"({pattern['pair_symbol']}) от {pattern['timestamp'].strftime('%Y-%m-%d %H:%M')}")
                 self.stats['no_data'] += 1
+                self.stats['no_data_patterns'].append({
+                    'id': pattern['id'],
+                    'symbol': pattern['pair_symbol'],
+                    'timestamp': pattern['timestamp']
+                })
                 return self._create_no_data_result(pattern)
 
             # Цена входа - используем худший сценарий
@@ -429,7 +439,7 @@ class PatternWinRateAnalyzer:
         }
 
     def save_results_batch(self, results: List[Dict]):
-        """Пакетное сохранение результатов с использованием COPY для скорости"""
+        """Пакетное сохранение результатов с использованием execute_values для скорости"""
         if not results:
             return
 
@@ -478,7 +488,6 @@ class PatternWinRateAnalyzer:
                     ))
 
                 # Используем execute_values для быстрой вставки
-                from psycopg.extras import execute_values
                 execute_values(cur, insert_query, values)
 
             self.conn.commit()
@@ -567,6 +576,16 @@ class PatternWinRateAnalyzer:
             FROM fas.test_patterns_wr
             WHERE processed_at >= NOW() - INTERVAL '1 day'
                 AND has_sufficient_data = true
+        ),
+        no_data_stats AS (
+            SELECT 
+                COUNT(*) as total_no_data,
+                MIN(timestamp) as earliest_no_data,
+                MAX(timestamp) as latest_no_data,
+                COUNT(DISTINCT DATE(timestamp)) as unique_days_no_data
+            FROM fas.test_patterns_wr
+            WHERE has_sufficient_data = false
+                AND processed_at >= NOW() - INTERVAL '1 day'
         )
         SELECT * FROM pattern_stats
         """
@@ -628,6 +647,33 @@ class PatternWinRateAnalyzer:
                     short_wr = (overall['total_short_wins'] / total_short) * 100
                     logger.info(f"SHORT: WR={short_wr:.1f}%, Avg P&L={overall['overall_avg_short_pnl']:.2f}%")
 
+            # Статистика по паттернам без данных
+            cur.execute("SELECT * FROM no_data_stats")
+            no_data_stat = cur.fetchone()
+
+            if no_data_stat and no_data_stat['total_no_data'] > 0:
+                logger.info("\n" + "=" * 80)
+                logger.info("⚠️ ПАТТЕРНЫ БЕЗ ДОСТАТОЧНЫХ ДАННЫХ")
+                logger.info("=" * 80)
+                logger.info(f"Всего: {no_data_stat['total_no_data']} паттернов")
+                logger.info(f"Период: с {no_data_stat['earliest_no_data'].strftime('%Y-%m-%d')} "
+                            f"по {no_data_stat['latest_no_data'].strftime('%Y-%m-%d')}")
+                logger.info(f"Уникальных дней: {no_data_stat['unique_days_no_data']}")
+
+                # Детализация по символам если есть
+                if len(self.stats['no_data_patterns']) > 0:
+                    # Группируем по символам
+                    symbol_counts = {}
+                    for p in self.stats['no_data_patterns'][:20]:  # Показываем первые 20
+                        symbol = p['symbol']
+                        if symbol not in symbol_counts:
+                            symbol_counts[symbol] = 0
+                        symbol_counts[symbol] += 1
+
+                    logger.info("\nТоп символы без данных:")
+                    for symbol, count in sorted(symbol_counts.items(), key=lambda x: x[1], reverse=True)[:5]:
+                        logger.info(f"  - {symbol}: {count} паттернов")
+
             logger.info("=" * 80)
 
         except Exception as e:
@@ -636,10 +682,11 @@ class PatternWinRateAnalyzer:
     def run(self):
         """Основной процесс анализа"""
         start_time = datetime.now()
-        logger.info("🚀 Запуск Pattern Win Rate Analyzer v1.0")
+        logger.info("🚀 Запуск Pattern Win Rate Analyzer v1.1")
         logger.info(f"📅 Время запуска: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
         logger.info(f"⚙️ Параметры: TP={self.params.tp_percent}%, SL={self.params.sl_percent}%")
         logger.info(f"🔧 Параллельных воркеров: {self.params.parallel_workers}")
+        logger.info(f"📊 Анализируем паттерны старше 48 часов (для валидации результатов)")
 
         try:
             self.connect()
