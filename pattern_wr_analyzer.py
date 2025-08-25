@@ -48,8 +48,9 @@ ANALYSIS_PARAMS = {
 
 
 class PatternWinRateAnalyzer:
-    def __init__(self, db_config: dict):
+    def __init__(self, db_config: dict, recreate_table: bool = False):
         self.db_config = db_config
+        self.recreate_table = recreate_table
         self.conn = None
         self.processed_count = 0
         self.error_count = 0
@@ -75,45 +76,71 @@ class PatternWinRateAnalyzer:
             logger.info("🔌 Отключение от БД")
 
     def create_result_table(self):
-        """Создание таблицы для результатов если не существует"""
-        create_table_query = """
-        CREATE TABLE IF NOT EXISTS fas.test_patterns_wr (
-            id BIGINT PRIMARY KEY,
-            trading_pair_id INTEGER NOT NULL,
-            timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-            pattern_type VARCHAR(100) NOT NULL,
-            timeframe VARCHAR(10) NOT NULL,
-            strength DECIMAL(10,2),
-            confidence DECIMAL(10,2),
-            score_impact DECIMAL(10,2),
-            details JSONB,
-            trigger_values JSONB,
-
-            -- Результаты для SHORT
-            sell_tp BOOLEAN DEFAULT FALSE,
-            sell_sl BOOLEAN DEFAULT FALSE,
-            sell_result BOOLEAN,
-
-            -- Результаты для LONG  
-            buy_tp BOOLEAN DEFAULT FALSE,
-            buy_sl BOOLEAN DEFAULT FALSE,
-            buy_result BOOLEAN,
-
-            -- Метаданные
-            processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_patterns_wr_type 
-            ON fas.test_patterns_wr(pattern_type);
-        """
-
+        """Создание таблицы для результатов"""
         try:
             with self.conn.cursor() as cur:
-                cur.execute(create_table_query)
-            self.conn.commit()
-            logger.info("✅ Таблица fas.test_patterns_wr создана/проверена")
+                if self.recreate_table:
+                    # Удаляем старую таблицу если требуется пересоздание
+                    logger.info("🗑️ Удаление старой таблицы fas.test_patterns_wr...")
+                    cur.execute("DROP TABLE IF EXISTS fas.test_patterns_wr CASCADE")
+                    self.conn.commit()
+
+                # Проверяем существование таблицы
+                cur.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = 'fas' 
+                        AND table_name = 'test_patterns_wr'
+                    )
+                """)
+                table_exists = cur.fetchone()['exists']
+
+                if not table_exists:
+                    # Создаем новую таблицу
+                    logger.info("📝 Создание таблицы fas.test_patterns_wr...")
+                    create_table_query = """
+                    CREATE TABLE fas.test_patterns_wr (
+                        id BIGINT PRIMARY KEY,
+                        trading_pair_id INTEGER NOT NULL,
+                        timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+                        pattern_type VARCHAR(100) NOT NULL,
+                        timeframe VARCHAR(10) NOT NULL,
+                        strength DECIMAL(10,2),
+                        confidence DECIMAL(10,2),
+                        score_impact DECIMAL(10,2),
+                        details JSONB,
+                        trigger_values JSONB,
+
+                        -- Результаты для SHORT
+                        sell_tp BOOLEAN DEFAULT FALSE,
+                        sell_sl BOOLEAN DEFAULT FALSE,
+                        sell_result BOOLEAN,
+
+                        -- Результаты для LONG  
+                        buy_tp BOOLEAN DEFAULT FALSE,
+                        buy_sl BOOLEAN DEFAULT FALSE,
+                        buy_result BOOLEAN,
+
+                        -- Метаданные
+                        processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                    )
+                    """
+                    cur.execute(create_table_query)
+
+                    # Создаем индекс
+                    cur.execute("""
+                        CREATE INDEX idx_patterns_wr_type 
+                        ON fas.test_patterns_wr(pattern_type)
+                    """)
+
+                    self.conn.commit()
+                    logger.info("✅ Таблица fas.test_patterns_wr создана успешно")
+                else:
+                    logger.info("✅ Таблица fas.test_patterns_wr уже существует")
+
         except Exception as e:
             logger.error(f"❌ Ошибка создания таблицы: {e}")
+            self.conn.rollback()
             raise
 
     def get_unprocessed_patterns(self, batch_size: int = 10000) -> List[Dict]:
@@ -461,8 +488,10 @@ class PatternWinRateAnalyzer:
 
         try:
             self.connect()
+            logger.info("📝 Проверка/создание таблицы результатов...")
             self.create_result_table()
 
+            logger.info("🔍 Подсчет необработанных паттернов...")
             total_unprocessed = self.get_total_unprocessed_count()
 
             if total_unprocessed == 0:
@@ -477,6 +506,7 @@ class PatternWinRateAnalyzer:
 
             while True:
                 batch_number += 1
+                logger.info(f"\n🔄 Проверка необработанных паттернов...")
                 current_unprocessed = self.get_total_unprocessed_count()
 
                 if current_unprocessed == 0:
@@ -486,6 +516,7 @@ class PatternWinRateAnalyzer:
                 logger.info(f"\n📦 Обработка пакета #{batch_number}")
                 logger.info(f"📊 Осталось необработанных: {current_unprocessed}")
 
+                logger.info(f"📥 Загрузка пакета паттернов (до {batch_size} штук)...")
                 patterns = self.get_unprocessed_patterns(batch_size)
 
                 if not patterns:
@@ -540,6 +571,8 @@ class PatternWinRateAnalyzer:
 
         except Exception as e:
             logger.error(f"❌ Критическая ошибка: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             raise
         finally:
             self.disconnect()
@@ -548,7 +581,9 @@ class PatternWinRateAnalyzer:
 def main():
     """Точка входа"""
     try:
-        analyzer = PatternWinRateAnalyzer(DB_CONFIG)
+        # Установите recreate_table=True для пересоздания таблицы при первом запуске
+        # После первого запуска можно установить False
+        analyzer = PatternWinRateAnalyzer(DB_CONFIG, recreate_table=True)
         analyzer.run()
     except KeyboardInterrupt:
         logger.info("\n⛔ Прерывание пользователем")
