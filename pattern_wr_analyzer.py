@@ -51,8 +51,8 @@ class TradingParams:
     analysis_hours: int = 48
     entry_delay_minutes: int = 15
     min_candles_required: int = 10
-    batch_size: int = 5000
-    parallel_workers: int = 4
+    batch_size: int = 1000  # Уменьшен размер батча
+    parallel_workers: int = 2  # Уменьшено количество воркеров
 
 
 PARAMS = TradingParams()
@@ -72,6 +72,7 @@ class PatternWinRateAnalyzer:
             'analyzed': 0,
             'no_data_patterns': []  # Для отслеживания паттернов без данных
         }
+        self.conn_pool = []  # Пул соединений для параллельной работы
 
     def connect(self):
         """Подключение к БД с оптимальными настройками"""
@@ -201,7 +202,8 @@ class PatternWinRateAnalyzer:
 
     def get_price_data_vectorized(self, trading_pair_id: int,
                                   start_time: datetime,
-                                  end_time: datetime) -> Optional[np.ndarray]:
+                                  end_time: datetime,
+                                  conn=None) -> Optional[np.ndarray]:
         """Получение ценовых данных в виде numpy массива для векторизованных расчетов"""
         query = """
         SELECT 
@@ -218,8 +220,11 @@ class PatternWinRateAnalyzer:
         ORDER BY timestamp ASC
         """
 
+        # Используем переданное соединение или основное
+        connection = conn or self.conn
+
         try:
-            with self.conn.cursor() as cur:
+            with connection.cursor() as cur:
                 cur.execute(query, (trading_pair_id, start_time, end_time))
                 data = cur.fetchall()
 
@@ -330,19 +335,30 @@ class PatternWinRateAnalyzer:
             'max_drawdown_percent': max_drawdown_pct
         }
 
-    def analyze_pattern(self, pattern: Dict) -> Optional[Dict]:
-        """Анализ одного паттерна для LONG и SHORT позиций"""
+    def analyze_pattern_with_connection(self, pattern: Dict) -> Optional[Dict]:
+        """Анализ паттерна с собственным соединением для потокобезопасности"""
+        # Создаем отдельное соединение для этого потока
+        conn_string = " ".join([f"{k}={v}" for k, v in self.db_config.items()])
         try:
+            thread_conn = psycopg.connect(
+                conn_string,
+                row_factory=dict_row,
+                autocommit=True  # Автокоммит для избежания блокировок
+            )
+
             # Время входа с задержкой
             entry_time = pattern['timestamp'] + timedelta(minutes=self.params.entry_delay_minutes)
             analysis_end = entry_time + timedelta(hours=self.params.analysis_hours)
 
-            # Получаем ценовые данные
+            # Получаем ценовые данные с использованием собственного соединения
             price_data = self.get_price_data_vectorized(
                 pattern['trading_pair_id'],
                 entry_time,
-                analysis_end
+                analysis_end,
+                conn=thread_conn
             )
+
+            thread_conn.close()  # Закрываем соединение после использования
 
             if price_data is None or len(price_data) == 0:
                 logger.warning(f"⚠️ Недостаточно данных для паттерна {pattern['id']} "
@@ -356,13 +372,12 @@ class PatternWinRateAnalyzer:
                 return self._create_no_data_result(pattern)
 
             # Цена входа - используем худший сценарий
-            # Для LONG - high первой свечи, для SHORT - low первой свечи
             long_entry = price_data['high'][0]
             short_entry = price_data['low'][0]
 
             # Анализируем LONG позицию
             long_results = self.analyze_position_vectorized(
-                'LONG', long_entry, price_data[1:]  # Skip первую свечу
+                'LONG', long_entry, price_data[1:]
             )
 
             # Анализируем SHORT позицию
@@ -443,100 +458,11 @@ class PatternWinRateAnalyzer:
         if not results:
             return
 
-        # Метод 1: Используем COPY для максимальной скорости (в 10 раз быстрее)
-        if len(results) > 50:  # Для больших батчей используем COPY
-            self._save_with_copy(results)
-        else:  # Для маленьких батчей используем обычные INSERT
-            self._save_with_insert(results)
-
-    def _save_with_copy(self, results: List[Dict]):
-        """Сохранение через COPY - самый быстрый метод для больших объемов"""
-        try:
-            # Создаем временную таблицу
-            with self.conn.cursor() as cur:
-                cur.execute("""
-                    CREATE TEMP TABLE temp_patterns_wr (LIKE fas.test_patterns_wr INCLUDING ALL) 
-                    ON COMMIT DROP
-                """)
-
-                # Подготавливаем данные для COPY
-                import io
-                buffer = io.StringIO()
-
-                for r in results:
-                    # Формируем строку в формате TSV
-                    row_data = [
-                        str(r['id']),
-                        str(r['trading_pair_id']),
-                        r['timestamp'].isoformat(),
-                        r['pattern_type'],
-                        r['timeframe'],
-                        str(r.get('strength', '\\N')),
-                        str(r.get('confidence', '\\N')),
-                        str(r.get('score_impact', '\\N')),
-                        json.dumps(r['details']) if r['details'] else '\\N',
-                        json.dumps(r['trigger_values']) if r['trigger_values'] else '\\N',
-                        str(r.get('sell_entry_price', '\\N')),
-                        str(r.get('sell_tp_price', '\\N')),
-                        str(r.get('sell_sl_price', '\\N')),
-                        str(r.get('sell_tp', False)),
-                        str(r.get('sell_sl', False)),
-                        str(r.get('sell_result', '\\N')),
-                        str(r.get('sell_close_price', '\\N')),
-                        r.get('sell_close_time').isoformat() if r.get('sell_close_time') else '\\N',
-                        str(r.get('sell_pnl_percent', '\\N')),
-                        str(r.get('sell_max_profit_percent', '\\N')),
-                        str(r.get('sell_max_drawdown_percent', '\\N')),
-                        str(r.get('buy_entry_price', '\\N')),
-                        str(r.get('buy_tp_price', '\\N')),
-                        str(r.get('buy_sl_price', '\\N')),
-                        str(r.get('buy_tp', False)),
-                        str(r.get('buy_sl', False)),
-                        str(r.get('buy_result', '\\N')),
-                        str(r.get('buy_close_price', '\\N')),
-                        r.get('buy_close_time').isoformat() if r.get('buy_close_time') else '\\N',
-                        str(r.get('buy_pnl_percent', '\\N')),
-                        str(r.get('buy_max_profit_percent', '\\N')),
-                        str(r.get('buy_max_drawdown_percent', '\\N')),
-                        str(r.get('analysis_completed', False)),
-                        str(r.get('has_sufficient_data', True))
-                    ]
-
-                    # Заменяем None на \N для COPY
-                    row_data = [v if v != 'None' else '\\N' for v in row_data]
-                    buffer.write('\t'.join(row_data) + '\n')
-
-                buffer.seek(0)
-
-                # Загружаем данные через COPY
-                with cur.copy("""
-                    COPY temp_patterns_wr FROM STDIN WITH (FORMAT text, NULL '\\N')
-                """) as copy:
-                    copy.write(buffer.getvalue())
-
-                # Переносим из временной таблицы в основную с ON CONFLICT
-                cur.execute("""
-                    INSERT INTO fas.test_patterns_wr 
-                    SELECT * FROM temp_patterns_wr
-                    ON CONFLICT (id) DO UPDATE SET
-                        sell_result = EXCLUDED.sell_result,
-                        buy_result = EXCLUDED.buy_result,
-                        sell_pnl_percent = EXCLUDED.sell_pnl_percent,
-                        buy_pnl_percent = EXCLUDED.buy_pnl_percent,
-                        processed_at = NOW()
-                """)
-
-            self.conn.commit()
-            logger.info(f"💾 Сохранено {len(results)} результатов через COPY (быстрый режим)")
-
-        except Exception as e:
-            logger.error(f"❌ Ошибка COPY, переключаемся на INSERT: {e}")
-            self.conn.rollback()
-            # Fallback на обычный метод
-            self._save_with_insert(results)
+        # Используем только INSERT для избежания проблем с параллельностью
+        self._save_with_insert(results)
 
     def _save_with_insert(self, results: List[Dict]):
-        """Сохранение через обычные INSERT для небольших батчей"""
+        """Сохранение через обычные INSERT - надежный метод для параллельной обработки"""
         insert_query = """
         INSERT INTO fas.test_patterns_wr (
             id, trading_pair_id, timestamp, pattern_type, timeframe,
@@ -584,7 +510,7 @@ class PatternWinRateAnalyzer:
                     cur.execute(insert_query, values)
 
             self.conn.commit()
-            logger.info(f"💾 Сохранено {len(results)} результатов через INSERT")
+            logger.info(f"💾 Сохранено {len(results)} результатов")
 
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения результатов: {e}")
@@ -592,13 +518,13 @@ class PatternWinRateAnalyzer:
             raise
 
     def process_patterns_parallel(self, patterns: List[Dict]):
-        """Параллельная обработка паттернов для ускорения"""
+        """Параллельная обработка паттернов с изолированными соединениями"""
         results = []
 
         with ThreadPoolExecutor(max_workers=self.params.parallel_workers) as executor:
-            # Создаем задачи
+            # Создаем задачи с использованием метода с собственным соединением
             future_to_pattern = {
-                executor.submit(self.analyze_pattern, pattern): pattern
+                executor.submit(self.analyze_pattern_with_connection, pattern): pattern
                 for pattern in patterns
             }
 
