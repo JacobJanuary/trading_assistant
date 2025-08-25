@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Pattern Win Rate Analyzer v1.1
-Анализирует эффективность торговых паттернов для LONG и SHORT позиций
-Исправлены ошибки импорта и SQL запросов
+Pattern Win Rate Analyzer v2.0
+Основан на проверенном analyze_scoring_history.py
+Анализирует эффективность паттернов для LONG и SHORT позиций
 """
 
 import os
@@ -15,10 +15,6 @@ import logging
 import time
 from typing import List, Dict, Optional, Tuple
 import numpy as np
-from dataclasses import dataclass
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import json
-import io  # Для работы с COPY
 
 # Настройка логирования
 logging.basicConfig(
@@ -31,72 +27,55 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Параметры подключения к БД (используйте переменные окружения в production)
+# Параметры подключения к БД
 DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'localhost'),
-    'port': int(os.getenv('DB_PORT', 5432)),
-    'dbname': os.getenv('DB_NAME', 'fox_crypto'),
-    'user': os.getenv('DB_USER', 'elcrypto'),
-    'password': os.getenv('DB_PASSWORD', 'LohNeMamont@!21')
+    'host': 'localhost',
+    'port': 5432,
+    'dbname': 'fox_crypto',
+    'user': 'elcrypto',
+    'password': 'LohNeMamont@!21'
+}
+
+# Параметры анализа
+ANALYSIS_PARAMS = {
+    'tp_percent': 4.0,
+    'sl_percent': 3.0,
+    'position_size': 100.0,
+    'leverage': 5,
+    'analysis_hours': 48,
+    'entry_delay_minutes': 15
 }
 
 
-# Параметры анализа
-@dataclass
-class TradingParams:
-    tp_percent: float = 4.0
-    sl_percent: float = 3.0
-    position_size: float = 100.0
-    leverage: int = 5
-    analysis_hours: int = 48
-    entry_delay_minutes: int = 15
-    min_candles_required: int = 10
-    batch_size: int = 1000  # Уменьшен размер батча
-    parallel_workers: int = 2  # Уменьшено количество воркеров
-
-
-PARAMS = TradingParams()
-
-
 class PatternWinRateAnalyzer:
-    """Анализатор эффективности паттернов с оптимизированными расчетами"""
-
-    def __init__(self, db_config: dict, params: TradingParams):
+    def __init__(self, db_config: dict):
         self.db_config = db_config
-        self.params = params
         self.conn = None
-        self.stats = {
-            'processed': 0,
-            'errors': 0,
-            'no_data': 0,
-            'analyzed': 0,
-            'no_data_patterns': []  # Для отслеживания паттернов без данных
-        }
-        self.conn_pool = []  # Пул соединений для параллельной работы
+        self.processed_count = 0
+        self.error_count = 0
+        self.new_patterns_count = 0
+        self.skipped_count = 0
 
     def connect(self):
-        """Подключение к БД с оптимальными настройками"""
+        """Подключение к БД"""
         try:
-            conn_string = " ".join([f"{k}={v}" for k, v in self.db_config.items()])
-            self.conn = psycopg.connect(
-                conn_string,
-                row_factory=dict_row,
-                prepare_threshold=10,  # Кэширование prepared statements
-                options='-c statement_timeout=30000'  # 30 сек timeout
-            )
+            conn_string = f"host={self.db_config['host']} port={self.db_config['port']} " \
+                          f"dbname={self.db_config['dbname']} user={self.db_config['user']} " \
+                          f"password={self.db_config['password']}"
+            self.conn = psycopg.connect(conn_string, row_factory=dict_row)
             logger.info("✅ Успешное подключение к БД")
         except Exception as e:
             logger.error(f"❌ Ошибка подключения к БД: {e}")
             raise
 
     def disconnect(self):
-        """Закрытие соединения"""
+        """Отключение от БД"""
         if self.conn:
             self.conn.close()
             logger.info("🔌 Отключение от БД")
 
     def create_result_table(self):
-        """Создание таблицы для хранения результатов анализа"""
+        """Создание таблицы для результатов если не существует"""
         create_table_query = """
         CREATE TABLE IF NOT EXISTS fas.test_patterns_wr (
             id BIGINT PRIMARY KEY,
@@ -111,49 +90,21 @@ class PatternWinRateAnalyzer:
             trigger_values JSONB,
 
             -- Результаты для SHORT
-            sell_entry_price DECIMAL(20,8),
-            sell_tp_price DECIMAL(20,8),
-            sell_sl_price DECIMAL(20,8),
             sell_tp BOOLEAN DEFAULT FALSE,
             sell_sl BOOLEAN DEFAULT FALSE,
-            sell_result BOOLEAN,  -- true=TP, false=SL, null=timeout
-            sell_close_price DECIMAL(20,8),
-            sell_close_time TIMESTAMP WITH TIME ZONE,
-            sell_pnl_percent DECIMAL(10,4),
-            sell_max_profit_percent DECIMAL(10,4),
-            sell_max_drawdown_percent DECIMAL(10,4),
+            sell_result BOOLEAN,
 
-            -- Результаты для LONG
-            buy_entry_price DECIMAL(20,8),
-            buy_tp_price DECIMAL(20,8),
-            buy_sl_price DECIMAL(20,8),
+            -- Результаты для LONG  
             buy_tp BOOLEAN DEFAULT FALSE,
             buy_sl BOOLEAN DEFAULT FALSE,
-            buy_result BOOLEAN,  -- true=TP, false=SL, null=timeout
-            buy_close_price DECIMAL(20,8),
-            buy_close_time TIMESTAMP WITH TIME ZONE,
-            buy_pnl_percent DECIMAL(10,4),
-            buy_max_profit_percent DECIMAL(10,4),
-            buy_max_drawdown_percent DECIMAL(10,4),
+            buy_result BOOLEAN,
 
             -- Метаданные
-            analysis_completed BOOLEAN DEFAULT FALSE,
-            has_sufficient_data BOOLEAN DEFAULT TRUE,
-            processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-            -- Индексы для оптимизации
-            CONSTRAINT unique_pattern_id UNIQUE(id)
+            processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
 
-        -- Создаем индексы для ускорения запросов
-        CREATE INDEX IF NOT EXISTS idx_patterns_wr_pair_time 
-            ON fas.test_patterns_wr(trading_pair_id, timestamp);
         CREATE INDEX IF NOT EXISTS idx_patterns_wr_type 
             ON fas.test_patterns_wr(pattern_type);
-        CREATE INDEX IF NOT EXISTS idx_patterns_wr_results 
-            ON fas.test_patterns_wr(sell_result, buy_result);
-        CREATE INDEX IF NOT EXISTS idx_patterns_wr_sufficient_data
-            ON fas.test_patterns_wr(has_sufficient_data);
         """
 
         try:
@@ -165,228 +116,217 @@ class PatternWinRateAnalyzer:
             logger.error(f"❌ Ошибка создания таблицы: {e}")
             raise
 
-    def get_unprocessed_patterns(self, limit: int = None) -> List[Dict]:
-        """Получение необработанных паттернов старше 48 часов"""
+    def get_unprocessed_patterns(self, batch_size: int = 10000) -> List[Dict]:
+        """Получение пакета необработанных паттернов старше 48 часов"""
         query = """
-        SELECT 
-            sp.id,
-            sp.trading_pair_id,
-            sp.timestamp,
-            sp.pattern_type,
-            sp.timeframe,
-            sp.strength,
-            sp.confidence,
-            sp.score_impact,
-            sp.details,
-            sp.trigger_values,
-            tp.pair_symbol
-        FROM fas.signal_patterns sp
-        JOIN public.trading_pairs tp ON sp.trading_pair_id = tp.id
-        WHERE sp.timestamp <= NOW() - INTERVAL '48 hours'
-            AND NOT EXISTS (
-                SELECT 1 FROM fas.test_patterns_wr tpw
-                WHERE tpw.id = sp.id AND tpw.analysis_completed = TRUE
-            )
-        ORDER BY sp.timestamp ASC
+            SELECT 
+                sp.id,
+                sp.trading_pair_id,
+                sp.timestamp,
+                sp.pattern_type,
+                sp.timeframe,
+                sp.strength,
+                sp.confidence,
+                sp.score_impact,
+                sp.details,
+                sp.trigger_values,
+                tp.pair_symbol
+            FROM fas.signal_patterns sp
+            JOIN public.trading_pairs tp ON sp.trading_pair_id = tp.id
+            WHERE sp.timestamp <= NOW() - INTERVAL '48 hours'
+                AND NOT EXISTS (
+                    SELECT 1 FROM fas.test_patterns_wr tpw
+                    WHERE tpw.id = sp.id
+                )
+            ORDER BY sp.timestamp ASC
+            LIMIT %s
         """
 
-        if limit:
-            query += f" LIMIT {limit}"
+        with self.conn.cursor() as cur:
+            cur.execute(query, (batch_size,))
+            patterns = cur.fetchall()
+
+        return patterns
+
+    def get_total_unprocessed_count(self) -> int:
+        """Получение общего количества необработанных паттернов"""
+        query = """
+            SELECT COUNT(*) as count
+            FROM fas.signal_patterns sp
+            WHERE sp.timestamp <= NOW() - INTERVAL '48 hours'
+                AND NOT EXISTS (
+                    SELECT 1 FROM fas.test_patterns_wr tpw
+                    WHERE tpw.id = sp.id
+                )
+        """
 
         with self.conn.cursor() as cur:
             cur.execute(query)
-            patterns = cur.fetchall()
+            result = cur.fetchone()
+            return result['count'] if result else 0
 
-        logger.info(f"📊 Найдено {len(patterns)} необработанных паттернов старше 48 часов")
-        return patterns
+    def get_entry_price(self, trading_pair_id: int, signal_time: datetime,
+                        signal_type: str) -> Optional[Dict]:
+        """Получение цены входа из первой свечи после signal_time + 15 минут"""
+        entry_time = signal_time + timedelta(minutes=ANALYSIS_PARAMS['entry_delay_minutes'])
 
-    def get_price_data_vectorized(self, trading_pair_id: int,
-                                  start_time: datetime,
-                                  end_time: datetime,
-                                  conn=None) -> Optional[np.ndarray]:
-        """Получение ценовых данных в виде numpy массива для векторизованных расчетов"""
         query = """
-        SELECT 
-            EXTRACT(EPOCH FROM timestamp) as timestamp_epoch,
-            close_price::FLOAT,
-            high_price::FLOAT,
-            low_price::FLOAT,
-            open_price::FLOAT
-        FROM fas.market_data_aggregated
-        WHERE trading_pair_id = %s
-            AND timeframe = '15m'
-            AND timestamp >= %s
-            AND timestamp <= %s
-        ORDER BY timestamp ASC
+            SELECT 
+                timestamp,
+                close_price,
+                high_price,
+                low_price
+            FROM fas.market_data_aggregated
+            WHERE trading_pair_id = %s
+                AND timeframe = '15m'
+                AND timestamp >= %s
+            ORDER BY timestamp ASC
+            LIMIT 1
         """
 
-        # Используем переданное соединение или основное
-        connection = conn or self.conn
-
         try:
-            with connection.cursor() as cur:
-                cur.execute(query, (trading_pair_id, start_time, end_time))
-                data = cur.fetchall()
+            with self.conn.cursor() as cur:
+                cur.execute(query, (trading_pair_id, entry_time))
+                result = cur.fetchone()
 
-            if len(data) < self.params.min_candles_required:
-                return None
+            if result:
+                # Для LONG используем high_price (худший вход), для SHORT - low_price
+                if signal_type == 'LONG':
+                    entry_price = float(result['high_price'])
+                else:  # SHORT
+                    entry_price = float(result['low_price'])
 
-            # Конвертируем в numpy массив для быстрых расчетов
-            return np.array([
-                (row['timestamp_epoch'], row['close_price'],
-                 row['high_price'], row['low_price'], row['open_price'])
-                for row in data
-            ], dtype=[
-                ('timestamp', 'f8'),
-                ('close', 'f8'),
-                ('high', 'f8'),
-                ('low', 'f8'),
-                ('open', 'f8')
-            ])
-
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения ценовых данных: {e}")
+                return {
+                    'entry_price': entry_price,
+                    'entry_time': result['timestamp']
+                }
             return None
 
-    def analyze_position_vectorized(self, signal_type: str, entry_price: float,
-                                    price_data: np.ndarray) -> Dict:
-        """
-        Векторизованный анализ позиции для максимальной производительности
-        Использует numpy для одновременной обработки всех свечей
-        """
-        tp_pct = self.params.tp_percent / 100
-        sl_pct = self.params.sl_percent / 100
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения цены входа: {e}")
+            return None
 
+    def analyze_position(self, signal_type: str, entry_price: float,
+                         history: List[Dict], actual_entry_time) -> Dict:
+        """Анализ позиции на исторических данных"""
+        tp_percent = ANALYSIS_PARAMS['tp_percent']
+        sl_percent = ANALYSIS_PARAMS['sl_percent']
+
+        # Расчет уровней TP и SL
         if signal_type == 'LONG':
-            tp_price = entry_price * (1 + tp_pct)
-            sl_price = entry_price * (1 - sl_pct)
-
-            # Векторизованная проверка TP/SL
-            tp_hits = price_data['high'] >= tp_price
-            sl_hits = price_data['low'] <= sl_price
-
-            # Расчет максимального потенциала
-            max_price = np.max(price_data['high'])
-            min_price = np.min(price_data['low'])
-            max_profit_pct = ((max_price - entry_price) / entry_price) * 100
-            max_drawdown_pct = ((entry_price - min_price) / entry_price) * 100
-
+            tp_price = entry_price * (1 + tp_percent / 100)
+            sl_price = entry_price * (1 - sl_percent / 100)
         else:  # SHORT
-            tp_price = entry_price * (1 - tp_pct)
-            sl_price = entry_price * (1 + sl_pct)
+            tp_price = entry_price * (1 - tp_percent / 100)
+            sl_price = entry_price * (1 + sl_percent / 100)
 
-            tp_hits = price_data['low'] <= tp_price
-            sl_hits = price_data['high'] >= sl_price
-
-            max_price = np.max(price_data['high'])
-            min_price = np.min(price_data['low'])
-            max_profit_pct = ((entry_price - min_price) / entry_price) * 100
-            max_drawdown_pct = ((max_price - entry_price) / entry_price) * 100
-
-        # Определяем первое срабатывание
+        # Переменные для отслеживания результата
         result = None
-        close_price = None
-        close_time = None
-        close_idx = None
+        tp_hit = False
+        sl_hit = False
 
-        # Приоритет: сначала проверяем SL (защита капитала)
-        for i in range(len(price_data)):
-            if sl_hits[i]:
-                result = False  # SL сработал
-                close_price = sl_price
-                close_idx = i
-                break
-            elif tp_hits[i]:
-                result = True  # TP сработал
-                close_price = tp_price
-                close_idx = i
-                break
+        # Проходим по истории цен
+        for candle in history:
+            high_price = float(candle['high_price'])
+            low_price = float(candle['low_price'])
 
-        if close_idx is not None:
-            close_time = datetime.fromtimestamp(
-                price_data['timestamp'][close_idx],
-                tz=timezone.utc
-            )
-        else:
-            # Timeout - закрытие по последней цене
-            close_price = price_data['close'][-1]
-            close_time = datetime.fromtimestamp(
-                price_data['timestamp'][-1],
-                tz=timezone.utc
-            )
-
-        # Расчет финального P&L
-        if signal_type == 'LONG':
-            pnl_percent = ((close_price - entry_price) / entry_price) * 100
-        else:  # SHORT
-            pnl_percent = ((entry_price - close_price) / entry_price) * 100
+            if signal_type == 'LONG':
+                # Сначала проверяем SL
+                if low_price <= sl_price:
+                    result = False
+                    sl_hit = True
+                    break
+                # Затем проверяем TP
+                elif high_price >= tp_price:
+                    result = True
+                    tp_hit = True
+                    break
+            else:  # SHORT
+                # Сначала проверяем SL
+                if high_price >= sl_price:
+                    result = False
+                    sl_hit = True
+                    break
+                # Затем проверяем TP
+                elif low_price <= tp_price:
+                    result = True
+                    tp_hit = True
+                    break
 
         return {
-            'entry_price': entry_price,
-            'tp_price': tp_price,
-            'sl_price': sl_price,
-            'tp': result is True,
-            'sl': result is False,
             'result': result,
-            'close_price': close_price,
-            'close_time': close_time,
-            'pnl_percent': pnl_percent,
-            'max_profit_percent': max_profit_pct,
-            'max_drawdown_percent': max_drawdown_pct
+            'tp': tp_hit,
+            'sl': sl_hit
         }
 
-    def analyze_pattern_with_connection(self, pattern: Dict) -> Optional[Dict]:
-        """Анализ паттерна с собственным соединением для потокобезопасности"""
-        # Создаем отдельное соединение для этого потока
-        conn_string = " ".join([f"{k}={v}" for k, v in self.db_config.items()])
+    def analyze_pattern(self, pattern: Dict) -> Optional[Dict]:
+        """Анализ одного паттерна для LONG и SHORT позиций"""
         try:
-            thread_conn = psycopg.connect(
-                conn_string,
-                row_factory=dict_row,
-                autocommit=True  # Автокоммит для избежания блокировок
-            )
-
-            # Время входа с задержкой
-            entry_time = pattern['timestamp'] + timedelta(minutes=self.params.entry_delay_minutes)
-            analysis_end = entry_time + timedelta(hours=self.params.analysis_hours)
-
-            # Получаем ценовые данные с использованием собственного соединения
-            price_data = self.get_price_data_vectorized(
+            # Получаем цену входа для LONG
+            long_entry_data = self.get_entry_price(
                 pattern['trading_pair_id'],
-                entry_time,
-                analysis_end,
-                conn=thread_conn
+                pattern['timestamp'],
+                'LONG'
             )
 
-            thread_conn.close()  # Закрываем соединение после использования
+            # Получаем цену входа для SHORT
+            short_entry_data = self.get_entry_price(
+                pattern['trading_pair_id'],
+                pattern['timestamp'],
+                'SHORT'
+            )
 
-            if price_data is None or len(price_data) == 0:
-                logger.warning(f"⚠️ Недостаточно данных для паттерна {pattern['id']} "
-                               f"({pattern['pair_symbol']}) от {pattern['timestamp'].strftime('%Y-%m-%d %H:%M')}")
-                self.stats['no_data'] += 1
-                self.stats['no_data_patterns'].append({
-                    'id': pattern['id'],
-                    'symbol': pattern['pair_symbol'],
-                    'timestamp': pattern['timestamp']
-                })
-                return self._create_no_data_result(pattern)
+            if not long_entry_data or not short_entry_data:
+                logger.warning(f"⚠️ Нет цены входа для паттерна {pattern['id']}")
+                self.skipped_count += 1
+                return None
 
-            # Цена входа - используем худший сценарий
-            long_entry = price_data['high'][0]
-            short_entry = price_data['low'][0]
+            # Получаем историю цен за 48 часов
+            history_query = """
+                SELECT 
+                    timestamp,
+                    close_price,
+                    high_price,
+                    low_price
+                FROM fas.market_data_aggregated
+                WHERE trading_pair_id = %s
+                    AND timeframe = '15m'
+                    AND timestamp >= %s
+                    AND timestamp <= %s + INTERVAL '48 hours'
+                ORDER BY timestamp ASC
+            """
+
+            with self.conn.cursor() as cur:
+                cur.execute(history_query, (
+                    pattern['trading_pair_id'],
+                    long_entry_data['entry_time'],
+                    long_entry_data['entry_time']
+                ))
+                history = cur.fetchall()
+
+            if not history or len(history) < 10:
+                logger.warning(f"⚠️ Недостаточно истории для паттерна {pattern['id']}")
+                self.skipped_count += 1
+                return None
 
             # Анализируем LONG позицию
-            long_results = self.analyze_position_vectorized(
-                'LONG', long_entry, price_data[1:]
+            long_results = self.analyze_position(
+                'LONG',
+                long_entry_data['entry_price'],
+                history[1:],  # Пропускаем первую свечу
+                long_entry_data['entry_time']
             )
 
             # Анализируем SHORT позицию
-            short_results = self.analyze_position_vectorized(
-                'SHORT', short_entry, price_data[1:]
+            short_results = self.analyze_position(
+                'SHORT',
+                short_entry_data['entry_price'],
+                history[1:],
+                short_entry_data['entry_time']
             )
 
             # Формируем результат
-            result = {
+            return {
                 'id': pattern['id'],
                 'trading_pair_id': pattern['trading_pair_id'],
                 'timestamp': pattern['timestamp'],
@@ -397,360 +337,205 @@ class PatternWinRateAnalyzer:
                 'score_impact': float(pattern['score_impact']) if pattern['score_impact'] else None,
                 'details': pattern['details'],
                 'trigger_values': pattern['trigger_values'],
-
-                # SHORT результаты
-                'sell_entry_price': short_results['entry_price'],
-                'sell_tp_price': short_results['tp_price'],
-                'sell_sl_price': short_results['sl_price'],
                 'sell_tp': short_results['tp'],
                 'sell_sl': short_results['sl'],
                 'sell_result': short_results['result'],
-                'sell_close_price': short_results['close_price'],
-                'sell_close_time': short_results['close_time'],
-                'sell_pnl_percent': short_results['pnl_percent'],
-                'sell_max_profit_percent': short_results['max_profit_percent'],
-                'sell_max_drawdown_percent': short_results['max_drawdown_percent'],
-
-                # LONG результаты
-                'buy_entry_price': long_results['entry_price'],
-                'buy_tp_price': long_results['tp_price'],
-                'buy_sl_price': long_results['sl_price'],
                 'buy_tp': long_results['tp'],
                 'buy_sl': long_results['sl'],
-                'buy_result': long_results['result'],
-                'buy_close_price': long_results['close_price'],
-                'buy_close_time': long_results['close_time'],
-                'buy_pnl_percent': long_results['pnl_percent'],
-                'buy_max_profit_percent': long_results['max_profit_percent'],
-                'buy_max_drawdown_percent': long_results['max_drawdown_percent'],
-
-                'analysis_completed': True,
-                'has_sufficient_data': True
+                'buy_result': long_results['result']
             }
-
-            self.stats['analyzed'] += 1
-            return result
 
         except Exception as e:
             logger.error(f"❌ Ошибка анализа паттерна {pattern['id']}: {e}")
-            self.stats['errors'] += 1
+            self.error_count += 1
             return None
 
-    def _create_no_data_result(self, pattern: Dict) -> Dict:
-        """Создание записи для паттернов без достаточных данных"""
-        return {
-            'id': pattern['id'],
-            'trading_pair_id': pattern['trading_pair_id'],
-            'timestamp': pattern['timestamp'],
-            'pattern_type': pattern['pattern_type'],
-            'timeframe': pattern['timeframe'],
-            'strength': float(pattern['strength']) if pattern['strength'] else None,
-            'confidence': float(pattern['confidence']) if pattern['confidence'] else None,
-            'score_impact': float(pattern['score_impact']) if pattern['score_impact'] else None,
-            'details': pattern['details'],
-            'trigger_values': pattern['trigger_values'],
-            'analysis_completed': True,
-            'has_sufficient_data': False
-        }
-
-    def save_results_batch(self, results: List[Dict]):
-        """Пакетное сохранение результатов с оптимизацией для psycopg3"""
+    def save_results(self, results: List[Dict]):
+        """Сохранение результатов в БД"""
         if not results:
             return
 
-        # Используем только INSERT для избежания проблем с параллельностью
-        self._save_with_insert(results)
-
-    def _save_with_insert(self, results: List[Dict]):
-        """Сохранение через обычные INSERT - надежный метод для параллельной обработки"""
         insert_query = """
-        INSERT INTO fas.test_patterns_wr (
-            id, trading_pair_id, timestamp, pattern_type, timeframe,
-            strength, confidence, score_impact, details, trigger_values,
-            sell_entry_price, sell_tp_price, sell_sl_price,
-            sell_tp, sell_sl, sell_result, sell_close_price, sell_close_time,
-            sell_pnl_percent, sell_max_profit_percent, sell_max_drawdown_percent,
-            buy_entry_price, buy_tp_price, buy_sl_price,
-            buy_tp, buy_sl, buy_result, buy_close_price, buy_close_time,
-            buy_pnl_percent, buy_max_profit_percent, buy_max_drawdown_percent,
-            analysis_completed, has_sufficient_data
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                 %s, %s, %s, %s)
-        ON CONFLICT (id) DO UPDATE SET
-            sell_result = EXCLUDED.sell_result,
-            buy_result = EXCLUDED.buy_result,
-            sell_pnl_percent = EXCLUDED.sell_pnl_percent,
-            buy_pnl_percent = EXCLUDED.buy_pnl_percent,
-            processed_at = NOW()
+            INSERT INTO fas.test_patterns_wr (
+                id, trading_pair_id, timestamp, pattern_type, timeframe,
+                strength, confidence, score_impact, details, trigger_values,
+                sell_tp, sell_sl, sell_result,
+                buy_tp, buy_sl, buy_result
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                sell_result = EXCLUDED.sell_result,
+                buy_result = EXCLUDED.buy_result,
+                processed_at = NOW()
         """
 
-        try:
-            with self.conn.cursor() as cur:
-                for r in results:
-                    values = (
-                        r['id'], r['trading_pair_id'], r['timestamp'],
-                        r['pattern_type'], r['timeframe'],
-                        r.get('strength'), r.get('confidence'), r.get('score_impact'),
-                        json.dumps(r['details']) if r['details'] else None,
-                        json.dumps(r['trigger_values']) if r['trigger_values'] else None,
-                        r.get('sell_entry_price'), r.get('sell_tp_price'), r.get('sell_sl_price'),
-                        r.get('sell_tp', False), r.get('sell_sl', False), r.get('sell_result'),
-                        r.get('sell_close_price'), r.get('sell_close_time'),
-                        r.get('sell_pnl_percent'), r.get('sell_max_profit_percent'),
-                        r.get('sell_max_drawdown_percent'),
-                        r.get('buy_entry_price'), r.get('buy_tp_price'), r.get('buy_sl_price'),
-                        r.get('buy_tp', False), r.get('buy_sl', False), r.get('buy_result'),
-                        r.get('buy_close_price'), r.get('buy_close_time'),
-                        r.get('buy_pnl_percent'), r.get('buy_max_profit_percent'),
-                        r.get('buy_max_drawdown_percent'),
-                        r.get('analysis_completed', False), r.get('has_sufficient_data', True)
-                    )
-                    cur.execute(insert_query, values)
+        saved_count = 0
 
-            self.conn.commit()
-            logger.info(f"💾 Сохранено {len(results)} результатов")
-
-        except Exception as e:
-            logger.error(f"❌ Ошибка сохранения результатов: {e}")
-            self.conn.rollback()
-            raise
-
-    def process_patterns_parallel(self, patterns: List[Dict]):
-        """Параллельная обработка паттернов с изолированными соединениями"""
-        results = []
-
-        with ThreadPoolExecutor(max_workers=self.params.parallel_workers) as executor:
-            # Создаем задачи с использованием метода с собственным соединением
-            future_to_pattern = {
-                executor.submit(self.analyze_pattern_with_connection, pattern): pattern
-                for pattern in patterns
-            }
-
-            # Обрабатываем результаты по мере готовности
-            for future in as_completed(future_to_pattern):
-                pattern = future_to_pattern[future]
+        with self.conn.cursor() as cur:
+            for result in results:
                 try:
-                    result = future.result(timeout=30)
-                    if result:
-                        results.append(result)
-                        self.stats['processed'] += 1
-
-                    # Сохраняем батчами
-                    if len(results) >= 100:
-                        self.save_results_batch(results)
-                        results = []
-
+                    import json
+                    cur.execute(insert_query, (
+                        result['id'],
+                        result['trading_pair_id'],
+                        result['timestamp'],
+                        result['pattern_type'],
+                        result['timeframe'],
+                        result['strength'],
+                        result['confidence'],
+                        result['score_impact'],
+                        json.dumps(result['details']) if result['details'] else None,
+                        json.dumps(result['trigger_values']) if result['trigger_values'] else None,
+                        result['sell_tp'],
+                        result['sell_sl'],
+                        result['sell_result'],
+                        result['buy_tp'],
+                        result['buy_sl'],
+                        result['buy_result']
+                    ))
+                    saved_count += 1
                 except Exception as e:
-                    logger.error(f"❌ Ошибка обработки паттерна {pattern['id']}: {e}")
-                    self.stats['errors'] += 1
+                    logger.error(f"❌ Ошибка сохранения результата для паттерна {result['id']}: {e}")
+                    self.error_count += 1
 
-        # Сохраняем остатки
-        if results:
-            self.save_results_batch(results)
+        self.conn.commit()
+        self.new_patterns_count += saved_count
+        logger.info(f"💾 Сохранено {saved_count} результатов из {len(results)}")
 
     def print_statistics(self):
-        """Вывод детальной статистики по результатам анализа"""
-        stats_query = """
-        WITH pattern_stats AS (
-            SELECT 
-                pattern_type,
-                COUNT(*) as total_patterns,
-
-                -- LONG статистика
-                COUNT(CASE WHEN buy_result = true THEN 1 END) as long_wins,
-                COUNT(CASE WHEN buy_result = false THEN 1 END) as long_losses,
-                COUNT(CASE WHEN buy_result IS NULL AND has_sufficient_data THEN 1 END) as long_timeouts,
-                AVG(CASE WHEN buy_result IS NOT NULL THEN buy_pnl_percent END) as avg_long_pnl,
-                MAX(buy_pnl_percent) as max_long_profit,
-                MIN(buy_pnl_percent) as max_long_loss,
-                AVG(buy_max_profit_percent) as avg_long_potential,
-
-                -- SHORT статистика
-                COUNT(CASE WHEN sell_result = true THEN 1 END) as short_wins,
-                COUNT(CASE WHEN sell_result = false THEN 1 END) as short_losses,
-                COUNT(CASE WHEN sell_result IS NULL AND has_sufficient_data THEN 1 END) as short_timeouts,
-                AVG(CASE WHEN sell_result IS NOT NULL THEN sell_pnl_percent END) as avg_short_pnl,
-                MAX(sell_pnl_percent) as max_short_profit,
-                MIN(sell_pnl_percent) as max_short_loss,
-                AVG(sell_max_profit_percent) as avg_short_potential,
-
-                COUNT(CASE WHEN NOT has_sufficient_data THEN 1 END) as no_data_count
-
-            FROM fas.test_patterns_wr
-            WHERE processed_at >= NOW() - INTERVAL '1 day'
-            GROUP BY pattern_type
-            ORDER BY total_patterns DESC
-        ),
-        overall_stats AS (
-            SELECT 
-                COUNT(*) as total_analyzed,
-                COUNT(CASE WHEN buy_result = true THEN 1 END) as total_long_wins,
-                COUNT(CASE WHEN buy_result = false THEN 1 END) as total_long_losses,
-                COUNT(CASE WHEN sell_result = true THEN 1 END) as total_short_wins,
-                COUNT(CASE WHEN sell_result = false THEN 1 END) as total_short_losses,
-                AVG(buy_pnl_percent) as overall_avg_long_pnl,
-                AVG(sell_pnl_percent) as overall_avg_short_pnl
-            FROM fas.test_patterns_wr
-            WHERE processed_at >= NOW() - INTERVAL '1 day'
-                AND has_sufficient_data = true
-        ),
-        no_data_stats AS (
-            SELECT 
-                COUNT(*) as total_no_data,
-                MIN(timestamp) as earliest_no_data,
-                MAX(timestamp) as latest_no_data,
-                COUNT(DISTINCT DATE(timestamp)) as unique_days_no_data
-            FROM fas.test_patterns_wr
-            WHERE has_sufficient_data = false
-                AND processed_at >= NOW() - INTERVAL '1 day'
-        )
-        SELECT * FROM pattern_stats
-        """
-
+        """Вывод статистики по результатам анализа"""
         try:
+            stats_query = """
+                WITH pattern_stats AS (
+                    SELECT 
+                        pattern_type,
+                        COUNT(*) as total_patterns,
+                        COUNT(CASE WHEN buy_result = true THEN 1 END) as long_wins,
+                        COUNT(CASE WHEN buy_result = false THEN 1 END) as long_losses,
+                        COUNT(CASE WHEN sell_result = true THEN 1 END) as short_wins,
+                        COUNT(CASE WHEN sell_result = false THEN 1 END) as short_losses
+                    FROM fas.test_patterns_wr
+                    WHERE processed_at >= NOW() - INTERVAL '1 day'
+                    GROUP BY pattern_type
+                    ORDER BY total_patterns DESC
+                )
+                SELECT * FROM pattern_stats
+            """
+
             with self.conn.cursor() as cur:
                 cur.execute(stats_query)
                 pattern_stats = cur.fetchall()
 
-            logger.info("\n" + "=" * 80)
+            logger.info("\n" + "=" * 70)
             logger.info("📊 СТАТИСТИКА WIN RATE ПО ПАТТЕРНАМ")
-            logger.info("=" * 80)
+            logger.info("=" * 70)
 
             for stat in pattern_stats:
                 pattern = stat['pattern_type']
                 total = stat['total_patterns']
 
-                # LONG Win Rate
                 long_total = stat['long_wins'] + stat['long_losses']
                 long_wr = (stat['long_wins'] / long_total * 100) if long_total > 0 else 0
 
-                # SHORT Win Rate
                 short_total = stat['short_wins'] + stat['short_losses']
                 short_wr = (stat['short_wins'] / short_total * 100) if short_total > 0 else 0
 
                 logger.info(f"\n📈 Паттерн: {pattern}")
                 logger.info(f"   Всего сигналов: {total}")
                 logger.info(f"   ├─ LONG Win Rate: {long_wr:.1f}% ({stat['long_wins']}/{long_total})")
-                logger.info(f"   │  ├─ Avg P&L: {stat['avg_long_pnl']:.2f}%" if stat[
-                    'avg_long_pnl'] else "   │  ├─ Avg P&L: N/A")
-                logger.info(f"   │  └─ Max потенциал: {stat['avg_long_potential']:.2f}%" if stat[
-                    'avg_long_potential'] else "   │  └─ Max потенциал: N/A")
                 logger.info(f"   └─ SHORT Win Rate: {short_wr:.1f}% ({stat['short_wins']}/{short_total})")
-                logger.info(f"      ├─ Avg P&L: {stat['avg_short_pnl']:.2f}%" if stat[
-                    'avg_short_pnl'] else "      ├─ Avg P&L: N/A")
-                logger.info(f"      └─ Max потенциал: {stat['avg_short_potential']:.2f}%" if stat[
-                    'avg_short_potential'] else "      └─ Max потенциал: N/A")
 
-                if stat['no_data_count'] > 0:
-                    logger.info(f"   ⚠️ Без данных: {stat['no_data_count']}")
-
-            # Общая статистика
-            cur.execute("SELECT * FROM overall_stats")
-            overall = cur.fetchone()
-
-            if overall:
-                logger.info("\n" + "=" * 80)
-                logger.info("🎯 ОБЩАЯ СТАТИСТИКА")
-                logger.info("=" * 80)
-
-                total_long = overall['total_long_wins'] + overall['total_long_losses']
-                total_short = overall['total_short_wins'] + overall['total_short_losses']
-
-                if total_long > 0:
-                    long_wr = (overall['total_long_wins'] / total_long) * 100
-                    logger.info(f"LONG:  WR={long_wr:.1f}%, Avg P&L={overall['overall_avg_long_pnl']:.2f}%")
-
-                if total_short > 0:
-                    short_wr = (overall['total_short_wins'] / total_short) * 100
-                    logger.info(f"SHORT: WR={short_wr:.1f}%, Avg P&L={overall['overall_avg_short_pnl']:.2f}%")
-
-            # Статистика по паттернам без данных
-            cur.execute("SELECT * FROM no_data_stats")
-            no_data_stat = cur.fetchone()
-
-            if no_data_stat and no_data_stat['total_no_data'] > 0:
-                logger.info("\n" + "=" * 80)
-                logger.info("⚠️ ПАТТЕРНЫ БЕЗ ДОСТАТОЧНЫХ ДАННЫХ")
-                logger.info("=" * 80)
-                logger.info(f"Всего: {no_data_stat['total_no_data']} паттернов")
-                logger.info(f"Период: с {no_data_stat['earliest_no_data'].strftime('%Y-%m-%d')} "
-                            f"по {no_data_stat['latest_no_data'].strftime('%Y-%m-%d')}")
-                logger.info(f"Уникальных дней: {no_data_stat['unique_days_no_data']}")
-
-                # Детализация по символам если есть
-                if len(self.stats['no_data_patterns']) > 0:
-                    # Группируем по символам
-                    symbol_counts = {}
-                    for p in self.stats['no_data_patterns'][:20]:  # Показываем первые 20
-                        symbol = p['symbol']
-                        if symbol not in symbol_counts:
-                            symbol_counts[symbol] = 0
-                        symbol_counts[symbol] += 1
-
-                    logger.info("\nТоп символы без данных:")
-                    for symbol, count in sorted(symbol_counts.items(), key=lambda x: x[1], reverse=True)[:5]:
-                        logger.info(f"  - {symbol}: {count} паттернов")
-
-            logger.info("=" * 80)
+            logger.info("=" * 70)
 
         except Exception as e:
-            logger.error(f"❌ Ошибка вывода статистики: {e}")
+            logger.error(f"❌ Ошибка при выводе статистики: {e}")
 
     def run(self):
         """Основной процесс анализа"""
         start_time = datetime.now()
-        logger.info("🚀 Запуск Pattern Win Rate Analyzer v1.1")
+        logger.info("🚀 Начало анализа паттернов")
         logger.info(f"📅 Время запуска: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
-        logger.info(f"⚙️ Параметры: TP={self.params.tp_percent}%, SL={self.params.sl_percent}%")
-        logger.info(f"🔧 Параллельных воркеров: {self.params.parallel_workers}")
-        logger.info(f"📊 Анализируем паттерны старше 48 часов (для валидации результатов)")
+        logger.info(f"⚙️ Параметры: TP={ANALYSIS_PARAMS['tp_percent']}%, SL={ANALYSIS_PARAMS['sl_percent']}%")
 
         try:
             self.connect()
             self.create_result_table()
 
-            # Получаем все необработанные паттерны
-            patterns = self.get_unprocessed_patterns()
+            total_unprocessed = self.get_total_unprocessed_count()
 
-            if not patterns:
+            if total_unprocessed == 0:
                 logger.info("✅ Нет новых паттернов для обработки")
                 return
 
-            logger.info(f"📊 Начинаем обработку {len(patterns)} паттернов")
+            logger.info(f"📊 Всего необработанных паттернов: {total_unprocessed}")
 
-            # Обрабатываем батчами с параллельной обработкой
-            batch_size = self.params.batch_size
-            for i in range(0, len(patterns), batch_size):
-                batch = patterns[i:i + batch_size]
-                batch_num = i // batch_size + 1
-                total_batches = (len(patterns) + batch_size - 1) // batch_size
+            batch_size = 10000
+            save_batch_size = 100
+            batch_number = 0
 
-                logger.info(f"\n📦 Обработка батча {batch_num}/{total_batches} ({len(batch)} паттернов)")
-                self.process_patterns_parallel(batch)
+            while True:
+                batch_number += 1
+                current_unprocessed = self.get_total_unprocessed_count()
 
-                # Прогресс
-                progress = min(100, ((i + len(batch)) / len(patterns)) * 100)
-                logger.info(f"⏳ Общий прогресс: {progress:.1f}%")
+                if current_unprocessed == 0:
+                    logger.info("✅ Все паттерны обработаны!")
+                    break
 
-            # Финальная статистика
+                logger.info(f"\n📦 Обработка пакета #{batch_number}")
+                logger.info(f"📊 Осталось необработанных: {current_unprocessed}")
+
+                patterns = self.get_unprocessed_patterns(batch_size)
+
+                if not patterns:
+                    logger.info(f"✅ Больше нет паттернов для обработки")
+                    break
+
+                logger.info(f"📊 В пакете #{batch_number}: {len(patterns)} паттернов")
+
+                results = []
+
+                for i, pattern in enumerate(patterns):
+                    if i % 100 == 0 and i > 0:
+                        progress = (i / len(patterns)) * 100
+                        logger.info(f"⏳ Пакет #{batch_number}: {i}/{len(patterns)} ({progress:.1f}%)")
+
+                    result = self.analyze_pattern(pattern)
+                    if result:
+                        results.append(result)
+                        self.processed_count += 1
+
+                    if len(results) >= save_batch_size:
+                        self.save_results(results)
+                        results = []
+
+                if results:
+                    self.save_results(results)
+
+                logger.info(f"✅ Пакет #{batch_number} обработан")
+
+                if current_unprocessed > batch_size:
+                    time.sleep(2)
+
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
 
-            logger.info("\n" + "=" * 80)
-            logger.info("📋 ИТОГИ ОБРАБОТКИ")
-            logger.info("=" * 80)
-            logger.info(f"✅ Обработано: {self.stats['processed']}")
-            logger.info(f"📊 Проанализировано: {self.stats['analyzed']}")
-            logger.info(f"⚠️ Без данных: {self.stats['no_data']}")
-            logger.info(f"❌ Ошибок: {self.stats['errors']}")
-            logger.info(f"⏱️ Время выполнения: {duration:.1f} сек ({duration / 60:.1f} мин)")
+            logger.info("\n" + "=" * 70)
+            logger.info("📋 ИТОГИ ОБРАБОТКИ:")
+            logger.info("=" * 70)
+            logger.info(f"✅ Успешно обработано: {self.processed_count}")
+            logger.info(f"💾 Сохранено новых результатов: {self.new_patterns_count}")
+            logger.info(f"⭕ Пропущено: {self.skipped_count}")
+            logger.info(f"❌ Ошибок: {self.error_count}")
+            logger.info(f"⏱️ Время выполнения: {duration:.1f} секунд ({duration / 60:.1f} минут)")
 
-            if self.stats['processed'] > 0:
-                logger.info(f"⚡ Скорость: {self.stats['processed'] / duration:.1f} паттернов/сек")
+            if self.processed_count > 0:
+                logger.info(f"⚡ Скорость обработки: {self.processed_count / duration:.1f} паттернов/сек")
 
-            # Выводим детальную статистику
+            logger.info("=" * 70)
+
+            # Выводим статистику
             self.print_statistics()
 
         except Exception as e:
@@ -763,7 +548,7 @@ class PatternWinRateAnalyzer:
 def main():
     """Точка входа"""
     try:
-        analyzer = PatternWinRateAnalyzer(DB_CONFIG, PARAMS)
+        analyzer = PatternWinRateAnalyzer(DB_CONFIG)
         analyzer.run()
     except KeyboardInterrupt:
         logger.info("\n⛔ Прерывание пользователем")
