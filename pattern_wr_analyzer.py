@@ -9,7 +9,6 @@ import os
 import sys
 import psycopg
 from psycopg.rows import dict_row
-from psycopg.extras import execute_values  # Импорт в начале файла
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import logging
@@ -19,6 +18,7 @@ import numpy as np
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+import io  # Для работы с COPY
 
 # Настройка логирования
 logging.basicConfig(
@@ -439,10 +439,104 @@ class PatternWinRateAnalyzer:
         }
 
     def save_results_batch(self, results: List[Dict]):
-        """Пакетное сохранение результатов с использованием execute_values для скорости"""
+        """Пакетное сохранение результатов с оптимизацией для psycopg3"""
         if not results:
             return
 
+        # Метод 1: Используем COPY для максимальной скорости (в 10 раз быстрее)
+        if len(results) > 50:  # Для больших батчей используем COPY
+            self._save_with_copy(results)
+        else:  # Для маленьких батчей используем обычные INSERT
+            self._save_with_insert(results)
+
+    def _save_with_copy(self, results: List[Dict]):
+        """Сохранение через COPY - самый быстрый метод для больших объемов"""
+        try:
+            # Создаем временную таблицу
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TEMP TABLE temp_patterns_wr (LIKE fas.test_patterns_wr INCLUDING ALL) 
+                    ON COMMIT DROP
+                """)
+
+                # Подготавливаем данные для COPY
+                import io
+                buffer = io.StringIO()
+
+                for r in results:
+                    # Формируем строку в формате TSV
+                    row_data = [
+                        str(r['id']),
+                        str(r['trading_pair_id']),
+                        r['timestamp'].isoformat(),
+                        r['pattern_type'],
+                        r['timeframe'],
+                        str(r.get('strength', '\\N')),
+                        str(r.get('confidence', '\\N')),
+                        str(r.get('score_impact', '\\N')),
+                        json.dumps(r['details']) if r['details'] else '\\N',
+                        json.dumps(r['trigger_values']) if r['trigger_values'] else '\\N',
+                        str(r.get('sell_entry_price', '\\N')),
+                        str(r.get('sell_tp_price', '\\N')),
+                        str(r.get('sell_sl_price', '\\N')),
+                        str(r.get('sell_tp', False)),
+                        str(r.get('sell_sl', False)),
+                        str(r.get('sell_result', '\\N')),
+                        str(r.get('sell_close_price', '\\N')),
+                        r.get('sell_close_time').isoformat() if r.get('sell_close_time') else '\\N',
+                        str(r.get('sell_pnl_percent', '\\N')),
+                        str(r.get('sell_max_profit_percent', '\\N')),
+                        str(r.get('sell_max_drawdown_percent', '\\N')),
+                        str(r.get('buy_entry_price', '\\N')),
+                        str(r.get('buy_tp_price', '\\N')),
+                        str(r.get('buy_sl_price', '\\N')),
+                        str(r.get('buy_tp', False)),
+                        str(r.get('buy_sl', False)),
+                        str(r.get('buy_result', '\\N')),
+                        str(r.get('buy_close_price', '\\N')),
+                        r.get('buy_close_time').isoformat() if r.get('buy_close_time') else '\\N',
+                        str(r.get('buy_pnl_percent', '\\N')),
+                        str(r.get('buy_max_profit_percent', '\\N')),
+                        str(r.get('buy_max_drawdown_percent', '\\N')),
+                        str(r.get('analysis_completed', False)),
+                        str(r.get('has_sufficient_data', True))
+                    ]
+
+                    # Заменяем None на \N для COPY
+                    row_data = [v if v != 'None' else '\\N' for v in row_data]
+                    buffer.write('\t'.join(row_data) + '\n')
+
+                buffer.seek(0)
+
+                # Загружаем данные через COPY
+                with cur.copy("""
+                    COPY temp_patterns_wr FROM STDIN WITH (FORMAT text, NULL '\\N')
+                """) as copy:
+                    copy.write(buffer.getvalue())
+
+                # Переносим из временной таблицы в основную с ON CONFLICT
+                cur.execute("""
+                    INSERT INTO fas.test_patterns_wr 
+                    SELECT * FROM temp_patterns_wr
+                    ON CONFLICT (id) DO UPDATE SET
+                        sell_result = EXCLUDED.sell_result,
+                        buy_result = EXCLUDED.buy_result,
+                        sell_pnl_percent = EXCLUDED.sell_pnl_percent,
+                        buy_pnl_percent = EXCLUDED.buy_pnl_percent,
+                        processed_at = NOW()
+                """)
+
+            self.conn.commit()
+            logger.info(f"💾 Сохранено {len(results)} результатов через COPY (быстрый режим)")
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка COPY, переключаемся на INSERT: {e}")
+            self.conn.rollback()
+            # Fallback на обычный метод
+            self._save_with_insert(results)
+
+    def _save_with_insert(self, results: List[Dict]):
+        """Сохранение через обычные INSERT для небольших батчей"""
         insert_query = """
         INSERT INTO fas.test_patterns_wr (
             id, trading_pair_id, timestamp, pattern_type, timeframe,
@@ -454,7 +548,10 @@ class PatternWinRateAnalyzer:
             buy_tp, buy_sl, buy_result, buy_close_price, buy_close_time,
             buy_pnl_percent, buy_max_profit_percent, buy_max_drawdown_percent,
             analysis_completed, has_sufficient_data
-        ) VALUES %s
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                 %s, %s, %s, %s)
         ON CONFLICT (id) DO UPDATE SET
             sell_result = EXCLUDED.sell_result,
             buy_result = EXCLUDED.buy_result,
@@ -465,10 +562,8 @@ class PatternWinRateAnalyzer:
 
         try:
             with self.conn.cursor() as cur:
-                # Подготавливаем данные для вставки
-                values = []
                 for r in results:
-                    values.append((
+                    values = (
                         r['id'], r['trading_pair_id'], r['timestamp'],
                         r['pattern_type'], r['timeframe'],
                         r.get('strength'), r.get('confidence'), r.get('score_impact'),
@@ -485,13 +580,11 @@ class PatternWinRateAnalyzer:
                         r.get('buy_pnl_percent'), r.get('buy_max_profit_percent'),
                         r.get('buy_max_drawdown_percent'),
                         r.get('analysis_completed', False), r.get('has_sufficient_data', True)
-                    ))
-
-                # Используем execute_values для быстрой вставки
-                execute_values(cur, insert_query, values)
+                    )
+                    cur.execute(insert_query, values)
 
             self.conn.commit()
-            logger.info(f"💾 Сохранено {len(results)} результатов")
+            logger.info(f"💾 Сохранено {len(results)} результатов через INSERT")
 
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения результатов: {e}")
