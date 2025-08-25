@@ -48,7 +48,7 @@ ANALYSIS_PARAMS = {
 
 
 class CombinationsWinRateAnalyzer:
-    def __init__(self, db_config: dict, recreate_table: bool = True):
+    def __init__(self, db_config: dict, recreate_table: bool = False):
         self.db_config = db_config
         self.recreate_table = recreate_table
         self.conn = None
@@ -449,6 +449,7 @@ class CombinationsWinRateAnalyzer:
     def print_statistics(self):
         """Вывод статистики по результатам анализа"""
         try:
+            # Первый запрос - статистика по силе сигнала
             stats_query = """
                 WITH combination_stats AS (
                     SELECT 
@@ -462,23 +463,6 @@ class CombinationsWinRateAnalyzer:
                     WHERE processed_at >= NOW() - INTERVAL '1 day'
                     GROUP BY strength_rating
                     ORDER BY total_combinations DESC
-                ),
-                direction_stats AS (
-                    SELECT 
-                        signal_direction,
-                        COUNT(*) as total_signals,
-                        COUNT(CASE WHEN 
-                            (signal_direction = 'BUY' AND buy_result = true) OR 
-                            (signal_direction = 'SELL' AND sell_result = true) 
-                        THEN 1 END) as correct_predictions,
-                        COUNT(CASE WHEN 
-                            (signal_direction = 'BUY' AND buy_result = false) OR 
-                            (signal_direction = 'SELL' AND sell_result = false) 
-                        THEN 1 END) as wrong_predictions
-                    FROM fas.test_combinations_wr
-                    WHERE processed_at >= NOW() - INTERVAL '1 day'
-                        AND signal_direction IS NOT NULL
-                    GROUP BY signal_direction
                 )
                 SELECT * FROM combination_stats
             """
@@ -506,9 +490,28 @@ class CombinationsWinRateAnalyzer:
                 logger.info(f"   ├─ LONG Win Rate: {long_wr:.1f}% ({stat['long_wins']}/{long_total})")
                 logger.info(f"   └─ SHORT Win Rate: {short_wr:.1f}% ({stat['short_wins']}/{short_total})")
 
-            # Статистика по направлениям
-            cur.execute("SELECT * FROM direction_stats")
-            direction_stats = cur.fetchall()
+            # Второй запрос - статистика по направлениям (создаем новый курсор)
+            direction_query = """
+                SELECT 
+                    signal_direction,
+                    COUNT(*) as total_signals,
+                    COUNT(CASE WHEN 
+                        (signal_direction = 'BUY' AND buy_result = true) OR 
+                        (signal_direction = 'SELL' AND sell_result = true) 
+                    THEN 1 END) as correct_predictions,
+                    COUNT(CASE WHEN 
+                        (signal_direction = 'BUY' AND buy_result = false) OR 
+                        (signal_direction = 'SELL' AND sell_result = false) 
+                    THEN 1 END) as wrong_predictions
+                FROM fas.test_combinations_wr
+                WHERE processed_at >= NOW() - INTERVAL '1 day'
+                    AND signal_direction IS NOT NULL
+                GROUP BY signal_direction
+            """
+
+            with self.conn.cursor() as cur2:
+                cur2.execute(direction_query)
+                direction_stats = cur2.fetchall()
 
             if direction_stats:
                 logger.info("\n" + "=" * 70)
@@ -526,6 +529,8 @@ class CombinationsWinRateAnalyzer:
 
         except Exception as e:
             logger.error(f"❌ Ошибка при выводе статистики: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
     def run(self):
         """Основной процесс анализа"""
