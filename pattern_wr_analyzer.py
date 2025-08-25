@@ -174,7 +174,7 @@ class PatternWinRateAnalyzer:
             sp.score_impact,
             sp.details,
             sp.trigger_values,
-            tp.symbol as pair_symbol
+            tp.pair_symbol as pair_symbol
         FROM fas.signal_patterns sp
         JOIN public.trading_pairs tp ON sp.trading_pair_id = tp.id
         WHERE sp.timestamp <= NOW() - INTERVAL '48 hours'
