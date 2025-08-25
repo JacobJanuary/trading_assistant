@@ -616,9 +616,8 @@ class PatternWinRateAnalyzer:
 def main():
     """Точка входа"""
     try:
-        # Установите recreate_table=True для пересоздания таблицы при первом запуске
-        # После первого запуска можно установить False
-        analyzer = PatternWinRateAnalyzer(DB_CONFIG, recreate_table=True)
+        # recreate_table=False - НЕ удалять существующую таблицу!
+        analyzer = PatternWinRateAnalyzer(DB_CONFIG, recreate_table=False)
         analyzer.run()
     except KeyboardInterrupt:
         logger.info("\n⛔ Прерывание пользователем")
