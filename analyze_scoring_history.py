@@ -130,12 +130,12 @@ class ScoringAnalyzer:
 
     def determine_signal_type(self, signal: Dict) -> Tuple[str, str]:
         """Определение типа сигнала на основе indicator_score"""
-        indicator_score = float(signal.get('indicator_score', 0))
+        pattern_score = float(signal.get('pattern_score', 0))
 
-        if indicator_score >= 0:
-            return 'BUY', f"Indicator Score: {indicator_score:.1f}"
+        if pattern_score >= 0:
+            return 'BUY', f"Indicator Score: {pattern_score:.1f}"
         else:
-            return 'SELL', f"Indicator Score: {indicator_score:.1f}"
+            return 'SELL', f"Indicator Score: {pattern_score:.1f}"
 
     def get_entry_price(self, trading_pair_id: int, signal_time: datetime,
                         signal_type: str) -> Optional[Dict]:
