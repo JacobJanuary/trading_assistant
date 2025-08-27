@@ -38,7 +38,7 @@ DB_CONFIG = {
 
 # Параметры анализа
 ANALYSIS_PARAMS = {
-    'tp_percent': 4.0,
+    'tp_percent': 3.0,
     'sl_percent': 3.0,
     'position_size': 100.0,
     'leverage': 5,
