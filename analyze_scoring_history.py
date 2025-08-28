@@ -92,7 +92,7 @@ class ImprovedScoringAnalyzer:
                 'port': int(os.getenv('DB_PORT', 5432)),
                 'dbname': os.getenv('DB_NAME', 'fox_crypto'),
                 'user': os.getenv('DB_USER', 'elcrypto'),
-                'password': os.getenv('LohNeMamont@!21', '')
+                'password': os.getenv('DB_PASSWORD', 'LohNeMamont@!21')
             }
 
         with open(config_file, 'r') as f:
