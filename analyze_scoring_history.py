@@ -92,7 +92,7 @@ class ImprovedScoringAnalyzer:
                 'port': int(os.getenv('DB_PORT', 5432)),
                 'dbname': os.getenv('DB_NAME', 'fox_crypto'),
                 'user': os.getenv('DB_USER', 'elcrypto'),
-                'password': os.getenv('DB_PASSWORD', 'LohNeMamont@!21')
+                'password': os.getenv('DB_PASSWORD', '')
             }
 
         with open(config_file, 'r') as f:
@@ -362,6 +362,43 @@ class ImprovedScoringAnalyzer:
             time_to_min_hours=time_to_min
         )
 
+    def create_no_data_result(self, signal: Dict, direction: str, reason: str) -> Dict:
+        """
+        Создает запись для сигналов без данных, чтобы они не обрабатывались повторно
+        """
+        return {
+            'scoring_history_id': signal['scoring_history_id'],
+            'signal_timestamp': signal['signal_timestamp'],
+            'pair_symbol': signal['pair_symbol'],
+            'trading_pair_id': signal['trading_pair_id'],
+            'market_regime': signal['market_regime'],
+            'total_score': float(signal['total_score']),
+            'indicator_score': float(signal['indicator_score']),
+            'pattern_score': float(signal['pattern_score']),
+            'combination_score': float(signal.get('combination_score', 0)),
+            'signal_type': direction,
+            'entry_price': None,
+            'best_price': None,
+            'worst_price': None,
+            'close_price': None,
+            'is_closed': False,
+            'close_reason': reason,  # 'no_entry_price' или 'insufficient_history'
+            'is_win': None,
+            'close_time': None,
+            'hours_to_close': None,
+            'pnl_percent': 0,
+            'pnl_usd': 0,
+            'max_potential_profit_percent': 0,
+            'max_potential_profit_usd': 0,
+            'max_drawdown_percent': 0,
+            'max_drawdown_usd': 0,
+            'tp_percent': self.config.tp_percent,
+            'sl_percent': self.config.sl_percent,
+            'position_size': self.config.position_size,
+            'leverage': self.config.leverage,
+            'analysis_end_time': signal['signal_timestamp'] + timedelta(hours=48)
+        }
+
     def analyze_signal_both_directions(self, signal: Dict) -> Tuple[Optional[Dict], Optional[Dict]]:
         """
         Анализ сигнала для обоих направлений (LONG и SHORT)
@@ -381,11 +418,14 @@ class ImprovedScoringAnalyzer:
                 'SHORT'
             )
 
-            # Если нет данных о цене входа
+            # Если нет данных о цене входа - создаем записи с пометкой NO_DATA
             if not long_entry_data or not short_entry_data:
                 logger.warning(f"⚠️ Нет цены входа для {signal['pair_symbol']} @ {signal['signal_timestamp']}")
                 self.skipped_count += 1
-                return None, None
+                # ВАЖНО: Возвращаем записи с пометкой no_entry_price, чтобы не зацикливаться
+                long_result = self.create_no_data_result(signal, 'LONG', 'no_entry_price')
+                short_result = self.create_no_data_result(signal, 'SHORT', 'no_entry_price')
+                return long_result, short_result
 
             # Берем время входа (одинаковое для обоих)
             actual_entry_time = long_entry_data['entry_time']
@@ -416,7 +456,10 @@ class ImprovedScoringAnalyzer:
             if not history or len(history) < 10:
                 logger.warning(f"⚠️ Недостаточно истории для {signal['pair_symbol']}")
                 self.skipped_count += 1
-                return None, None
+                # ВАЖНО: Возвращаем записи с пометкой insufficient_history, чтобы не зацикливаться
+                long_result = self.create_no_data_result(signal, 'LONG', 'insufficient_history')
+                short_result = self.create_no_data_result(signal, 'SHORT', 'insufficient_history')
+                return long_result, short_result
 
             # Рассчитываем результаты для обоих направлений
             long_result = self.calculate_trade_result(
@@ -798,6 +841,7 @@ class ImprovedScoringAnalyzer:
                     # Анализируем сигнал для обоих направлений
                     long_result, short_result = self.analyze_signal_both_directions(signal)
 
+                    # Сохраняем результаты даже если это записи NO_DATA
                     if long_result and short_result:
                         results.append(long_result)
                         results.append(short_result)
