@@ -374,363 +374,284 @@ def signal_performance():
                 'stop_loss_percent': 3.00,
                 'take_profit_percent': 4.00,
                 'position_size_usd': 100.00,
-                'leverage': 5
+                'leverage': 5,
+                'use_trailing_stop': False,
+                'trailing_distance_pct': 2.0,
+                'trailing_activation_pct': 1.0
             }
 
         # Получаем параметры из URL для динамического пересчета
         hide_younger = request.args.get('hide_younger', type=int, default=filters['hide_younger_than_hours'])
         hide_older = request.args.get('hide_older', type=int, default=filters['hide_older_than_hours'])
-
-        # НОВЫЕ параметры для пересчета (из URL или из сохраненных)
         display_leverage = request.args.get('leverage', type=int, default=filters['leverage'])
         display_position_size = request.args.get('position_size', type=float,
                                                  default=float(filters['position_size_usd']))
 
-        # ========== СТАТИСТИКА ЭФФЕКТИВНОСТИ С ПОЛНЫМ ПЕРЕСЧЕТОМ ==========
-        # Замените блок efficiency_query в app.py (строки 453-550) на этот исправленный код:
+        # ========== НОВЫЙ ЗАПРОС НАПРЯМУЮ ИЗ FAS.SCORING_HISTORY ==========
+        # Получаем сигналы с фильтрацией по скорингу
+        signals_query = """
+            SELECT 
+                sh.id as signal_id,
+                sh.pair_symbol,
+                sh.trading_pair_id,
+                sh.recommended_action as signal_action,
+                sh.timestamp as signal_timestamp,
+                sh.total_score,
+                sh.indicator_score,
+                sh.pattern_score,
+                sh.combination_score,
+                tp.exchange_id,
+                ex.exchange_name
+            FROM fas.scoring_history sh
+            JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
+            JOIN public.exchanges ex ON ex.id = tp.exchange_id
+            WHERE sh.score_week > 67 
+                AND sh.score_month > 67
+                AND sh.timestamp >= NOW() - INTERVAL '48 hours'
+                AND tp.contract_type_id = 1
+                AND tp.exchange_id IN (1, 2)
+            ORDER BY sh.timestamp DESC
+        """
 
-        # ========== СТАТИСТИКА ЭФФЕКТИВНОСТИ С ПОЛНЫМ ПЕРЕСЧЕТОМ ==========
-        efficiency_query = """
-                    WITH recalculated_pnl AS (
-                        SELECT 
-                            signal_id,
-                            pair_symbol,
-                            signal_action,
-                            entry_price,
-                            closing_price,
-                            last_known_price,
-                            is_closed,
-                            close_reason,
-                            signal_timestamp,
-                            leverage as original_leverage,
-                            max_potential_profit_usd,
-                            realized_pnl_usd,
+        raw_signals = db.execute_query(signals_query, fetch=True)
 
-                            -- Пересчитываем процент изменения цены
-                            CASE 
-                                WHEN signal_action IN ('SELL', 'SHORT') THEN
-                                    CASE 
-                                        WHEN is_closed THEN ((entry_price - closing_price) / entry_price * 100)
-                                        ELSE ((entry_price - last_known_price) / entry_price * 100)
-                                    END
-                                ELSE
-                                    CASE 
-                                        WHEN is_closed THEN ((closing_price - entry_price) / entry_price * 100)
-                                        ELSE ((last_known_price - entry_price) / entry_price * 100)
-                                    END
-                            END as price_change_percent
+        print(f"[SIGNAL_PERFORMANCE] Найдено {len(raw_signals) if raw_signals else 0} сигналов из scoring_history")
 
-                        FROM web.web_signals
-                        WHERE signal_timestamp >= NOW() - (INTERVAL '1 hour' * %s)
-                            AND signal_timestamp <= NOW() - (INTERVAL '1 hour' * %s)
+        # Инициализируем пустые данные
+        signals_data = []
+        processed_signals = []
+        efficiency_metrics = {
+            'total_signals': 0,
+            'open_positions': 0,
+            'closed_tp': 0,
+            'closed_sl': 0,
+            'closed_trailing': 0,
+            'trailing_profitable': 0,
+            'trailing_loss': 0,
+            'trailing_avg_profit': 0,
+            'tp_avg_profit': 0,
+            'trailing_efficiency': 0,
+            'trailing_max_movement': 0,
+            'trailing_captured': 0,
+            'trailing_missed': 0,
+            'trailing_capture_rate': 0,
+            'tp_realized_profit': 0,
+            'sl_realized_loss': 0,
+            'net_realized_pnl': 0,
+            'unrealized_pnl': 0,
+            'total_pnl': 0,
+            'total_max_potential': 0,
+            'tp_max_potential': 0,
+            'missed_profit': 0,
+            'tp_efficiency': 0,
+            'overall_efficiency': 0,
+            'win_rate': 0,
+            'avg_tp_percent': 0,
+            'avg_sl_percent': 0
+        }
+
+        if raw_signals:
+            # Обрабатываем каждый сигнал
+            print("[SIGNAL_PERFORMANCE] Начинаем обработку сигналов...")
+
+            # Получаем текущие цены для расчета unrealized P&L
+            prices_query = """
+                SELECT DISTINCT ON (tp.pair_symbol)
+                    tp.pair_symbol,
+                    md.mark_price
+                FROM public.trading_pairs tp
+                JOIN public.market_data md ON md.trading_pair_id = tp.id
+                WHERE tp.contract_type_id = 1
+                    AND tp.exchange_id IN (1, 2)
+                    AND md.capture_time >= NOW() - INTERVAL '5 minutes'
+                ORDER BY tp.pair_symbol, md.capture_time DESC
+            """
+            price_data = db.execute_query(prices_query, fetch=True)
+            current_prices = {p['pair_symbol']: float(p['mark_price']) for p in price_data} if price_data else {}
+
+            # Обрабатываем сигналы
+            from database import process_signal_complete, make_aware
+            import uuid
+
+            # Генерируем ID сессии для batch обработки
+            session_id = f"signal_perf_{current_user.id}_{uuid.uuid4().hex[:8]}"
+
+            # Очищаем старые данные web_signals для корректной работы
+            db.execute_query("TRUNCATE TABLE web.web_signals")
+
+            processed_count = 0
+            error_count = 0
+
+            for signal in raw_signals:
+                try:
+                    # Подготавливаем данные сигнала
+                    signal_data = {
+                        'signal_id': signal['signal_id'],
+                        'pair_symbol': signal['pair_symbol'],
+                        'trading_pair_id': signal['trading_pair_id'],
+                        'signal_action': signal['signal_action'],
+                        'signal_timestamp': make_aware(signal['signal_timestamp']),
+                        'exchange_name': signal.get('exchange_name', 'Unknown')
+                    }
+
+                    # Обрабатываем сигнал с учетом настроек пользователя
+                    result = process_signal_complete(
+                        db,
+                        signal_data,
+                        tp_percent=float(filters['take_profit_percent']),
+                        sl_percent=float(filters['stop_loss_percent']),
+                        position_size=display_position_size,
+                        leverage=display_leverage,
+                        use_trailing_stop=filters.get('use_trailing_stop', False),
+                        trailing_distance_pct=float(filters.get('trailing_distance_pct', 2.0)),
+                        trailing_activation_pct=float(filters.get('trailing_activation_pct', 1.0))
                     )
+
+                    if result['success']:
+                        processed_count += 1
+
+                        # Добавляем обработанный сигнал в список
+                        processed_signal = {
+                            'signal_id': signal['signal_id'],
+                            'pair_symbol': signal['pair_symbol'],
+                            'signal_action': signal['signal_action'],
+                            'signal_timestamp': signal['signal_timestamp'],
+                            'exchange_name': signal.get('exchange_name'),
+                            'total_score': float(signal.get('total_score', 0)),
+                            'indicator_score': float(signal.get('indicator_score', 0)),
+                            'pattern_score': float(signal.get('pattern_score', 0)),
+                            'combination_score': float(signal.get('combination_score', 0)),
+                            'is_closed': result.get('is_closed', False),
+                            'close_reason': result.get('close_reason'),
+                            'realized_pnl': result.get('realized_pnl', 0),
+                            'max_profit': result.get('max_profit', 0)
+                        }
+                        processed_signals.append(processed_signal)
+                    else:
+                        error_count += 1
+
+                except Exception as e:
+                    print(f"[SIGNAL_PERFORMANCE] Ошибка обработки сигнала {signal['signal_id']}: {e}")
+                    error_count += 1
+                    continue
+
+            print(f"[SIGNAL_PERFORMANCE] Обработано: {processed_count}, Ошибок: {error_count}")
+
+            # Теперь получаем обработанные сигналы из web_signals для отображения
+            # с фильтрацией по возрасту
+            display_signals_query = """
+                SELECT *
+                FROM web.web_signals
+                WHERE signal_timestamp >= NOW() - (INTERVAL '1 hour' * %s)
+                    AND signal_timestamp <= NOW() - (INTERVAL '1 hour' * %s)
+                ORDER BY signal_timestamp DESC
+            """
+
+            display_signals = db.execute_query(display_signals_query, (hide_older, hide_younger), fetch=True)
+
+            # Обрабатываем сигналы для отображения
+            if display_signals:
+                for signal in display_signals:
+                    entry_price = float(signal['entry_price'])
+
+                    # Определяем текущую цену
+                    if signal['is_closed']:
+                        current_price = float(signal['closing_price']) if signal['closing_price'] else None
+                    else:
+                        current_price = current_prices.get(signal['pair_symbol'],
+                                                           float(signal['last_known_price'] or 0))
+
+                    # Рассчитываем процент изменения
+                    if current_price and entry_price:
+                        if signal['signal_action'] in ['SELL', 'SHORT']:
+                            price_change_percent = ((entry_price - current_price) / entry_price) * 100
+                        else:
+                            price_change_percent = ((current_price - entry_price) / entry_price) * 100
+                    else:
+                        price_change_percent = 0
+
+                    # Пересчитываем P&L с новыми параметрами
+                    display_pnl = display_position_size * (price_change_percent / 100) * display_leverage
+
+                    # Максимальный профит
+                    max_profit = float(signal['max_potential_profit_usd'] or 0)
+
+                    # Возраст сигнала
+                    from datetime import datetime, timezone
+                    age_hours = (datetime.now(timezone.utc) - signal['signal_timestamp']).total_seconds() / 3600
+
+                    signal_data = {
+                        'signal_id': signal['signal_id'],
+                        'pair_symbol': signal['pair_symbol'],
+                        'signal_action': signal['signal_action'],
+                        'signal_timestamp': signal['signal_timestamp'],
+                        'age_hours': round(age_hours, 1),
+                        'entry_price': entry_price,
+                        'current_price': current_price,
+                        'is_closed': signal['is_closed'],
+                        'close_reason': signal['close_reason'],
+                        'pnl_usd': display_pnl,
+                        'pnl_percent': price_change_percent,
+                        'max_potential_profit_usd': max_profit
+                    }
+
+                    signals_data.append(signal_data)
+
+            # Рассчитываем статистику эффективности
+            efficiency_query = """
+                WITH signal_stats AS (
                     SELECT 
                         COUNT(*) as total_signals,
                         COUNT(CASE WHEN is_closed = FALSE THEN 1 END) as open_positions,
-
-                        -- ИСПРАВЛЕНО: правильный подсчет TP (включая прибыльные trailing_stop)
-                        COUNT(CASE 
-                            WHEN close_reason = 'take_profit' THEN 1
-                            WHEN close_reason = 'trailing_stop' AND price_change_percent > 0 THEN 1
-                        END) as closed_tp,
-
-                        -- ИСПРАВЛЕНО: правильный подсчет SL (включая убыточные trailing_stop)
-                        COUNT(CASE 
-                            WHEN close_reason = 'stop_loss' THEN 1
-                            WHEN close_reason = 'trailing_stop' AND price_change_percent <= 0 THEN 1
-                        END) as closed_sl,
-
-                        -- ДОБАВЛЕНО: Отдельный подсчет trailing stops
+                        COUNT(CASE WHEN close_reason = 'take_profit' THEN 1 END) as closed_tp,
+                        COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as closed_sl,
                         COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as closed_trailing,
-
-                        -- ДОБАВЛЕНО: Детализация trailing stops
                         COUNT(CASE 
-                            WHEN close_reason = 'trailing_stop' AND price_change_percent > 0 
+                            WHEN close_reason = 'trailing_stop' AND realized_pnl_usd > 0 
                             THEN 1 
                         END) as trailing_profitable,
-
                         COUNT(CASE 
-                            WHEN close_reason = 'trailing_stop' AND price_change_percent <= 0 
+                            WHEN close_reason = 'trailing_stop' AND realized_pnl_usd <= 0 
                             THEN 1 
                         END) as trailing_loss,
+                        COALESCE(SUM(realized_pnl_usd), 0) as total_realized,
+                        COALESCE(SUM(unrealized_pnl_usd), 0) as total_unrealized,
+                        COALESCE(SUM(max_potential_profit_usd), 0) as total_max_potential
+                    FROM web.web_signals
+                    WHERE signal_timestamp >= NOW() - (INTERVAL '1 hour' * %s)
+                        AND signal_timestamp <= NOW() - (INTERVAL '1 hour' * %s)
+                )
+                SELECT * FROM signal_stats
+            """
 
-                        -- P&L с новыми параметрами
-                        COALESCE(SUM(
-                            CASE 
-                                WHEN close_reason = 'take_profit' THEN
-                                    %s * (price_change_percent / 100) * %s
-                                WHEN close_reason = 'trailing_stop' AND price_change_percent > 0 THEN
-                                    %s * (price_change_percent / 100) * %s
-                            END
-                        ), 0) as tp_realized_profit,
+            eff_stats = db.execute_query(efficiency_query, (hide_older, hide_younger), fetch=True)
 
-                        COALESCE(SUM(
-                            CASE 
-                                WHEN close_reason = 'stop_loss' THEN
-                                    ABS(%s * (price_change_percent / 100) * %s)
-                                WHEN close_reason = 'trailing_stop' AND price_change_percent <= 0 THEN
-                                    ABS(%s * (price_change_percent / 100) * %s)
-                            END
-                        ), 0) as sl_realized_loss,
+            if eff_stats:
+                stats = eff_stats[0]
+                efficiency_metrics['total_signals'] = stats['total_signals']
+                efficiency_metrics['open_positions'] = stats['open_positions']
+                efficiency_metrics['closed_tp'] = stats['closed_tp']
+                efficiency_metrics['closed_sl'] = stats['closed_sl']
+                efficiency_metrics['closed_trailing'] = stats['closed_trailing'] or 0
+                efficiency_metrics['trailing_profitable'] = stats['trailing_profitable'] or 0
+                efficiency_metrics['trailing_loss'] = stats['trailing_loss'] or 0
+                efficiency_metrics['net_realized_pnl'] = float(stats['total_realized'] or 0)
+                efficiency_metrics['unrealized_pnl'] = float(stats['total_unrealized'] or 0)
+                efficiency_metrics['total_pnl'] = efficiency_metrics['net_realized_pnl'] + efficiency_metrics[
+                    'unrealized_pnl']
+                efficiency_metrics['total_max_potential'] = float(stats['total_max_potential'] or 0)
 
-                        COALESCE(SUM(
-                            CASE WHEN is_closed = FALSE THEN
-                                %s * (price_change_percent / 100) * %s
-                            END
-                        ), 0) as unrealized_pnl,
+                # Win rate
+                total_closed = efficiency_metrics['closed_tp'] + efficiency_metrics['closed_sl'] + efficiency_metrics[
+                    'closed_trailing']
+                if total_closed > 0:
+                    wins = efficiency_metrics['closed_tp'] + efficiency_metrics['trailing_profitable']
+                    efficiency_metrics['win_rate'] = (wins / total_closed) * 100
 
-                        -- Максимальный профит тоже пересчитываем
-                        COALESCE(SUM(
-                            (max_potential_profit_usd / original_leverage) * %s
-                        ), 0) as total_max_potential,
-
-                        COALESCE(SUM(
-                            CASE 
-                                WHEN close_reason = 'take_profit' 
-                                  OR (close_reason = 'trailing_stop' AND price_change_percent > 0) THEN
-                                    (max_potential_profit_usd / original_leverage) * %s
-                            END
-                        ), 0) as tp_max_potential,
-
-                        -- ДОБАВЛЕНО: Средние значения для trailing и fixed TP
-                        COALESCE(AVG(CASE 
-                            WHEN close_reason = 'trailing_stop' AND price_change_percent > 0
-                            THEN %s * (price_change_percent / 100) * %s
-                        END), 0) as trailing_avg_profit,
-
-                        COALESCE(AVG(CASE 
-                            WHEN close_reason = 'take_profit'
-                            THEN %s * (price_change_percent / 100) * %s
-                        END), 0) as tp_avg_profit,
-
-                        -- ДОБАВЛЕНО: Эффективность trailing stop
-                        CASE 
-                            WHEN COALESCE(SUM(CASE 
-                                WHEN close_reason = 'trailing_stop' 
-                                THEN (max_potential_profit_usd / original_leverage) * %s 
-                            END), 0) > 0 
-                            THEN (
-                                COALESCE(SUM(CASE 
-                                    WHEN close_reason = 'trailing_stop' 
-                                    THEN %s * (price_change_percent / 100) * %s
-                                END), 0) / 
-                                NULLIF(SUM(CASE 
-                                    WHEN close_reason = 'trailing_stop' 
-                                    THEN (max_potential_profit_usd / original_leverage) * %s 
-                                END), 0) * 100
-                            )
-                            ELSE 0
-                        END as trailing_efficiency,
-
-                        -- ДОБАВЛЕНО: Захват движения для trailing
-                        COALESCE(SUM(CASE 
-                            WHEN close_reason = 'trailing_stop' 
-                            THEN (max_potential_profit_usd / original_leverage) * %s
-                        END), 0) as trailing_max_movement,
-
-                        COALESCE(SUM(CASE 
-                            WHEN close_reason = 'trailing_stop' 
-                            THEN %s * (price_change_percent / 100) * %s
-                        END), 0) as trailing_captured,
-
-                        -- Средние проценты
-                        AVG(CASE 
-                            WHEN close_reason = 'take_profit' 
-                              OR (close_reason = 'trailing_stop' AND price_change_percent > 0) 
-                            THEN price_change_percent 
-                        END) as avg_tp_percent,
-
-                        AVG(CASE 
-                            WHEN close_reason = 'stop_loss' 
-                              OR (close_reason = 'trailing_stop' AND price_change_percent <= 0)
-                            THEN price_change_percent 
-                        END) as avg_sl_percent
-
-                    FROM recalculated_pnl
-                """
-
-        # Выполняем запрос с расширенным набором параметров
-        efficiency_stats = db.execute_query(
-            efficiency_query,
-            (hide_older, hide_younger,  # 1-2: Временные фильтры
-             display_position_size, display_leverage,  # 3-4: TP profit
-             display_position_size, display_leverage,  # 5-6: Trailing profit (прибыльные)
-             display_position_size, display_leverage,  # 7-8: SL loss
-             display_position_size, display_leverage,  # 9-10: Trailing loss (убыточные)
-             display_position_size, display_leverage,  # 11-12: Unrealized
-             display_leverage,  # 13: Max potential total
-             display_leverage,  # 14: Max potential TP
-             display_position_size, display_leverage,  # 15-16: trailing_avg_profit
-             display_position_size, display_leverage,  # 17-18: tp_avg_profit
-             display_leverage,  # 19: trailing efficiency max potential
-             display_position_size, display_leverage,  # 20-21: trailing efficiency captured
-             display_leverage,  # 22: trailing efficiency denominator
-             display_leverage,  # 23: trailing_max_movement
-             display_position_size, display_leverage),  # 24-25: trailing_captured
-            fetch=True
-        )[0]
-
-        # Обработка результатов и формирование efficiency_metrics
-        tp_realized_profit = float(efficiency_stats['tp_realized_profit'] or 0)
-        sl_realized_loss = float(efficiency_stats['sl_realized_loss'] or 0)
-        unrealized_pnl = float(efficiency_stats['unrealized_pnl'] or 0)
-        total_max_potential = float(efficiency_stats['total_max_potential'] or 0)
-        tp_max_potential = float(efficiency_stats['tp_max_potential'] or 0)
-
-        # ДОБАВЛЕНО: Новые метрики для trailing
-        trailing_max_movement = float(efficiency_stats['trailing_max_movement'] or 0)
-        trailing_captured = float(efficiency_stats['trailing_captured'] or 0)
-        trailing_missed = max(0, trailing_max_movement - abs(trailing_captured)) if trailing_max_movement > 0 else 0
-        trailing_capture_rate = (
-                    abs(trailing_captured) / trailing_max_movement * 100) if trailing_max_movement > 0 else 0
-
-        efficiency_metrics = {
-            'total_signals': efficiency_stats['total_signals'],
-            'open_positions': efficiency_stats['open_positions'],
-            'closed_tp': efficiency_stats['closed_tp'],
-            'closed_sl': efficiency_stats['closed_sl'],
-            'closed_trailing': efficiency_stats['closed_trailing'] or 0,
-
-            # ДОБАВЛЕНО: Все недостающие поля для trailing анализа
-            'trailing_profitable': efficiency_stats['trailing_profitable'] or 0,
-            'trailing_loss': efficiency_stats['trailing_loss'] or 0,
-            'trailing_avg_profit': float(efficiency_stats['trailing_avg_profit'] or 0),
-            'tp_avg_profit': float(efficiency_stats['tp_avg_profit'] or 0),
-            'trailing_efficiency': float(efficiency_stats['trailing_efficiency'] or 0),
-            'trailing_max_movement': trailing_max_movement,
-            'trailing_captured': trailing_captured,
-            'trailing_missed': trailing_missed,
-            'trailing_capture_rate': trailing_capture_rate,
-
-            'tp_realized_profit': tp_realized_profit,
-            'sl_realized_loss': sl_realized_loss,
-            'net_realized_pnl': tp_realized_profit - sl_realized_loss,
-            'unrealized_pnl': unrealized_pnl,
-            'total_pnl': tp_realized_profit - sl_realized_loss + unrealized_pnl,
-
-            'total_max_potential': total_max_potential,
-            'tp_max_potential': tp_max_potential,
-            'missed_profit': max(0, tp_max_potential - tp_realized_profit),
-            'tp_efficiency': (tp_realized_profit / tp_max_potential * 100) if tp_max_potential > 0 else 0,
-            'overall_efficiency': ((
-                                               tp_realized_profit - sl_realized_loss) / total_max_potential * 100) if total_max_potential > 0 else 0,
-
-            'win_rate': 0,
-            'avg_tp_percent': float(efficiency_stats['avg_tp_percent'] or 0),
-            'avg_sl_percent': float(efficiency_stats['avg_sl_percent'] or 0)
-        }
-
-        # Win rate
-        total_closed = efficiency_stats['closed_tp'] + efficiency_stats['closed_sl']
-        if total_closed > 0:
-            efficiency_metrics['win_rate'] = (efficiency_stats['closed_tp'] / total_closed) * 100
-
-        # ========== ПОЛУЧЕНИЕ СИГНАЛОВ С ПЕРЕСЧЕТОМ ==========
-
-        # Получаем текущие цены
-        prices_query = """
-            SELECT DISTINCT ON (tp.pair_symbol)
-                tp.pair_symbol,
-                md.mark_price
-            FROM public.trading_pairs tp
-            JOIN public.market_data md ON md.trading_pair_id = tp.id
-            WHERE tp.contract_type_id = 1
-                AND tp.exchange_id = 1
-                AND md.capture_time >= NOW() - INTERVAL '5 minutes'
-            ORDER BY tp.pair_symbol, md.capture_time DESC
-        """
-        price_data = db.execute_query(prices_query, fetch=True)
-        current_prices = {p['pair_symbol']: float(p['mark_price']) for p in price_data} if price_data else {}
-
-        # Получаем сигналы
-        signals_query = """
-            SELECT *
-            FROM web.web_signals
-            WHERE signal_timestamp >= NOW() - (INTERVAL '1 hour' * %s)
-                AND signal_timestamp <= NOW() - (INTERVAL '1 hour' * %s)
-            ORDER BY signal_timestamp DESC
-        """
-
-        signals = db.execute_query(signals_query, (hide_older, hide_younger), fetch=True)
-
-        # Обрабатываем сигналы с ПОЛНЫМ ПЕРЕСЧЕТОМ
-        signals_data = []
-        stats = {
-            'total': 0,
-            'open': 0,
-            'closed_tp': 0,
-            'closed_sl': 0,
-            'total_pnl': 0,
-            'win_rate': 0
-        }
-
-        if signals:
-            for signal in signals:
-                entry_price = float(signal['entry_price'])
-                original_leverage = signal['leverage']  # Оригинальный leverage из БД
-
-                # Определяем текущую цену
-                if signal['is_closed']:
-                    current_price = float(signal['closing_price']) if signal['closing_price'] else None
-                else:
-                    current_price = current_prices.get(signal['pair_symbol'], float(signal['last_known_price'] or 0))
-
-                # Рассчитываем процент изменения
-                if current_price and entry_price:
-                    if signal['signal_action'] in ['SELL', 'SHORT']:
-                        price_change_percent = ((entry_price - current_price) / entry_price) * 100
-                    else:
-                        price_change_percent = ((current_price - entry_price) / entry_price) * 100
-                else:
-                    price_change_percent = 0
-
-                # ПОЛНЫЙ ПЕРЕСЧЕТ P&L с новыми параметрами
-                display_pnl = display_position_size * (price_change_percent / 100) * display_leverage
-
-                # Максимальный профит - пересчитываем с новым leverage
-                if signal['max_potential_profit_usd']:
-                    # Убираем оригинальный leverage, применяем новый
-                    max_profit_base = float(signal['max_potential_profit_usd']) / original_leverage
-                    max_profit = max_profit_base * display_leverage
-                else:
-                    max_profit = 0
-
-                # Возраст сигнала
-                age_hours = (datetime.now(timezone.utc) - signal['signal_timestamp']).total_seconds() / 3600
-
-                signal_data = {
-                    'signal_id': signal['signal_id'],
-                    'pair_symbol': signal['pair_symbol'],
-                    'signal_action': signal['signal_action'],
-                    'signal_timestamp': signal['signal_timestamp'],
-                    'age_hours': round(age_hours, 1),
-                    'entry_price': entry_price,
-                    'current_price': current_price,
-                    'is_closed': signal['is_closed'],
-                    'close_reason': signal['close_reason'],
-                    'pnl_usd': display_pnl,
-                    'pnl_percent': price_change_percent,
-                    'max_potential_profit_usd': max_profit
-                }
-
-                signals_data.append(signal_data)
-
-                # Обновляем статистику
-                stats['total'] += 1
-                stats['total_pnl'] += display_pnl
-
-                if signal['is_closed']:
-                    if signal['close_reason'] == 'take_profit':
-                        stats['closed_tp'] += 1
-                    elif signal['close_reason'] == 'stop_loss':
-                        stats['closed_sl'] += 1
-                else:
-                    stats['open'] += 1
-
-        # Win rate
-        total_closed = stats['closed_tp'] + stats['closed_sl']
-        if total_closed > 0:
-            stats['win_rate'] = (stats['closed_tp'] / total_closed) * 100
+                # TP efficiency
+                if efficiency_metrics['total_max_potential'] > 0:
+                    efficiency_metrics['tp_efficiency'] = (efficiency_metrics['net_realized_pnl'] /
+                                                           efficiency_metrics['total_max_potential']) * 100
 
         # Общая статистика без фильтров
         total_stats_query = """
@@ -738,10 +659,21 @@ def signal_performance():
                 COUNT(*) as total_all,
                 COUNT(CASE WHEN is_closed = FALSE THEN 1 END) as open_all,
                 COUNT(CASE WHEN close_reason = 'take_profit' THEN 1 END) as tp_all,
-                COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_all
+                COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_all,
+                COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as trailing_all
             FROM web.web_signals
         """
         total_stats = db.execute_query(total_stats_query, fetch=True)[0]
+
+        # Простая статистика для отображения
+        stats = {
+            'total': len(signals_data),
+            'open': efficiency_metrics['open_positions'],
+            'closed_tp': efficiency_metrics['closed_tp'],
+            'closed_sl': efficiency_metrics['closed_sl'],
+            'total_pnl': efficiency_metrics['total_pnl'],
+            'win_rate': efficiency_metrics['win_rate']
+        }
 
         return render_template(
             'signal_performance.html',
@@ -757,7 +689,10 @@ def signal_performance():
                 'position_size_usd': display_position_size,
                 'leverage': display_leverage,
                 'saved_leverage': filters['leverage'],
-                'saved_position_size': float(filters['position_size_usd'])
+                'saved_position_size': float(filters['position_size_usd']),
+                'use_trailing_stop': filters.get('use_trailing_stop', False),
+                'trailing_distance_pct': float(filters.get('trailing_distance_pct', 2.0)),
+                'trailing_activation_pct': float(filters.get('trailing_activation_pct', 1.0))
             },
             last_update=datetime.now()
         )

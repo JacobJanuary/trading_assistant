@@ -523,6 +523,9 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
         signal_timestamp = signal['signal_timestamp']
         exchange_name = signal.get('exchange_name', 'Unknown')
 
+        # Инициализируем last_price значением по умолчанию
+        last_price = None
+
         # Получаем цену входа
         entry_price_query = """
             SELECT open_price
@@ -565,6 +568,9 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
 
         entry_price = float(price_result[0]['open_price'])
 
+        # Устанавливаем last_price = entry_price по умолчанию
+        last_price = entry_price
+
         # Получаем историю
         history_query = """
             SELECT timestamp, open_price, high_price, low_price, close_price
@@ -598,13 +604,18 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
             ))
             return {'success': True, 'is_closed': False, 'close_reason': None, 'max_profit': 0}
 
+        # Обновляем last_price из истории если есть данные
+        if history:
+            last_price = float(history[-1]['close_price'])
+
         # ВЫБОР ЛОГИКИ: Trailing Stop или Fixed TP/SL
         if use_trailing_stop:
             # Используем новую функцию trailing stop
             result = calculate_trailing_stop_exit(
                 entry_price, history, signal_action,
                 trailing_distance_pct, trailing_activation_pct,
-                sl_percent, position_size, leverage
+                sl_percent, position_size, leverage,
+                signal_timestamp  # Передаем timestamp для корректного расчета таймаута
             )
 
             is_closed = result['is_closed']
@@ -613,10 +624,10 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
             close_reason = result['close_reason']
             realized_pnl = result['pnl_usd'] if is_closed else 0
             max_profit = result['max_profit_usd']
+            trailing_activated = result.get('trailing_activated', False)
 
             # Для открытых позиций
             if not is_closed:
-                last_price = float(history[-1]['close_price'])
                 if signal_action in ['SELL', 'SHORT']:
                     unrealized_percent = ((entry_price - last_price) / entry_price) * 100
                 else:
@@ -635,6 +646,7 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
             close_reason = None
             realized_pnl = 0
             best_price_ever = entry_price
+            trailing_activated = False
 
             # Рассчитываем уровни TP и SL
             if signal_action in ['SELL', 'SHORT']:
@@ -694,9 +706,6 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
                             close_price = sl_price
                             close_time = current_time
 
-            # Последняя известная цена
-            last_price = float(history[-1]['close_price'])
-
             # Если не закрылась, проверяем таймаут (48 часов)
             if not is_closed:
                 hours_passed = (history[-1]['timestamp'] - signal_timestamp).total_seconds() / 3600
@@ -744,7 +753,8 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
         """
 
         # Определяем был ли активирован trailing (только для trailing stop режима)
-        trailing_activated = result.get('trailing_activated', False) if use_trailing_stop else False
+        if not use_trailing_stop:
+            trailing_activated = False
 
         db.execute_query(insert_query, (
             signal_id, pair_symbol, signal_action, signal_timestamp,
