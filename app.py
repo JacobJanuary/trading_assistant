@@ -476,14 +476,25 @@ def signal_performance():
             # Генерируем ID сессии для batch обработки
             session_id = f"signal_perf_{current_user.id}_{uuid.uuid4().hex[:8]}"
 
-            # Очищаем старые данные web_signals для корректной работы
-            db.execute_query("TRUNCATE TABLE web.web_signals")
+            # ВАЖНО: Очищаем старые данные web_signals перед новой загрузкой
+            # Используем DELETE вместо TRUNCATE для лучшей совместимости
+            db.execute_query("DELETE FROM web.web_signals")
+            print("[SIGNAL_PERFORMANCE] Таблица web_signals очищена")
 
             processed_count = 0
             error_count = 0
+            skip_count = 0
 
             for signal in raw_signals:
                 try:
+                    # Проверяем, не обработан ли уже этот сигнал
+                    check_query = "SELECT 1 FROM web.web_signals WHERE signal_id = %s"
+                    existing = db.execute_query(check_query, (signal['signal_id'],), fetch=True)
+
+                    if existing:
+                        skip_count += 1
+                        continue
+
                     # Подготавливаем данные сигнала
                     signal_data = {
                         'signal_id': signal['signal_id'],
@@ -535,7 +546,7 @@ def signal_performance():
                     error_count += 1
                     continue
 
-            print(f"[SIGNAL_PERFORMANCE] Обработано: {processed_count}, Ошибок: {error_count}")
+            print(f"[SIGNAL_PERFORMANCE] Обработано: {processed_count}, Пропущено: {skip_count}, Ошибок: {error_count}")
 
             # Теперь получаем обработанные сигналы из web_signals для отображения
             # с фильтрацией по возрасту

@@ -585,7 +585,7 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
         history = db.execute_query(history_query, (trading_pair_id, signal_timestamp), fetch=True)
 
         if not history:
-            # Сохраняем с начальными данными
+            # Сохраняем с начальными данными (с обработкой дубликатов)
             insert_query = """
                 INSERT INTO web.web_signals (
                     signal_id, pair_symbol, signal_action, signal_timestamp,
@@ -595,6 +595,8 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, %s
                 )
+                ON CONFLICT (signal_id) DO UPDATE SET
+                    last_updated_at = NOW()
             """
             db.execute_query(insert_query, (
                 signal_id, pair_symbol, signal_action, signal_timestamp,
@@ -737,7 +739,7 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
             print(f"[PROCESS] {pair_symbol} ({exchange_name}): {close_reason} at {close_price:.8f} "
                   f"(profit: ${realized_pnl:.2f}), but max was ${max_profit:.2f}")
 
-        # Сохраняем в БД
+        # Сохраняем в БД с обработкой дубликатов
         insert_query = """
             INSERT INTO web.web_signals (
                 signal_id, pair_symbol, signal_action, signal_timestamp,
@@ -750,6 +752,25 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
+            ON CONFLICT (signal_id) DO UPDATE SET
+                pair_symbol = EXCLUDED.pair_symbol,
+                signal_action = EXCLUDED.signal_action,
+                entry_price = EXCLUDED.entry_price,
+                position_size_usd = EXCLUDED.position_size_usd,
+                leverage = EXCLUDED.leverage,
+                trailing_stop_percent = EXCLUDED.trailing_stop_percent,
+                take_profit_percent = EXCLUDED.take_profit_percent,
+                is_closed = EXCLUDED.is_closed,
+                closing_price = EXCLUDED.closing_price,
+                closed_at = EXCLUDED.closed_at,
+                close_reason = EXCLUDED.close_reason,
+                realized_pnl_usd = EXCLUDED.realized_pnl_usd,
+                unrealized_pnl_usd = EXCLUDED.unrealized_pnl_usd,
+                max_potential_profit_usd = EXCLUDED.max_potential_profit_usd,
+                last_known_price = EXCLUDED.last_known_price,
+                use_trailing_stop = EXCLUDED.use_trailing_stop,
+                trailing_activated = EXCLUDED.trailing_activated,
+                last_updated_at = NOW()
         """
 
         # Определяем был ли активирован trailing (только для trailing stop режима)
