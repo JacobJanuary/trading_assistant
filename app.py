@@ -1310,6 +1310,7 @@ def api_efficiency_analyze_30days_progress():
     score_month_min_param = int(request.args.get('score_month_min', 60))
     score_month_max_param = int(request.args.get('score_month_max', 80))
     step_param = int(request.args.get('step', 10))
+    force_recalc = request.args.get('force_recalc', 'false').lower() == 'true'
     
     # Сохраняем user_id до создания генератора
     user_id = current_user.id
@@ -1319,6 +1320,13 @@ def api_efficiency_analyze_30days_progress():
             # Очищаем предыдущие результаты анализа эффективности для этого пользователя
             if user_id in analysis_results_cache['efficiency']:
                 del analysis_results_cache['efficiency'][user_id]
+            
+            # Очищаем кэш в БД для этого пользователя, чтобы пересчитать с правильными значениями
+            clear_cache_query = """
+                DELETE FROM web.efficiency_cache 
+                WHERE user_id = %s
+            """
+            db.execute_query(clear_cache_query, (user_id,))
             
             # Отправляем немедленный heartbeat для проверки соединения
             yield f": heartbeat\n\n"
@@ -1415,13 +1423,17 @@ def api_efficiency_analyze_30days_progress():
                         
                         # Проверяем кэш для этой комбинации и дня
                         cache_key = f"{date_str}_{score_week_min}_{score_month_min}_{use_trailing_stop}"
-                        cache_query = """
-                            SELECT signal_count, tp_count, sl_count, timeout_count, daily_pnl
-                            FROM web.efficiency_cache
-                            WHERE cache_key = %s AND user_id = %s
-                                AND created_at > NOW() - INTERVAL '1 hour'
-                        """
-                        cached_result = db.execute_query(cache_query, (cache_key, user_id), fetch=True)
+                        cached_result = None
+                        
+                        # Используем кэш только если не требуется принудительный пересчет
+                        if not force_recalc:
+                            cache_query = """
+                                SELECT signal_count, tp_count, sl_count, timeout_count, daily_pnl
+                                FROM web.efficiency_cache
+                                WHERE cache_key = %s AND user_id = %s
+                                    AND created_at > NOW() - INTERVAL '1 hour'
+                            """
+                            cached_result = db.execute_query(cache_query, (cache_key, user_id), fetch=True)
                         
                         if cached_result:
                             # Используем кэшированные данные
@@ -2496,7 +2508,7 @@ def clear_cached_analysis_results(analysis_type):
                 'message': 'Неверный тип анализа'
             }), 400
         
-        # Очищаем результаты
+        # Очищаем результаты в памяти
         if analysis_type == 'all':
             for cache_type in ['efficiency', 'tp_sl', 'trailing']:
                 if user_id in analysis_results_cache[cache_type]:
@@ -2505,9 +2517,16 @@ def clear_cached_analysis_results(analysis_type):
             if user_id in analysis_results_cache[analysis_type]:
                 del analysis_results_cache[analysis_type][user_id]
         
+        # Очищаем кэш в БД
+        clear_db_cache_query = """
+            DELETE FROM web.efficiency_cache 
+            WHERE user_id = %s
+        """
+        db.execute_query(clear_db_cache_query, (user_id,))
+        
         return jsonify({
             'status': 'success',
-            'message': 'Результаты успешно очищены'
+            'message': 'Результаты и кэш успешно очищены'
         })
         
     except Exception as e:
