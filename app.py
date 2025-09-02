@@ -1267,6 +1267,159 @@ def efficiency_analysis():
                           is_admin=current_user.is_admin)
 
 
+@app.route('/api/efficiency/analyze_30days_progress')
+@login_required
+def api_efficiency_analyze_30days_progress():
+    """SSE endpoint для отправки прогресса анализа эффективности в реальном времени"""
+    from flask import Response
+    from database import get_scoring_signals, process_scoring_signals_batch
+    from datetime import datetime, timedelta
+    import uuid
+    import json
+    import time
+    
+    def generate():
+        try:
+            # Получаем настройки пользователя
+            settings_query = """
+                SELECT use_trailing_stop, trailing_distance_pct, trailing_activation_pct,
+                       take_profit_percent, stop_loss_percent, position_size_usd, leverage
+                FROM web.user_signal_filters
+                WHERE user_id = %s
+            """
+            user_settings = db.execute_query(settings_query, (current_user.id,), fetch=True)
+            
+            if not user_settings:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Настройки пользователя не найдены'})}\n\n"
+                return
+            
+            settings = user_settings[0]
+            use_trailing_stop = settings.get('use_trailing_stop', False)
+            trailing_distance_pct = float(settings.get('trailing_distance_pct', 2.0))
+            trailing_activation_pct = float(settings.get('trailing_activation_pct', 1.0))
+            tp_percent = float(settings.get('take_profit_percent', 4.0))
+            sl_percent = float(settings.get('stop_loss_percent', 3.0))
+            position_size = float(settings.get('position_size_usd', 100.0))
+            leverage = int(settings.get('leverage', 5))
+            
+            # Определяем период анализа
+            end_date = datetime.now().date()
+            start_date = end_date - timedelta(days=29)
+            
+            results = []
+            total_combinations = 16  # 4 score_week * 4 score_month
+            current_combination = 0
+            
+            # Отправляем начальное сообщение
+            yield f"data: {json.dumps({'type': 'start', 'message': 'Инициализация анализа за 30 дней...', 'total_combinations': total_combinations})}\n\n"
+            
+            # Перебираем все комбинации
+            for score_week_min in range(60, 91, 10):
+                for score_month_min in range(60, 91, 10):
+                    current_combination += 1
+                    
+                    combination_result = {
+                        'score_week': score_week_min,
+                        'score_month': score_month_min,
+                        'start_date': start_date.strftime('%Y-%m-%d'),
+                        'end_date': end_date.strftime('%Y-%m-%d'),
+                        'total_pnl': 0.0,
+                        'total_signals': 0,
+                        'total_wins': 0,
+                        'total_losses': 0,
+                        'win_rate': 0.0,
+                        'daily_breakdown': []
+                    }
+                    
+                    # Отправляем информацию о текущей комбинации
+                    progress_percent = int((current_combination - 0.5) / total_combinations * 100)
+                    yield f"data: {json.dumps({'type': 'progress', 'percent': progress_percent, 'message': f'Анализ комбинации {current_combination}/{total_combinations}: Week≥{score_week_min}%, Month≥{score_month_min}%', 'current_combination': current_combination, 'total_combinations': total_combinations})}\n\n"
+                    
+                    # Обрабатываем каждый день
+                    current_date = start_date
+                    days_processed = 0
+                    
+                    while current_date <= end_date:
+                        days_processed += 1
+                        date_str = current_date.strftime('%Y-%m-%d')
+                        
+                        # Обновляем детальный прогресс
+                        detail_progress = progress_percent + int((days_processed / 30) * (100 / total_combinations) * 0.9)
+                        yield f"data: {json.dumps({'type': 'progress_detail', 'percent': detail_progress, 'message': f'Комбинация {current_combination}/{total_combinations}: обработка дня {days_processed}/30', 'date': date_str})}\n\n"
+                        
+                        # Получаем сигналы для текущего дня
+                        raw_signals = get_scoring_signals(db, date_str, score_week_min, score_month_min)
+                        
+                        daily_stats = {
+                            'date': date_str,
+                            'signal_count': 0,
+                            'tp_count': 0,
+                            'sl_count': 0,
+                            'timeout_count': 0,
+                            'daily_pnl': 0.0
+                        }
+                        
+                        if raw_signals:
+                            session_id = f"eff_{current_user.id}_{uuid.uuid4().hex[:8]}"
+                            
+                            result = process_scoring_signals_batch(
+                                db, raw_signals, session_id, current_user.id,
+                                tp_percent=tp_percent,
+                                sl_percent=sl_percent,
+                                position_size=position_size,
+                                leverage=leverage,
+                                use_trailing_stop=use_trailing_stop,
+                                trailing_distance_pct=trailing_distance_pct,
+                                trailing_activation_pct=trailing_activation_pct
+                            )
+                            
+                            stats = result['stats']
+                            daily_stats['signal_count'] = int(stats.get('total', 0))
+                            daily_stats['tp_count'] = int(stats.get('tp_count', 0)) + int(stats.get('trailing_count', 0))
+                            daily_stats['sl_count'] = int(stats.get('sl_count', 0))
+                            daily_stats['timeout_count'] = int(stats.get('timeout_count', 0))
+                            daily_stats['daily_pnl'] = float(stats.get('total_pnl', 0))
+                            
+                            combination_result['total_signals'] += daily_stats['signal_count']
+                            combination_result['total_pnl'] += daily_stats['daily_pnl']
+                            combination_result['total_wins'] += daily_stats['tp_count']
+                            combination_result['total_losses'] += daily_stats['sl_count']
+                            
+                            # Очищаем временные данные
+                            cleanup_query = """
+                                DELETE FROM web.scoring_analysis_temp
+                                WHERE session_id = %s AND user_id = %s
+                            """
+                            db.execute_query(cleanup_query, (session_id, current_user.id))
+                        
+                        combination_result['daily_breakdown'].append(daily_stats)
+                        current_date += timedelta(days=1)
+                    
+                    # Рассчитываем win rate
+                    if combination_result['total_signals'] > 0:
+                        total_closed = combination_result['total_wins'] + combination_result['total_losses']
+                        if total_closed > 0:
+                            combination_result['win_rate'] = (combination_result['total_wins'] / total_closed) * 100
+                        
+                        results.append(combination_result)
+                        
+                        # Отправляем промежуточный результат
+                        yield f"data: {json.dumps({'type': 'intermediate', 'combination': f'Week≥{score_week_min}%, Month≥{score_month_min}%', 'pnl': round(combination_result['total_pnl'], 2), 'signals': combination_result['total_signals'], 'win_rate': round(combination_result['win_rate'], 1)})}\n\n"
+            
+            # Сортируем результаты
+            results.sort(key=lambda x: x['total_pnl'], reverse=True)
+            
+            # Отправляем финальные результаты
+            yield f"data: {json.dumps({'type': 'complete', 'data': results})}\n\n"
+            
+        except Exception as e:
+            logger.error(f"Ошибка в SSE генераторе: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+    return Response(generate(), mimetype='text/event-stream')
+
 @app.route('/api/efficiency/analyze_30days', methods=['POST'])
 @login_required
 def api_efficiency_analyze_30days():

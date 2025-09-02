@@ -283,8 +283,8 @@
         }
     }
 
-    // Запуск анализа
-    async function startAnalysis() {
+    // Запуск анализа с SSE для отслеживания прогресса
+    function startAnalysis() {
         const button = document.getElementById('startBtn');
         button.disabled = true;
         button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Анализ запущен...';
@@ -293,34 +293,81 @@
         document.getElementById('progressContainer').style.display = 'block';
         document.getElementById('resultsContainer').style.display = 'none';
         
-        try {
-            const response = await fetch('/api/efficiency/analyze_30days', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({})
-            });
+        // Сбрасываем прогресс
+        updateProgress(0, 'Инициализация...');
+        
+        // Временные результаты для промежуточного отображения
+        let intermediateResults = [];
+        
+        // Создаем SSE соединение
+        const eventSource = new EventSource('/api/efficiency/analyze_30days_progress');
+        
+        eventSource.onmessage = function(event) {
+            const data = JSON.parse(event.data);
             
-            if (!response.ok) {
-                throw new Error('Ошибка сервера');
+            switch(data.type) {
+                case 'start':
+                    updateProgress(0, data.message);
+                    document.getElementById('progressDetails').textContent = `Всего комбинаций для анализа: ${data.total_combinations}`;
+                    break;
+                    
+                case 'progress':
+                    updateProgress(data.percent, data.message);
+                    document.getElementById('progressDetails').textContent = 
+                        `Обработка комбинации ${data.current_combination} из ${data.total_combinations}`;
+                    break;
+                    
+                case 'progress_detail':
+                    // Детальный прогресс внутри комбинации
+                    updateProgress(data.percent, data.message);
+                    break;
+                    
+                case 'intermediate':
+                    // Промежуточный результат для одной комбинации
+                    intermediateResults.push({
+                        combination: data.combination,
+                        pnl: data.pnl,
+                        signals: data.signals,
+                        win_rate: data.win_rate
+                    });
+                    
+                    // Обновляем детали прогресса с информацией о найденных результатах
+                    document.getElementById('progressDetails').innerHTML = 
+                        `Обработано комбинаций: ${intermediateResults.length}/16<br>` +
+                        `Последняя: ${data.combination} - P&L: $${data.pnl}, Сигналов: ${data.signals}, WR: ${data.win_rate}%`;
+                    break;
+                    
+                case 'complete':
+                    // Анализ завершен
+                    eventSource.close();
+                    analysisResults = data.data;
+                    displayResults(data.data);
+                    showNotification('Анализ успешно завершен', 'success');
+                    
+                    button.disabled = false;
+                    button.innerHTML = '<i class="fas fa-play mr-2"></i>Запустить анализ';
+                    document.getElementById('progressContainer').style.display = 'none';
+                    break;
+                    
+                case 'error':
+                    // Ошибка
+                    eventSource.close();
+                    showNotification('Ошибка: ' + data.message, 'error');
+                    button.disabled = false;
+                    button.innerHTML = '<i class="fas fa-play mr-2"></i>Запустить анализ';
+                    document.getElementById('progressContainer').style.display = 'none';
+                    break;
             }
-            
-            const result = await response.json();
-            
-            if (result.status === 'success') {
-                analysisResults = result.data;
-                displayResults(result.data);
-                showNotification('Анализ успешно завершен', 'success');
-            } else {
-                throw new Error(result.message || 'Ошибка анализа');
-            }
-        } catch (error) {
-            console.error('Ошибка:', error);
-            showNotification('Ошибка при выполнении анализа: ' + error.message, 'error');
-        } finally {
+        };
+        
+        eventSource.onerror = function(error) {
+            console.error('SSE Error:', error);
+            eventSource.close();
+            showNotification('Ошибка соединения с сервером', 'error');
             button.disabled = false;
             button.innerHTML = '<i class="fas fa-play mr-2"></i>Запустить анализ';
             document.getElementById('progressContainer').style.display = 'none';
-        }
+        };
     }
 
     // Обновление прогресса
