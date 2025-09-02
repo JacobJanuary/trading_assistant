@@ -1267,6 +1267,15 @@ def efficiency_analysis():
                           is_admin=current_user.is_admin)
 
 
+@app.route('/tpsl_analysis')
+@login_required  
+def tpsl_analysis():
+    """Страница анализа эффективности TP/SL"""
+    return render_template('tpsl_analysis.html',
+                          username=current_user.username,
+                          is_admin=current_user.is_admin)
+
+
 @app.route('/api/efficiency/analyze_30days_progress')
 @login_required
 def api_efficiency_analyze_30days_progress():
@@ -1506,6 +1515,233 @@ def api_efficiency_analyze_30days_progress():
             'X-Accel-Buffering': 'no'  # Для nginx
         }
     )
+
+
+@app.route('/api/tpsl/analyze_progress')
+@login_required
+def api_tpsl_analyze_progress():
+    """SSE endpoint для анализа эффективности TP/SL"""
+    from flask import Response, request
+    from database import get_scoring_signals, process_scoring_signals_batch
+    from datetime import datetime, timedelta
+    import uuid
+    import json
+    import time
+    
+    # Получаем параметры из запроса
+    score_week = int(request.args.get('score_week', 70))
+    score_month = int(request.args.get('score_month', 70))
+    tp_min = float(request.args.get('tp_min', 2.0))
+    tp_max = float(request.args.get('tp_max', 6.0))
+    sl_min = float(request.args.get('sl_min', 1.0))
+    sl_max = float(request.args.get('sl_max', 4.0))
+    step = float(request.args.get('step', 0.5))
+    
+    # Сохраняем user_id до создания генератора
+    user_id = current_user.id
+    
+    def generate():
+        try:
+            # Отправляем немедленный heartbeat
+            yield f": heartbeat\n\n"
+            yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+            
+            # Переменные для отслеживания
+            last_heartbeat = time.time()
+            last_yield = time.time()
+            
+            # Получаем настройки пользователя (позиция и плечо)
+            settings_query = """
+                SELECT position_size_usd, leverage
+                FROM web.user_signal_filters
+                WHERE user_id = %s
+            """
+            user_settings = db.execute_query(settings_query, (user_id,), fetch=True)
+            
+            if not user_settings:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Настройки пользователя не найдены'})}\n\n"
+                return
+            
+            settings = user_settings[0]
+            position_size = float(settings.get('position_size_usd', 100.0))
+            leverage = int(settings.get('leverage', 5))
+            
+            # Определяем период анализа (исключаем последние 2 дня)
+            end_date = datetime.now().date() - timedelta(days=2)
+            start_date = end_date - timedelta(days=29)
+            
+            # Генерируем комбинации TP/SL
+            tp_values = []
+            sl_values = []
+            current = tp_min
+            while current <= tp_max:
+                tp_values.append(round(current, 1))
+                current += step
+            
+            current = sl_min  
+            while current <= sl_max:
+                sl_values.append(round(current, 1))
+                current += step
+            
+            total_combinations = len(tp_values) * len(sl_values)
+            current_combination = 0
+            
+            # Отправляем начальное сообщение
+            yield f"data: {json.dumps({'type': 'start', 'message': f'Анализ TP/SL для Score Week≥{score_week}%, Score Month≥{score_month}%', 'total_combinations': total_combinations})}\n\n"
+            
+            results = []
+            
+            # Перебираем все комбинации TP/SL
+            for tp_percent in tp_values:
+                for sl_percent in sl_values:
+                    current_combination += 1
+                    
+                    # Отправляем прогресс каждые 5 комбинаций или в конце
+                    if current_combination % 5 == 1 or current_combination == total_combinations:
+                        progress_percent = int((current_combination / total_combinations) * 100)
+                        yield f"data: {json.dumps({'type': 'progress', 'percent': progress_percent, 'message': f'Анализ TP: {tp_percent}%, SL: {sl_percent}%', 'details': f'Комбинация {current_combination} из {total_combinations}'})}\n\n"
+                        last_yield = time.time()
+                    
+                    combination_result = {
+                        'tp': tp_percent,
+                        'sl': sl_percent,
+                        'start_date': start_date.strftime('%Y-%m-%d'),
+                        'end_date': end_date.strftime('%Y-%m-%d'),
+                        'total_pnl': 0.0,
+                        'total_signals': 0,
+                        'total_wins': 0,
+                        'total_losses': 0,
+                        'win_rate': 0.0,
+                        'daily_breakdown': []
+                    }
+                    
+                    # Обрабатываем каждый день
+                    current_date = start_date
+                    while current_date <= end_date:
+                        date_str = current_date.strftime('%Y-%m-%d')
+                        
+                        # Отправляем keepalive если давно не отправляли данные
+                        current_time = time.time()
+                        if current_time - last_yield > 3:
+                            yield f": keepalive\n\n"
+                            last_yield = current_time
+                        
+                        # Проверяем кэш
+                        cache_key = f"tpsl_{date_str}_{score_week}_{score_month}_{tp_percent}_{sl_percent}"
+                        cache_query = """
+                            SELECT signal_count, tp_count, sl_count, timeout_count, daily_pnl
+                            FROM web.efficiency_cache
+                            WHERE cache_key = %s AND user_id = %s
+                                AND created_at > NOW() - INTERVAL '1 hour'
+                        """
+                        cached_result = db.execute_query(cache_query, (cache_key, user_id), fetch=True)
+                        
+                        if cached_result:
+                            daily_stats = {
+                                'date': date_str,
+                                'signal_count': cached_result[0]['signal_count'],
+                                'tp_count': cached_result[0]['tp_count'],
+                                'sl_count': cached_result[0]['sl_count'],
+                                'timeout_count': cached_result[0]['timeout_count'],
+                                'daily_pnl': float(cached_result[0]['daily_pnl'])
+                            }
+                        else:
+                            # Получаем сигналы с фильтрами Score Week и Score Month
+                            raw_signals = get_scoring_signals(db, date_str, score_week, score_month)
+                            
+                            daily_stats = {
+                                'date': date_str,
+                                'signal_count': 0,
+                                'tp_count': 0,
+                                'sl_count': 0,
+                                'timeout_count': 0,
+                                'daily_pnl': 0.0
+                            }
+                            
+                            if raw_signals:
+                                session_id = f"tpsl_{user_id}_{uuid.uuid4().hex[:8]}"
+                                
+                                # Обрабатываем с текущими TP/SL
+                                result = process_scoring_signals_batch(
+                                    db, raw_signals, session_id, user_id,
+                                    tp_percent=tp_percent,
+                                    sl_percent=sl_percent,
+                                    position_size=position_size,
+                                    leverage=leverage,
+                                    use_trailing_stop=False  # Для анализа TP/SL используем Fixed режим
+                                )
+                                
+                                stats = result['stats']
+                                daily_stats['signal_count'] = int(stats.get('total', 0))
+                                daily_stats['tp_count'] = int(stats.get('tp_count', 0))
+                                daily_stats['sl_count'] = int(stats.get('sl_count', 0))
+                                daily_stats['timeout_count'] = int(stats.get('timeout_count', 0))
+                                daily_stats['daily_pnl'] = float(stats.get('total_pnl', 0))
+                                
+                                # Сохраняем в кэш
+                                cache_insert = """
+                                    INSERT INTO web.efficiency_cache 
+                                    (cache_key, user_id, signal_count, tp_count, sl_count, timeout_count, daily_pnl)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                """
+                                try:
+                                    db.execute_query(cache_insert, (
+                                        cache_key, user_id,
+                                        daily_stats['signal_count'],
+                                        daily_stats['tp_count'],
+                                        daily_stats['sl_count'],
+                                        daily_stats['timeout_count'],
+                                        daily_stats['daily_pnl']
+                                    ))
+                                except:
+                                    pass
+                                
+                                # Очищаем временные данные
+                                cleanup_query = """
+                                    DELETE FROM web.scoring_analysis_temp
+                                    WHERE session_id = %s AND user_id = %s
+                                """
+                                db.execute_query(cleanup_query, (session_id, user_id))
+                        
+                        # Обновляем статистику
+                        combination_result['total_signals'] += daily_stats['signal_count']
+                        combination_result['total_pnl'] += daily_stats['daily_pnl']
+                        combination_result['total_wins'] += daily_stats.get('tp_count', 0)
+                        combination_result['total_losses'] += daily_stats.get('sl_count', 0)
+                        combination_result['daily_breakdown'].append(daily_stats)
+                        
+                        current_date += timedelta(days=1)
+                    
+                    # Рассчитываем win rate
+                    if combination_result['total_signals'] > 0:
+                        total_closed = combination_result['total_wins'] + combination_result['total_losses']
+                        if total_closed > 0:
+                            combination_result['win_rate'] = (combination_result['total_wins'] / total_closed) * 100
+                        
+                        results.append(combination_result)
+            
+            # Сортируем по P&L
+            results.sort(key=lambda x: x['total_pnl'], reverse=True)
+            
+            # Отправляем результаты
+            yield f"data: {json.dumps({'type': 'complete', 'data': results})}\n\n"
+            
+        except Exception as e:
+            logger.error(f"Ошибка в SSE генераторе TP/SL: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'
+        }
+    )
+
 
 @app.route('/api/efficiency/analyze_30days', methods=['POST'])
 @login_required
