@@ -298,11 +298,33 @@
         
         // Временные результаты для промежуточного отображения
         let intermediateResults = [];
+        let lastActivity = Date.now();
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 3;
         
-        // Создаем SSE соединение
-        const eventSource = new EventSource('/api/efficiency/analyze_30days_progress');
+        function createEventSource() {
+            // Создаем SSE соединение
+            const eventSource = new EventSource('/api/efficiency/analyze_30days_progress');
+            
+            // Отслеживаем активность
+            const activityTimeout = setInterval(() => {
+                if (Date.now() - lastActivity > 30000) { // 30 секунд без активности
+                    console.log('Timeout detected, attempting to reconnect...');
+                    eventSource.close();
+                    clearInterval(activityTimeout);
+                    
+                    if (reconnectAttempts < maxReconnectAttempts) {
+                        reconnectAttempts++;
+                        setTimeout(() => createEventSource(), 2000);
+                    } else {
+                        showNotification('Превышено время ожидания. Попробуйте еще раз.', 'error');
+                        resetAnalysisButton();
+                    }
+                }
+            }, 5000);
         
         eventSource.onmessage = function(event) {
+            lastActivity = Date.now();
             const data = JSON.parse(event.data);
             
             switch(data.type) {
@@ -339,35 +361,49 @@
                     
                 case 'complete':
                     // Анализ завершен
+                    clearInterval(activityTimeout);
                     eventSource.close();
                     analysisResults = data.data;
                     displayResults(data.data);
                     showNotification('Анализ успешно завершен', 'success');
-                    
-                    button.disabled = false;
-                    button.innerHTML = '<i class="fas fa-play mr-2"></i>Запустить анализ';
-                    document.getElementById('progressContainer').style.display = 'none';
+                    resetAnalysisButton();
                     break;
                     
                 case 'error':
                     // Ошибка
+                    clearInterval(activityTimeout);
                     eventSource.close();
                     showNotification('Ошибка: ' + data.message, 'error');
-                    button.disabled = false;
-                    button.innerHTML = '<i class="fas fa-play mr-2"></i>Запустить анализ';
-                    document.getElementById('progressContainer').style.display = 'none';
+                    resetAnalysisButton();
                     break;
             }
         };
         
         eventSource.onerror = function(error) {
             console.error('SSE Error:', error);
-            eventSource.close();
-            showNotification('Ошибка соединения с сервером', 'error');
+            lastActivity = Date.now(); // Обновляем активность при ошибке
+            
+            // Не закрываем сразу, даем шанс переподключиться
+            if (reconnectAttempts >= maxReconnectAttempts) {
+                clearInterval(activityTimeout);
+                eventSource.close();
+                showNotification('Ошибка соединения с сервером. Попробуйте еще раз.', 'error');
+                resetAnalysisButton();
+            }
+        };
+        
+        return eventSource;
+        }
+        
+        // Функция сброса кнопки
+        function resetAnalysisButton() {
             button.disabled = false;
             button.innerHTML = '<i class="fas fa-play mr-2"></i>Запустить анализ';
             document.getElementById('progressContainer').style.display = 'none';
-        };
+        }
+        
+        // Запускаем первое соединение
+        createEventSource();
     }
 
     // Обновление прогресса

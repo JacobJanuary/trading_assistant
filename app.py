@@ -1283,6 +1283,9 @@ def api_efficiency_analyze_30days_progress():
     
     def generate():
         try:
+            # Переменная для отслеживания времени последнего heartbeat
+            last_heartbeat = time.time()
+            
             # Получаем настройки пользователя
             settings_query = """
                 SELECT use_trailing_stop, trailing_distance_pct, trailing_activation_pct,
@@ -1346,54 +1349,102 @@ def api_efficiency_analyze_30days_progress():
                         days_processed += 1
                         date_str = current_date.strftime('%Y-%m-%d')
                         
-                        # Обновляем детальный прогресс
-                        detail_progress = progress_percent + int((days_processed / 30) * (100 / total_combinations) * 0.9)
-                        yield f"data: {json.dumps({'type': 'progress_detail', 'percent': detail_progress, 'message': f'Комбинация {current_combination}/{total_combinations}: обработка дня {days_processed}/30', 'date': date_str})}\n\n"
+                        # Отправляем heartbeat каждые 5 секунд
+                        current_time = time.time()
+                        if current_time - last_heartbeat > 5:
+                            yield f": heartbeat\n\n"
+                            last_heartbeat = current_time
                         
-                        # Получаем сигналы для текущего дня
-                        raw_signals = get_scoring_signals(db, date_str, score_week_min, score_month_min)
+                        # Обновляем прогресс только каждые 5 дней для уменьшения нагрузки
+                        if days_processed % 5 == 0 or days_processed == 1 or days_processed == 30:
+                            detail_progress = progress_percent + int((days_processed / 30) * (100 / total_combinations) * 0.9)
+                            yield f"data: {json.dumps({'type': 'progress_detail', 'percent': detail_progress, 'message': f'Комбинация {current_combination}/{total_combinations}: обработка дня {days_processed}/30', 'date': date_str})}\n\n"
                         
-                        daily_stats = {
-                            'date': date_str,
-                            'signal_count': 0,
-                            'tp_count': 0,
-                            'sl_count': 0,
-                            'timeout_count': 0,
-                            'daily_pnl': 0.0
-                        }
+                        # Проверяем кэш для этой комбинации и дня
+                        cache_key = f"{date_str}_{score_week_min}_{score_month_min}_{use_trailing_stop}"
+                        cache_query = """
+                            SELECT signal_count, tp_count, sl_count, timeout_count, daily_pnl
+                            FROM web.efficiency_cache
+                            WHERE cache_key = %s AND user_id = %s
+                                AND created_at > NOW() - INTERVAL '1 hour'
+                        """
+                        cached_result = db.execute_query(cache_query, (cache_key, user_id), fetch=True)
                         
-                        if raw_signals:
-                            session_id = f"eff_{user_id}_{uuid.uuid4().hex[:8]}"
+                        if cached_result:
+                            # Используем кэшированные данные
+                            daily_stats = {
+                                'date': date_str,
+                                'signal_count': cached_result[0]['signal_count'],
+                                'tp_count': cached_result[0]['tp_count'],
+                                'sl_count': cached_result[0]['sl_count'],
+                                'timeout_count': cached_result[0]['timeout_count'],
+                                'daily_pnl': float(cached_result[0]['daily_pnl'])
+                            }
+                        else:
+                            # Получаем сигналы для текущего дня
+                            raw_signals = get_scoring_signals(db, date_str, score_week_min, score_month_min)
                             
-                            result = process_scoring_signals_batch(
-                                db, raw_signals, session_id, user_id,
-                                tp_percent=tp_percent,
-                                sl_percent=sl_percent,
-                                position_size=position_size,
-                                leverage=leverage,
-                                use_trailing_stop=use_trailing_stop,
-                                trailing_distance_pct=trailing_distance_pct,
-                                trailing_activation_pct=trailing_activation_pct
-                            )
+                            daily_stats = {
+                                'date': date_str,
+                                'signal_count': 0,
+                                'tp_count': 0,
+                                'sl_count': 0,
+                                'timeout_count': 0,
+                                'daily_pnl': 0.0
+                            }
                             
-                            stats = result['stats']
-                            daily_stats['signal_count'] = int(stats.get('total', 0))
-                            daily_stats['tp_count'] = int(stats.get('tp_count', 0)) + int(stats.get('trailing_count', 0))
-                            daily_stats['sl_count'] = int(stats.get('sl_count', 0))
-                            daily_stats['timeout_count'] = int(stats.get('timeout_count', 0))
-                            daily_stats['daily_pnl'] = float(stats.get('total_pnl', 0))
+                            if raw_signals:
+                                session_id = f"eff_{user_id}_{uuid.uuid4().hex[:8]}"
+                                
+                                result = process_scoring_signals_batch(
+                                    db, raw_signals, session_id, user_id,
+                                    tp_percent=tp_percent,
+                                    sl_percent=sl_percent,
+                                    position_size=position_size,
+                                    leverage=leverage,
+                                    use_trailing_stop=use_trailing_stop,
+                                    trailing_distance_pct=trailing_distance_pct,
+                                    trailing_activation_pct=trailing_activation_pct
+                                )
                             
+                                stats = result['stats']
+                                daily_stats['signal_count'] = int(stats.get('total', 0))
+                                daily_stats['tp_count'] = int(stats.get('tp_count', 0)) + int(stats.get('trailing_count', 0))
+                                daily_stats['sl_count'] = int(stats.get('sl_count', 0))
+                                daily_stats['timeout_count'] = int(stats.get('timeout_count', 0))
+                                daily_stats['daily_pnl'] = float(stats.get('total_pnl', 0))
+                                
+                                # Сохраняем в кэш
+                                cache_insert = """
+                                    INSERT INTO web.efficiency_cache 
+                                    (cache_key, user_id, signal_count, tp_count, sl_count, timeout_count, daily_pnl)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                """
+                                try:
+                                    db.execute_query(cache_insert, (
+                                        cache_key, user_id,
+                                        daily_stats['signal_count'],
+                                        daily_stats['tp_count'],
+                                        daily_stats['sl_count'],
+                                        daily_stats['timeout_count'],
+                                        daily_stats['daily_pnl']
+                                    ))
+                                except:
+                                    pass  # Игнорируем ошибки кэша
+                                
+                                # Очищаем временные данные
+                                cleanup_query = """
+                                    DELETE FROM web.scoring_analysis_temp
+                                    WHERE session_id = %s AND user_id = %s
+                                """
+                                db.execute_query(cleanup_query, (session_id, user_id))
+                        
+                        # Обновляем общую статистику
+                        if daily_stats:
                             combination_result['total_signals'] += daily_stats['signal_count']
                             combination_result['total_pnl'] += daily_stats['daily_pnl']
-                            combination_result['total_wins'] += daily_stats['tp_count']
-                            combination_result['total_losses'] += daily_stats['sl_count']
-                            
-                            # Очищаем временные данные
-                            cleanup_query = """
-                                DELETE FROM web.scoring_analysis_temp
-                                WHERE session_id = %s AND user_id = %s
-                            """
-                            db.execute_query(cleanup_query, (session_id, user_id))
+                            combination_result['total_wins'] += daily_stats.get('tp_count', 0)
+                            combination_result['total_losses'] += daily_stats.get('sl_count', 0)
                         
                         combination_result['daily_breakdown'].append(daily_stats)
                         current_date += timedelta(days=1)
