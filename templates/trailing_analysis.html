@@ -1,0 +1,672 @@
+{% extends "base.html" %}
+
+{% block title %}Анализ эффективности Trailing Stop - Помощник Трейдера{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <h1 class="text-2xl font-bold text-gray-800 mb-6">
+        <i class="fas fa-route mr-2 text-purple-600"></i>
+        Анализ эффективности Trailing Stop
+    </h1>
+
+    <!-- Информационный блок -->
+    <div class="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-6">
+        <div class="flex items-start">
+            <i class="fas fa-info-circle text-purple-600 mt-1 mr-3"></i>
+            <div>
+                <p class="text-sm text-gray-700">
+                    Автоматический подбор оптимальных параметров Trailing Stop для заданных фильтров Score Week и Score Month.
+                    Система анализирует эффективность различных комбинаций активации и дистанции trailing stop за последние 30 дней.
+                </p>
+                <p class="text-xs text-gray-600 mt-2">
+                    <strong>Активация:</strong> процент профита, после которого активируется trailing stop.<br>
+                    <strong>Дистанция:</strong> процент отступа от максимума для срабатывания trailing stop.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Панель управления -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">
+            <i class="fas fa-sliders-h mr-2 text-purple-600"></i>
+            Параметры анализа
+        </h2>
+
+        <!-- Фильтры Score -->
+        <div class="border-b pb-4 mb-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Фильтры сигналов</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-2">
+                        Минимальный Score Week (%)
+                    </label>
+                    <input type="number" id="scoreWeekFilter" value="70" min="0" max="100" step="5"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-2">
+                        Минимальный Score Month (%)
+                    </label>
+                    <input type="number" id="scoreMonthFilter" value="70" min="0" max="100" step="5"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                </div>
+            </div>
+        </div>
+
+        <!-- Диапазоны Trailing Stop -->
+        <div class="border-b pb-4 mb-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Диапазоны Trailing Stop для анализа</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Trailing Activation -->
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-2">
+                        Активация Trailing Stop (%)
+                        <i class="fas fa-question-circle text-gray-400 ml-1" title="Процент профита для активации trailing"></i>
+                    </label>
+                    <div class="flex items-center space-x-2">
+                        <input type="number" id="activationMin" value="0.5" min="0.1" max="10" step="0.1"
+                               class="w-24 px-2 py-1 border border-gray-300 rounded text-sm">
+                        <span class="text-gray-500">-</span>
+                        <input type="number" id="activationMax" value="3" min="0.1" max="10" step="0.1"
+                               class="w-24 px-2 py-1 border border-gray-300 rounded text-sm">
+                        <span class="text-gray-500">%</span>
+                    </div>
+                </div>
+                
+                <!-- Trailing Distance -->
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-2">
+                        Дистанция Trailing Stop (%)
+                        <i class="fas fa-question-circle text-gray-400 ml-1" title="Процент отступа от максимума"></i>
+                    </label>
+                    <div class="flex items-center space-x-2">
+                        <input type="number" id="distanceMin" value="0.5" min="0.1" max="10" step="0.1"
+                               class="w-24 px-2 py-1 border border-gray-300 rounded text-sm">
+                        <span class="text-gray-500">-</span>
+                        <input type="number" id="distanceMax" value="3" min="0.1" max="10" step="0.1"
+                               class="w-24 px-2 py-1 border border-gray-300 rounded text-sm">
+                        <span class="text-gray-500">%</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Stop Loss для Trailing -->
+            <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-2">
+                        Stop Loss (%)
+                        <i class="fas fa-question-circle text-gray-400 ml-1" title="Защитный стоп-лосс"></i>
+                    </label>
+                    <input type="number" id="stopLoss" value="3" min="0.5" max="20" step="0.5"
+                           class="w-32 px-2 py-1 border border-gray-300 rounded text-sm">
+                    <span class="text-gray-500 ml-1">%</span>
+                </div>
+                
+                <!-- Шаг анализа -->
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-2">Шаг анализа (%)</label>
+                    <div class="flex items-center space-x-2">
+                        <input type="number" id="analysisStep" value="0.5" min="0.1" max="2" step="0.1"
+                               class="w-24 px-2 py-1 border border-gray-300 rounded text-sm">
+                        <span class="text-gray-500">%</span>
+                        <span class="text-xs text-gray-500 ml-4" id="combinationsCount">Комбинаций: 0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Дополнительные параметры -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+            <div class="bg-gray-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600 mb-1">Позиция</div>
+                <div class="text-sm font-semibold text-gray-800" id="positionSize">$100</div>
+            </div>
+            <div class="bg-gray-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600 mb-1">Плечо</div>
+                <div class="text-sm font-semibold text-gray-800" id="leverage">5x</div>
+            </div>
+            <div class="bg-gray-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600 mb-1">Период анализа</div>
+                <div class="text-sm font-semibold text-gray-800">30 дней</div>
+            </div>
+            <div class="bg-gray-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600 mb-1">Режим</div>
+                <div class="text-sm font-semibold text-gray-800">Trailing Stop</div>
+            </div>
+        </div>
+
+        <div class="flex justify-between items-center">
+            <div class="text-sm text-gray-600">
+                <i class="fas fa-clock mr-1"></i>
+                Анализ может занять несколько минут
+            </div>
+            <button onclick="startTrailingAnalysis()" id="startBtn"
+                    class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-md transition-colors">
+                <i class="fas fa-play mr-2"></i>
+                Запустить анализ
+            </button>
+        </div>
+    </div>
+
+    <!-- Прогресс анализа -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6" id="progressContainer" style="display: none;">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">
+            <i class="fas fa-spinner fa-spin mr-2 text-purple-600"></i>
+            Выполнение анализа
+        </h2>
+        <div class="mb-3">
+            <div class="text-sm text-gray-600 mb-2">
+                Обработка: <span id="currentProgress" class="font-semibold">Инициализация...</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-3">
+                <div id="progressBar" class="bg-purple-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+        </div>
+        <div class="text-xs text-gray-500">
+            <span id="progressDetails">Подготовка данных...</span>
+        </div>
+    </div>
+
+    <!-- Результаты анализа -->
+    <div id="resultsContainer" style="display: none;">
+        <!-- Топ результаты -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">
+                <i class="fas fa-trophy mr-2 text-yellow-500"></i>
+                Лучшие комбинации Trailing Stop
+            </h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- Топ-1 -->
+                <div class="bg-gradient-to-r from-yellow-50 to-yellow-100 border border-yellow-300 rounded-lg p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-2xl">🥇</span>
+                        <span class="text-xs bg-yellow-200 text-yellow-800 px-2 py-1 rounded-full">TOP 1</span>
+                    </div>
+                    <div class="text-xs text-gray-600 mb-1">Параметры</div>
+                    <div class="text-sm font-semibold mb-2" id="top1Params">-</div>
+                    <div class="text-xs text-gray-600 mb-1">Общий P&L</div>
+                    <div class="text-xl font-bold" id="top1Pnl">$0.00</div>
+                    <div class="text-xs text-gray-500 mt-1">
+                        Win Rate: <span id="top1WinRate">0%</span> | 
+                        Сигналов: <span id="top1Signals">0</span>
+                    </div>
+                </div>
+
+                <!-- Топ-2 -->
+                <div class="bg-gradient-to-r from-gray-50 to-gray-100 border border-gray-300 rounded-lg p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-2xl">🥈</span>
+                        <span class="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded-full">TOP 2</span>
+                    </div>
+                    <div class="text-xs text-gray-600 mb-1">Параметры</div>
+                    <div class="text-sm font-semibold mb-2" id="top2Params">-</div>
+                    <div class="text-xs text-gray-600 mb-1">Общий P&L</div>
+                    <div class="text-xl font-bold" id="top2Pnl">$0.00</div>
+                    <div class="text-xs text-gray-500 mt-1">
+                        Win Rate: <span id="top2WinRate">0%</span> | 
+                        Сигналов: <span id="top2Signals">0</span>
+                    </div>
+                </div>
+
+                <!-- Топ-3 -->
+                <div class="bg-gradient-to-r from-orange-50 to-orange-100 border border-orange-300 rounded-lg p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-2xl">🥉</span>
+                        <span class="text-xs bg-orange-200 text-orange-800 px-2 py-1 rounded-full">TOP 3</span>
+                    </div>
+                    <div class="text-xs text-gray-600 mb-1">Параметры</div>
+                    <div class="text-sm font-semibold mb-2" id="top3Params">-</div>
+                    <div class="text-xs text-gray-600 mb-1">Общий P&L</div>
+                    <div class="text-xl font-bold" id="top3Pnl">$0.00</div>
+                    <div class="text-xs text-gray-500 mt-1">
+                        Win Rate: <span id="top3WinRate">0%</span> | 
+                        Сигналов: <span id="top3Signals">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Таблица всех результатов -->
+        <div class="bg-white rounded-lg shadow-lg overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
+                <h2 class="text-lg font-semibold text-gray-800">
+                    <i class="fas fa-table mr-2 text-purple-600"></i>
+                    Все комбинации Trailing Stop
+                </h2>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">#</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Активация</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Дистанция</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stop Loss</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Сигналов</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trailing/TP</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Win Rate</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Средний P&L</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Общий P&L</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200" id="resultsTableBody">
+                        <!-- Заполняется через JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно детализации -->
+    <div id="detailsModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden overflow-y-auto h-full w-full z-50">
+        <div class="relative top-20 mx-auto p-5 border w-full max-w-4xl shadow-lg rounded-md bg-white">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-gray-900">
+                    <i class="fas fa-calendar-alt mr-2 text-purple-600"></i>
+                    Детализация по дням
+                </h3>
+                <button onclick="closeDetailsModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            
+            <div class="mb-4 p-3 bg-gray-50 rounded-lg">
+                <div class="grid grid-cols-3 gap-4 text-sm">
+                    <div>
+                        <span class="text-gray-600">Параметры:</span>
+                        <span class="font-semibold ml-1" id="modalParams">-</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-600">Период:</span>
+                        <span class="font-semibold ml-1" id="modalPeriod">-</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-600">Итого P&L:</span>
+                        <span class="font-semibold ml-1" id="modalTotalPnl">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto max-h-96">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50 sticky top-0">
+                        <tr>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Дата</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Сигналов</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Trailing</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">TP</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">SL</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Timeout</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">P&L за день</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200" id="dailyDetailsBody">
+                        <!-- Заполняется через JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="mt-4 flex justify-end">
+                <button onclick="closeDetailsModal()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md">
+                    Закрыть
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let analysisResults = [];
+    let analysisInProgress = false;
+    let currentEventSource = null;
+
+    // Расчет количества комбинаций
+    function updateCombinationsCount() {
+        const activationMin = parseFloat(document.getElementById('activationMin').value);
+        const activationMax = parseFloat(document.getElementById('activationMax').value);
+        const distanceMin = parseFloat(document.getElementById('distanceMin').value);
+        const distanceMax = parseFloat(document.getElementById('distanceMax').value);
+        const step = parseFloat(document.getElementById('analysisStep').value);
+        
+        const activationSteps = Math.floor((activationMax - activationMin) / step) + 1;
+        const distanceSteps = Math.floor((distanceMax - distanceMin) / step) + 1;
+        const total = activationSteps * distanceSteps;
+        
+        document.getElementById('combinationsCount').textContent = `Комбинаций: ${total}`;
+    }
+
+    // Загрузка настроек пользователя
+    async function loadUserSettings() {
+        try {
+            const response = await fetch('/api/get_user_trading_mode');
+            const data = await response.json();
+            
+            document.getElementById('positionSize').textContent = `$${data.position_size}`;
+            document.getElementById('leverage').textContent = `${data.leverage}x`;
+        } catch (error) {
+            console.error('Ошибка загрузки настроек:', error);
+        }
+    }
+
+    // Запуск анализа Trailing Stop
+    function startTrailingAnalysis() {
+        if (analysisInProgress) {
+            showNotification('Анализ уже выполняется', 'warning');
+            return;
+        }
+        
+        if (currentEventSource) {
+            currentEventSource.close();
+            currentEventSource = null;
+        }
+        
+        analysisInProgress = true;
+        const button = document.getElementById('startBtn');
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Анализ запущен...';
+        
+        document.getElementById('progressContainer').style.display = 'block';
+        document.getElementById('resultsContainer').style.display = 'none';
+        
+        updateProgress(0, 'Инициализация...');
+        
+        // Получаем параметры
+        const scoreWeek = parseInt(document.getElementById('scoreWeekFilter').value);
+        const scoreMonth = parseInt(document.getElementById('scoreMonthFilter').value);
+        const activationMin = parseFloat(document.getElementById('activationMin').value);
+        const activationMax = parseFloat(document.getElementById('activationMax').value);
+        const distanceMin = parseFloat(document.getElementById('distanceMin').value);
+        const distanceMax = parseFloat(document.getElementById('distanceMax').value);
+        const stopLoss = parseFloat(document.getElementById('stopLoss').value);
+        const step = parseFloat(document.getElementById('analysisStep').value);
+        
+        // Вычисляем количество комбинаций
+        const activationSteps = Math.floor((activationMax - activationMin) / step) + 1;
+        const distanceSteps = Math.floor((distanceMax - distanceMin) / step) + 1;
+        const total_combinations = activationSteps * distanceSteps;
+        
+        console.log(`Starting Trailing Stop analysis with ${total_combinations} combinations`);
+        
+        let lastActivity = Date.now();
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 3;
+        
+        function createEventSource() {
+            const params = new URLSearchParams({
+                score_week: scoreWeek,
+                score_month: scoreMonth,
+                activation_min: activationMin,
+                activation_max: activationMax,
+                distance_min: distanceMin,
+                distance_max: distanceMax,
+                stop_loss: stopLoss,
+                step: step
+            });
+            
+            const eventSource = new EventSource(`/api/trailing/analyze_progress?${params}`);
+            
+            let activityTimeout = setInterval(() => {
+                if (Date.now() - lastActivity > 60000) {
+                    console.log('Timeout detected');
+                    eventSource.close();
+                    clearInterval(activityTimeout);
+                    
+                    if (reconnectAttempts < maxReconnectAttempts) {
+                        reconnectAttempts++;
+                        showNotification(`Переподключение... Попытка ${reconnectAttempts}/${maxReconnectAttempts}`, 'info');
+                        setTimeout(() => createEventSource(), 3000);
+                    } else {
+                        showNotification('Превышено время ожидания', 'error');
+                        resetAnalysisButton();
+                    }
+                }
+            }, 10000);
+            
+            eventSource.onmessage = function(event) {
+                lastActivity = Date.now();
+                reconnectAttempts = 0;
+                
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('Received:', data.type);
+                    
+                    switch(data.type) {
+                        case 'start':
+                            updateProgress(0, data.message);
+                            document.getElementById('progressDetails').textContent = `Всего комбинаций: ${data.total_combinations}`;
+                            break;
+                            
+                        case 'progress':
+                            updateProgress(data.percent, data.message);
+                            if (data.details) {
+                                document.getElementById('progressDetails').textContent = data.details;
+                            }
+                            break;
+                            
+                        case 'complete':
+                            clearInterval(activityTimeout);
+                            eventSource.close();
+                            currentEventSource = null;
+                            analysisInProgress = false;
+                            analysisResults = data.data;
+                            displayResults(data.data);
+                            showNotification('Анализ успешно завершен', 'success');
+                            resetAnalysisButton();
+                            break;
+                            
+                        case 'error':
+                            clearInterval(activityTimeout);
+                            eventSource.close();
+                            currentEventSource = null;
+                            analysisInProgress = false;
+                            showNotification('Ошибка: ' + data.message, 'error');
+                            resetAnalysisButton();
+                            break;
+                            
+                        case 'heartbeat':
+                            console.log('Heartbeat received');
+                            break;
+                    }
+                } catch (error) {
+                    console.error('Error parsing message:', error);
+                }
+            };
+            
+            eventSource.onerror = function(error) {
+                console.error('SSE Error:', error);
+                lastActivity = Date.now();
+            };
+            
+            currentEventSource = eventSource;
+            return eventSource;
+        }
+        
+        createEventSource();
+    }
+
+    // Обновление прогресса
+    function updateProgress(percent, text) {
+        document.getElementById('progressBar').style.width = percent + '%';
+        document.getElementById('currentProgress').textContent = text;
+    }
+
+    // Сброс кнопки анализа
+    function resetAnalysisButton() {
+        const button = document.getElementById('startBtn');
+        button.disabled = false;
+        button.innerHTML = '<i class="fas fa-play mr-2"></i>Запустить анализ';
+        document.getElementById('progressContainer').style.display = 'none';
+        analysisInProgress = false;
+        currentEventSource = null;
+    }
+
+    // Отображение результатов
+    function displayResults(data) {
+        // Сортируем по убыванию P&L
+        data.sort((a, b) => b.total_pnl - a.total_pnl);
+        
+        // Топ-3
+        if (data.length > 0) {
+            const top1 = data[0];
+            document.getElementById('top1Params').textContent = `Act: ${top1.activation}%, Dist: ${top1.distance}%`;
+            document.getElementById('top1Pnl').textContent = formatPnL(top1.total_pnl);
+            document.getElementById('top1Pnl').className = getPnLClass(top1.total_pnl, 'text-xl font-bold');
+            document.getElementById('top1WinRate').textContent = `${top1.win_rate.toFixed(1)}%`;
+            document.getElementById('top1Signals').textContent = top1.total_signals;
+        }
+        
+        if (data.length > 1) {
+            const top2 = data[1];
+            document.getElementById('top2Params').textContent = `Act: ${top2.activation}%, Dist: ${top2.distance}%`;
+            document.getElementById('top2Pnl').textContent = formatPnL(top2.total_pnl);
+            document.getElementById('top2Pnl').className = getPnLClass(top2.total_pnl, 'text-xl font-bold');
+            document.getElementById('top2WinRate').textContent = `${top2.win_rate.toFixed(1)}%`;
+            document.getElementById('top2Signals').textContent = top2.total_signals;
+        }
+        
+        if (data.length > 2) {
+            const top3 = data[2];
+            document.getElementById('top3Params').textContent = `Act: ${top3.activation}%, Dist: ${top3.distance}%`;
+            document.getElementById('top3Pnl').textContent = formatPnL(top3.total_pnl);
+            document.getElementById('top3Pnl').className = getPnLClass(top3.total_pnl, 'text-xl font-bold');
+            document.getElementById('top3WinRate').textContent = `${top3.win_rate.toFixed(1)}%`;
+            document.getElementById('top3Signals').textContent = top3.total_signals;
+        }
+        
+        // Заполняем таблицу
+        const tbody = document.getElementById('resultsTableBody');
+        tbody.innerHTML = data.map((item, index) => {
+            const avgPnl = item.total_signals > 0 ? item.total_pnl / item.total_signals : 0;
+            const trailingRatio = item.total_signals > 0 ? ((item.trailing_count || 0) / item.total_signals * 100).toFixed(1) : 0;
+            const rowClass = index === 0 ? 'bg-yellow-50' : index === 1 ? 'bg-gray-50' : index === 2 ? 'bg-orange-50' : '';
+            
+            return `
+                <tr class="${rowClass} hover:bg-gray-100 transition-colors">
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${index + 1}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">${item.activation}%</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">${item.distance}%</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">${item.stop_loss}%</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">${item.total_signals}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm">
+                        <span class="text-purple-600 font-medium">${trailingRatio}%</span>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm">
+                        <span class="px-2 py-1 text-xs rounded-full ${
+                            item.win_rate >= 60 ? 'bg-green-100 text-green-800' :
+                            item.win_rate >= 50 ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-red-100 text-red-800'
+                        }">
+                            ${item.win_rate.toFixed(1)}%
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm ${getPnLClass(avgPnl)}">
+                        ${formatPnL(avgPnl)}
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-bold ${getPnLClass(item.total_pnl)}">
+                        ${formatPnL(item.total_pnl)}
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm">
+                        <button onclick="showDetails(${index})" class="text-purple-600 hover:text-purple-800 font-medium">
+                            <i class="fas fa-chart-bar mr-1"></i>
+                            Детали
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+        
+        document.getElementById('resultsContainer').style.display = 'block';
+    }
+
+    // Показать детали
+    function showDetails(index) {
+        const result = analysisResults[index];
+        
+        document.getElementById('modalParams').textContent = 
+            `Activation: ${result.activation}%, Distance: ${result.distance}%, SL: ${result.stop_loss}%`;
+        document.getElementById('modalPeriod').textContent = `${result.start_date} - ${result.end_date}`;
+        document.getElementById('modalTotalPnl').textContent = formatPnL(result.total_pnl);
+        document.getElementById('modalTotalPnl').className = getPnLClass(result.total_pnl, 'font-semibold ml-1');
+        
+        const tbody = document.getElementById('dailyDetailsBody');
+        tbody.innerHTML = result.daily_breakdown.map(day => {
+            return `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-2 text-sm text-gray-900">${day.date}</td>
+                    <td class="px-4 py-2 text-sm text-gray-900">${day.signal_count}</td>
+                    <td class="px-4 py-2 text-sm text-purple-600">${day.trailing_count || 0}</td>
+                    <td class="px-4 py-2 text-sm text-green-600">${day.tp_count || 0}</td>
+                    <td class="px-4 py-2 text-sm text-red-600">${day.sl_count}</td>
+                    <td class="px-4 py-2 text-sm text-gray-500">${day.timeout_count}</td>
+                    <td class="px-4 py-2 text-sm font-semibold ${getPnLClass(day.daily_pnl)}">
+                        ${formatPnL(day.daily_pnl)}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+        
+        document.getElementById('detailsModal').classList.remove('hidden');
+    }
+
+    // Закрыть модальное окно
+    function closeDetailsModal() {
+        document.getElementById('detailsModal').classList.add('hidden');
+    }
+
+    // Форматирование P&L
+    function formatPnL(value) {
+        const prefix = value >= 0 ? '+' : '';
+        return prefix + '$' + Math.abs(value).toFixed(2);
+    }
+
+    // Получение класса для P&L
+    function getPnLClass(value, additionalClasses = '') {
+        const baseClass = value >= 0 ? 'text-green-600' : 'text-red-600';
+        return additionalClasses ? `${baseClass} ${additionalClasses}` : baseClass;
+    }
+
+    // Показ уведомлений
+    function showNotification(message, type) {
+        const notification = document.createElement('div');
+        notification.className = `fixed top-4 right-4 px-6 py-4 rounded-lg shadow-lg transition-all duration-500 z-50 ${
+            type === 'success' ? 'bg-green-500 text-white' :
+            type === 'error' ? 'bg-red-500 text-white' :
+            type === 'warning' ? 'bg-yellow-500 text-white' :
+            'bg-blue-500 text-white'
+        }`;
+        notification.innerHTML = `
+            <div class="flex items-center">
+                <i class="fas ${
+                    type === 'success' ? 'fa-check-circle' :
+                    type === 'error' ? 'fa-exclamation-circle' :
+                    type === 'warning' ? 'fa-exclamation-triangle' :
+                    'fa-info-circle'
+                } mr-3"></i>
+                <span>${message}</span>
+            </div>
+        `;
+        
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+            notification.style.opacity = '0';
+            setTimeout(() => notification.remove(), 500);
+        }, 3000);
+    }
+
+    // Инициализация
+    document.addEventListener('DOMContentLoaded', function() {
+        loadUserSettings();
+        updateCombinationsCount();
+        
+        ['activationMin', 'activationMax', 'distanceMin', 'distanceMax', 'analysisStep'].forEach(id => {
+            document.getElementById(id).addEventListener('input', updateCombinationsCount);
+        });
+    });
+</script>
+{% endblock %}
