@@ -1271,12 +1271,19 @@ def efficiency_analysis():
 @login_required
 def api_efficiency_analyze_30days_progress():
     """SSE endpoint для отправки прогресса анализа эффективности в реальном времени"""
-    from flask import Response
+    from flask import Response, request
     from database import get_scoring_signals, process_scoring_signals_batch
     from datetime import datetime, timedelta
     import uuid
     import json
     import time
+    
+    # Получаем параметры из запроса
+    score_week_min_param = int(request.args.get('score_week_min', 60))
+    score_week_max_param = int(request.args.get('score_week_max', 80))
+    score_month_min_param = int(request.args.get('score_month_min', 60))
+    score_month_max_param = int(request.args.get('score_month_max', 80))
+    step_param = int(request.args.get('step', 10))
     
     # Сохраняем user_id до создания генератора
     user_id = current_user.id
@@ -1308,20 +1315,23 @@ def api_efficiency_analyze_30days_progress():
             position_size = float(settings.get('position_size_usd', 100.0))
             leverage = int(settings.get('leverage', 5))
             
-            # Определяем период анализа
-            end_date = datetime.now().date()
+            # Определяем период анализа (исключаем последние 2 дня)
+            end_date = datetime.now().date() - timedelta(days=2)
             start_date = end_date - timedelta(days=29)
             
             results = []
-            total_combinations = 16  # 4 score_week * 4 score_month
+            # Вычисляем количество комбинаций на основе параметров
+            week_steps = list(range(score_week_min_param, score_week_max_param + 1, step_param))
+            month_steps = list(range(score_month_min_param, score_month_max_param + 1, step_param))
+            total_combinations = len(week_steps) * len(month_steps)
             current_combination = 0
             
             # Отправляем начальное сообщение
             yield f"data: {json.dumps({'type': 'start', 'message': 'Инициализация анализа за 30 дней...', 'total_combinations': total_combinations})}\n\n"
             
-            # Перебираем все комбинации
-            for score_week_min in range(60, 91, 10):
-                for score_month_min in range(60, 91, 10):
+            # Перебираем все комбинации на основе пользовательских настроек
+            for score_week_min in week_steps:
+                for score_month_min in month_steps:
                     current_combination += 1
                     
                     combination_result = {
@@ -1460,8 +1470,8 @@ def api_efficiency_analyze_30days_progress():
                         # Отправляем промежуточный результат
                         yield f"data: {json.dumps({'type': 'intermediate', 'combination': f'Week≥{score_week_min}%, Month≥{score_month_min}%', 'pnl': round(combination_result['total_pnl'], 2), 'signals': combination_result['total_signals'], 'win_rate': round(combination_result['win_rate'], 1)})}\n\n"
             
-            # Сортируем результаты
-            results.sort(key=lambda x: x['total_pnl'], reverse=True)
+            # Сортируем результаты по Win Rate
+            results.sort(key=lambda x: x['win_rate'], reverse=True)
             
             # Отправляем финальные результаты
             yield f"data: {json.dumps({'type': 'complete', 'data': results})}\n\n"
