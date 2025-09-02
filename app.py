@@ -1224,7 +1224,7 @@ def api_get_user_trading_mode():
         query = """
             SELECT use_trailing_stop, trailing_distance_pct, 
                    trailing_activation_pct, stop_loss_percent,
-                   take_profit_percent
+                   take_profit_percent, position_size_usd, leverage
             FROM web.user_signal_filters
             WHERE user_id = %s
         """
@@ -1236,14 +1236,19 @@ def api_get_user_trading_mode():
                 'use_trailing_stop': data['use_trailing_stop'] or False,
                 'trailing_distance_pct': float(data['trailing_distance_pct'] or 2.0),
                 'trailing_activation_pct': float(data['trailing_activation_pct'] or 1.0),
+                'stop_loss_percent': float(data['stop_loss_percent'] or 3.0),
                 'insurance_sl': float(data['stop_loss_percent'] or 3.0),
-                'take_profit_percent': float(data['take_profit_percent'] or 4.0)
+                'take_profit_percent': float(data['take_profit_percent'] or 4.0),
+                'position_size': float(data['position_size_usd'] or 100.0),
+                'leverage': int(data['leverage'] or 5)
             })
         else:
             return jsonify({
                 'use_trailing_stop': False,
                 'take_profit_percent': 4.0,
-                'stop_loss_percent': 3.0
+                'stop_loss_percent': 3.0,
+                'position_size': 100.0,
+                'leverage': 5
             })
 
     except Exception as e:

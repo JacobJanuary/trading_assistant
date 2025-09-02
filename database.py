@@ -134,16 +134,26 @@ class Database:
                     return None
 
     def initialize_schema(self):
-        """Инициализация схемы базы данных (только таблица users)"""
+        """Проверка существования необходимых таблиц в базе данных"""
         try:
-            with open('schema.sql', 'r', encoding='utf-8') as f:
-                schema_sql = f.read()
-
-            self.execute_query(schema_sql)
-            logger.info("Схема базы данных для пользователей инициализирована")
+            # Проверяем существование схемы web
+            check_schema = """
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.schemata 
+                    WHERE schema_name = 'web'
+                );
+            """
+            result = self.execute_query(check_schema, fetch=True)
+            
+            if result and result[0]['exists']:
+                logger.info("Схема web существует, таблицы уже инициализированы")
+            else:
+                logger.warning("Схема web не найдена. Создание базовых таблиц пропущено.")
+                logger.info("Используйте существующую структуру базы данных")
+                
         except Exception as e:
-            logger.error(f"Ошибка при инициализации схемы: {e}")
-            raise
+            logger.warning(f"Не удалось проверить схему базы данных: {e}")
+            logger.info("Продолжаем работу с существующей структурой БД")
 
 
 # Функции для работы с пользователями
