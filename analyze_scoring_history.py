@@ -88,7 +88,7 @@ class ImprovedScoringAnalyzer:
         # Если файл не существует, используем переменные окружения
         if not config_file.exists():
             return {
-                'host': os.getenv('DB_HOST', 'localhost'),
+                'host': os.getenv('DB_HOST', '10.8.0.1'),
                 'port': int(os.getenv('DB_PORT', 5432)),
                 'dbname': os.getenv('DB_NAME', 'fox_crypto'),
                 'user': os.getenv('DB_USER', 'elcrypto'),
@@ -158,7 +158,7 @@ class ImprovedScoringAnalyzer:
                         direction: str) -> Optional[Dict]:
         """
         Получение цены входа для указанного направления
-        Для LONG используем high_price (худший вход), для SHORT - low_price
+        Используем среднее значение между high_price и low_price для обоих направлений
         """
         entry_time = signal_time + timedelta(minutes=self.config.entry_delay_minutes)
 
@@ -182,11 +182,10 @@ class ImprovedScoringAnalyzer:
                 result = cur.fetchone()
 
             if result:
-                # Для LONG используем high_price (худший вход), для SHORT - low_price
-                if direction == 'LONG':
-                    entry_price = float(result['high_price'])
-                else:  # SHORT
-                    entry_price = float(result['low_price'])
+                # Используем среднее значение между high и low для обоих направлений
+                high_price = float(result['high_price'])
+                low_price = float(result['low_price'])
+                entry_price = (high_price + low_price) / 2
 
                 return {
                     'entry_price': entry_price,
@@ -254,16 +253,27 @@ class ImprovedScoringAnalyzer:
             # Проверяем закрытие позиции (только если еще не закрыта)
             if not is_closed:
                 if direction == 'LONG':
-                    # Сначала проверяем SL
-                    if low_price <= sl_price:
+                    # Проверяем, достигнуты ли оба уровня в одной свече
+                    sl_hit = low_price <= sl_price
+                    tp_hit = high_price >= tp_price
+                    
+                    if sl_hit and tp_hit:
+                        # Оба уровня достигнуты - используем консервативный подход (SL)
+                        # В реальности нужно смотреть на более мелкий таймфрейм
                         is_closed = True
                         close_reason = 'stop_loss'
                         is_win = False
                         close_price = sl_price
                         close_time = current_time
                         hours_to_close = hours_passed
-                    # Затем проверяем TP
-                    elif high_price >= tp_price:
+                    elif sl_hit:
+                        is_closed = True
+                        close_reason = 'stop_loss'
+                        is_win = False
+                        close_price = sl_price
+                        close_time = current_time
+                        hours_to_close = hours_passed
+                    elif tp_hit:
                         is_closed = True
                         close_reason = 'take_profit'
                         is_win = True
@@ -272,16 +282,27 @@ class ImprovedScoringAnalyzer:
                         hours_to_close = hours_passed
 
                 else:  # SHORT
-                    # Сначала проверяем SL
-                    if high_price >= sl_price:
+                    # Проверяем, достигнуты ли оба уровня в одной свече
+                    sl_hit = high_price >= sl_price
+                    tp_hit = low_price <= tp_price
+                    
+                    if sl_hit and tp_hit:
+                        # Оба уровня достигнуты - используем консервативный подход (SL)
+                        # В реальности нужно смотреть на более мелкий таймфрейм
                         is_closed = True
                         close_reason = 'stop_loss'
                         is_win = False
                         close_price = sl_price
                         close_time = current_time
                         hours_to_close = hours_passed
-                    # Затем проверяем TP
-                    elif low_price <= tp_price:
+                    elif sl_hit:
+                        is_closed = True
+                        close_reason = 'stop_loss'
+                        is_win = False
+                        close_price = sl_price
+                        close_time = current_time
+                        hours_to_close = hours_passed
+                    elif tp_hit:
                         is_closed = True
                         close_reason = 'take_profit'
                         is_win = True
@@ -405,21 +426,15 @@ class ImprovedScoringAnalyzer:
         Возвращает два результата - для LONG и SHORT позиций
         """
         try:
-            # Получаем цены входа для обоих направлений
-            long_entry_data = self.get_entry_price(
+            # Получаем цену входа (одинаковая для обоих направлений)
+            entry_data = self.get_entry_price(
                 signal['trading_pair_id'],
                 signal['signal_timestamp'],
-                'LONG'
-            )
-
-            short_entry_data = self.get_entry_price(
-                signal['trading_pair_id'],
-                signal['signal_timestamp'],
-                'SHORT'
+                'LONG'  # Направление больше не влияет на цену
             )
 
             # Если нет данных о цене входа - создаем записи с пометкой NO_DATA
-            if not long_entry_data or not short_entry_data:
+            if not entry_data:
                 logger.warning(f"⚠️ Нет цены входа для {signal['pair_symbol']} @ {signal['signal_timestamp']}")
                 self.skipped_count += 1
                 # ВАЖНО: Возвращаем записи с пометкой no_entry_price, чтобы не зацикливаться
@@ -427,8 +442,9 @@ class ImprovedScoringAnalyzer:
                 short_result = self.create_no_data_result(signal, 'SHORT', 'no_entry_price')
                 return long_result, short_result
 
-            # Берем время входа (одинаковое для обоих)
-            actual_entry_time = long_entry_data['entry_time']
+            # Берем время и цену входа (одинаковые для обоих направлений)
+            actual_entry_time = entry_data['entry_time']
+            entry_price = entry_data['entry_price']
 
             # Получаем историю цен за 48 часов
             history_query = """
@@ -464,14 +480,14 @@ class ImprovedScoringAnalyzer:
             # Рассчитываем результаты для обоих направлений
             long_result = self.calculate_trade_result(
                 'LONG',
-                long_entry_data['entry_price'],
+                entry_price,
                 history,
                 actual_entry_time
             )
 
             short_result = self.calculate_trade_result(
                 'SHORT',
-                short_entry_data['entry_price'],
+                entry_price,
                 history,
                 actual_entry_time
             )
