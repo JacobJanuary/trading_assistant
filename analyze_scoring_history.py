@@ -88,7 +88,7 @@ class ImprovedScoringAnalyzer:
         # Если файл не существует, используем переменные окружения
         if not config_file.exists():
             return {
-                'host': os.getenv('DB_HOST', '10.8.0.1'),
+                'host': os.getenv('DB_HOST', 'localhost'),
                 'port': int(os.getenv('DB_PORT', 5432)),
                 'dbname': os.getenv('DB_NAME', 'fox_crypto'),
                 'user': os.getenv('DB_USER', 'elcrypto'),
