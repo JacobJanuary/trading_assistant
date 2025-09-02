@@ -378,6 +378,9 @@
         let reconnectAttempts = 0;
         const maxReconnectAttempts = total_combinations > 100 ? 5 : 3; // Больше попыток для больших анализов
         
+        // Генерируем уникальный ID сессии для отслеживания переподключений
+        const sessionId = 'eff_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        
         function createEventSource() {
             // Создаем SSE соединение с параметрами
             const params = new URLSearchParams({
@@ -385,7 +388,8 @@
                 score_week_max: scoreWeekMax,
                 score_month_min: scoreMonthMin,
                 score_month_max: scoreMonthMax,
-                step: step
+                step: step,
+                session_id: sessionId  // Передаем ID сессии для отслеживания переподключений
             });
             const eventSource = new EventSource(`/api/efficiency/analyze_30days_progress?${params}`);
             
@@ -394,7 +398,7 @@
             if (total_combinations > 50) {
                 // Для больших анализов увеличиваем timeout
                 activityTimeout = setInterval(() => {
-                    if (Date.now() - lastActivity > 60000) { // 60 секунд без активности для больших анализов
+                    if (Date.now() - lastActivity > 120000) { // 120 секунд без активности для больших анализов
                         console.log('Timeout detected for large analysis, attempting to reconnect...');
                         eventSource.close();
                         clearInterval(activityTimeout);
@@ -412,7 +416,7 @@
             } else {
                 // Для малых анализов стандартный timeout
                 activityTimeout = setInterval(() => {
-                    if (Date.now() - lastActivity > 30000) { // 30 секунд без активности
+                    if (Date.now() - lastActivity > 60000) { // 60 секунд без активности
                         console.log('Timeout detected, attempting to reconnect...');
                         eventSource.close();
                         clearInterval(activityTimeout);

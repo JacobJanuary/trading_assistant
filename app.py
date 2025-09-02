@@ -1311,22 +1311,36 @@ def api_efficiency_analyze_30days_progress():
     score_month_max_param = int(request.args.get('score_month_max', 80))
     step_param = int(request.args.get('step', 10))
     force_recalc = request.args.get('force_recalc', 'false').lower() == 'true'
+    session_id = request.args.get('session_id', '')  # ID сессии для отслеживания переподключений
     
     # Сохраняем user_id до создания генератора
     user_id = current_user.id
     
     def generate():
         try:
-            # Очищаем предыдущие результаты анализа эффективности для этого пользователя
-            if user_id in analysis_results_cache['efficiency']:
-                del analysis_results_cache['efficiency'][user_id]
+            # Если это новая сессия (новый запуск анализа, а не переподключение)
+            is_new_session = not session_id or session_id.startswith('eff_')
             
-            # Очищаем кэш в БД для этого пользователя, чтобы пересчитать с правильными значениями
-            clear_cache_query = """
-                DELETE FROM web.efficiency_cache 
-                WHERE user_id = %s
-            """
-            db.execute_query(clear_cache_query, (user_id,))
+            if is_new_session:
+                # Очищаем предыдущие результаты анализа эффективности для этого пользователя
+                if user_id in analysis_results_cache['efficiency']:
+                    del analysis_results_cache['efficiency'][user_id]
+                
+                # При новом запуске очищаем весь кэш пользователя для пересчета
+                if force_recalc:
+                    clear_cache_query = """
+                        DELETE FROM web.efficiency_cache 
+                        WHERE user_id = %s
+                    """
+                    db.execute_query(clear_cache_query, (user_id,))
+                else:
+                    # Очищаем только старый кэш (старше 2 часов)
+                    clear_old_cache_query = """
+                        DELETE FROM web.efficiency_cache 
+                        WHERE user_id = %s 
+                        AND created_at < NOW() - INTERVAL '2 hours'
+                    """
+                    db.execute_query(clear_old_cache_query, (user_id,))
             
             # Отправляем немедленный heartbeat для проверки соединения
             yield f": heartbeat\n\n"
