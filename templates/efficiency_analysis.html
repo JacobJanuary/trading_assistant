@@ -1,519 +1,496 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Анализ эффективности - Trading Assistant</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
-    <style>
-        body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        
-        .navbar {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        
-        .main-container {
-            margin-top: 80px;
-            padding: 20px;
-        }
-        
-        .analysis-card {
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 15px;
-            padding: 25px;
-            margin-bottom: 20px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-        }
-        
-        .tab-content {
-            margin-top: 20px;
-        }
-        
-        .results-table {
-            max-height: 500px;
-            overflow-y: auto;
-        }
-        
-        .results-table table {
-            font-size: 14px;
-        }
-        
-        .positive-pnl {
-            color: #28a745;
-            font-weight: bold;
-        }
-        
-        .negative-pnl {
-            color: #dc3545;
-            font-weight: bold;
-        }
-        
-        .loading-spinner {
-            display: none;
-            text-align: center;
-            padding: 50px;
-        }
-        
-        .details-modal .modal-dialog {
-            max-width: 800px;
-        }
-        
-        .daily-details-table {
-            max-height: 400px;
-            overflow-y: auto;
-        }
-        
-        .best-result {
-            background-color: #d4edda;
-        }
-        
-        .nav-pills .nav-link.active {
-            background-color: #667eea;
-        }
-        
-        .stats-box {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-radius: 10px;
-            padding: 15px;
-            margin-bottom: 15px;
-        }
-        
-        .stats-box h5 {
-            margin-bottom: 10px;
-            font-size: 14px;
-            opacity: 0.9;
-        }
-        
-        .stats-box .value {
-            font-size: 24px;
-            font-weight: bold;
-        }
-    </style>
-</head>
-<body>
-    <!-- Навигация -->
-    <nav class="navbar navbar-expand-lg navbar-light fixed-top">
-        <div class="container-fluid">
-            <a class="navbar-brand" href="/dashboard">
-                <i class="bi bi-graph-up"></i> Trading Assistant
-            </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav me-auto">
-                    <li class="nav-item">
-                        <a class="nav-link" href="/dashboard">
-                            <i class="bi bi-speedometer2"></i> Дашборд
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="/signal_performance">
-                            <i class="bi bi-bar-chart"></i> Производительность
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="/scoring_analysis">
-                            <i class="bi bi-calculator"></i> Анализ скоринга
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link active" href="/efficiency_analysis">
-                            <i class="bi bi-graph-up-arrow"></i> Анализ эффективности
-                        </a>
-                    </li>
-                    {% if is_admin %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="/admin">
-                            <i class="bi bi-shield-lock"></i> Админ
-                        </a>
-                    </li>
-                    {% endif %}
-                </ul>
-                <span class="navbar-text me-3">
-                    <i class="bi bi-person-circle"></i> {{ username }}
-                </span>
-                <a href="/logout" class="btn btn-outline-danger btn-sm">
-                    <i class="bi bi-box-arrow-right"></i> Выход
-                </a>
+{% extends "base.html" %}
+
+{% block title %}Анализ эффективности - Помощник Трейдера{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <h1 class="text-2xl font-bold text-gray-800 mb-6">
+        <i class="fas fa-chart-line mr-2 text-blue-600"></i>
+        Анализ эффективности за 30 дней
+    </h1>
+
+    <!-- Информационный блок -->
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <div class="flex items-start">
+            <i class="fas fa-info-circle text-blue-600 mt-1 mr-3"></i>
+            <div>
+                <p class="text-sm text-gray-700">
+                    Автоматический анализ эффективности торговых стратегий за последние 30 дней. 
+                    Система проверяет все комбинации фильтров score_week и score_month от 60% до 90% с шагом 10%.
+                    Параметры TP/SL и Trailing Stop берутся из ваших текущих настроек сигналов.
+                </p>
             </div>
         </div>
-    </nav>
+    </div>
 
-    <!-- Основной контент -->
-    <div class="container main-container">
-        <div class="analysis-card">
-            <h2 class="mb-4">
-                <i class="bi bi-graph-up-arrow"></i> Анализ эффективности торговых стратегий
+    <!-- Панель управления -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">
+            <i class="fas fa-sliders-h mr-2 text-blue-600"></i>
+            Параметры анализа
+        </h2>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+            <!-- Текущие параметры из настроек -->
+            <div class="bg-gray-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600 mb-1">Режим торговли</div>
+                <div class="text-sm font-semibold text-gray-800" id="tradingMode">Загрузка...</div>
+            </div>
+            <div class="bg-gray-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600 mb-1">Take Profit / Stop Loss</div>
+                <div class="text-sm font-semibold text-gray-800" id="tpSlParams">Загрузка...</div>
+            </div>
+            <div class="bg-gray-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600 mb-1">Позиция / Плечо</div>
+                <div class="text-sm font-semibold text-gray-800" id="positionParams">Загрузка...</div>
+            </div>
+            <div class="bg-gray-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600 mb-1">Период анализа</div>
+                <div class="text-sm font-semibold text-gray-800">30 дней</div>
+            </div>
+        </div>
+
+        <div class="flex justify-between items-center">
+            <div class="text-sm text-gray-600">
+                <i class="fas fa-clock mr-1"></i>
+                Анализ может занять несколько минут
+            </div>
+            <button onclick="startAnalysis()" id="startBtn"
+                    class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-md transition-colors">
+                <i class="fas fa-play mr-2"></i>
+                Запустить анализ
+            </button>
+        </div>
+    </div>
+
+    <!-- Прогресс анализа -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6" id="progressContainer" style="display: none;">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">
+            <i class="fas fa-spinner fa-spin mr-2 text-blue-600"></i>
+            Выполнение анализа
+        </h2>
+        <div class="mb-3">
+            <div class="text-sm text-gray-600 mb-2">
+                Обработка: <span id="currentProgress" class="font-semibold">Инициализация...</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-3">
+                <div id="progressBar" class="bg-blue-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+        </div>
+        <div class="text-xs text-gray-500">
+            <span id="progressDetails">Подготовка данных...</span>
+        </div>
+    </div>
+
+    <!-- Результаты анализа -->
+    <div id="resultsContainer" style="display: none;">
+        <!-- Сводная статистика -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">
+                <i class="fas fa-trophy mr-2 text-yellow-500"></i>
+                Лучшие комбинации фильтров
             </h2>
             
-            <div class="alert alert-info mb-4">
-                <i class="bi bi-info-circle"></i>
-                Анализ показывает результаты торговли за последние 30 дней с различными параметрами скоринга.
-                Данные обновляются автоматически на основе исторических результатов.
-            </div>
-
-            <!-- Статистика -->
-            <div class="row mb-4" id="statsContainer" style="display: none;">
-                <div class="col-md-3">
-                    <div class="stats-box">
-                        <h5>Лучший результат</h5>
-                        <div class="value" id="bestPnl">-</div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- Топ-1 результат -->
+                <div class="bg-gradient-to-r from-yellow-50 to-yellow-100 border border-yellow-300 rounded-lg p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-2xl">🥇</span>
+                        <span class="text-xs bg-yellow-200 text-yellow-800 px-2 py-1 rounded-full">TOP 1</span>
                     </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="stats-box">
-                        <h5>Всего сигналов</h5>
-                        <div class="value" id="totalSignals">-</div>
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="stats-box">
-                        <h5>Средний P&L</h5>
-                        <div class="value" id="avgPnl">-</div>
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="stats-box">
-                        <h5>Прибыльных стратегий</h5>
-                        <div class="value" id="profitableCount">-</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Вкладки для разных типов анализа -->
-            <ul class="nav nav-pills mb-3" id="analysisTabs" role="tablist">
-                <li class="nav-item" role="presentation">
-                    <button class="nav-link active" id="week-tab" data-bs-toggle="pill" 
-                            data-bs-target="#week" type="button" data-analysis-type="score_week">
-                        Score Week (60-99)
-                    </button>
-                </li>
-                <li class="nav-item" role="presentation">
-                    <button class="nav-link" id="month-tab" data-bs-toggle="pill" 
-                            data-bs-target="#month" type="button" data-analysis-type="score_month">
-                        Score Month (60-99)
-                    </button>
-                </li>
-                <li class="nav-item" role="presentation">
-                    <button class="nav-link" id="combined-tab" data-bs-toggle="pill" 
-                            data-bs-target="#combined" type="button" data-analysis-type="combined">
-                        Комбинированный анализ
-                    </button>
-                </li>
-            </ul>
-
-            <!-- Контент вкладок -->
-            <div class="tab-content" id="analysisTabContent">
-                <!-- Score Week -->
-                <div class="tab-pane fade show active" id="week" role="tabpanel">
-                    <div class="loading-spinner">
-                        <div class="spinner-border text-primary" role="status">
-                            <span class="visually-hidden">Загрузка...</span>
-                        </div>
-                        <p class="mt-2">Анализ данных...</p>
-                    </div>
-                    <div class="results-table">
-                        <table class="table table-hover">
-                            <thead class="table-light sticky-top">
-                                <tr>
-                                    <th>Score Week Min</th>
-                                    <th>Кол-во сигналов</th>
-                                    <th>Общий P&L</th>
-                                    <th>Действия</th>
-                                </tr>
-                            </thead>
-                            <tbody id="weekResults"></tbody>
-                        </table>
+                    <div class="text-xs text-gray-600 mb-1">Фильтры</div>
+                    <div class="text-sm font-semibold mb-2" id="top1Filters">-</div>
+                    <div class="text-xs text-gray-600 mb-1">Общий P&L за 30 дней</div>
+                    <div class="text-xl font-bold" id="top1Pnl">$0.00</div>
+                    <div class="text-xs text-gray-500 mt-1">
+                        Win Rate: <span id="top1WinRate">0%</span> | 
+                        Сигналов: <span id="top1Signals">0</span>
                     </div>
                 </div>
 
-                <!-- Score Month -->
-                <div class="tab-pane fade" id="month" role="tabpanel">
-                    <div class="loading-spinner">
-                        <div class="spinner-border text-primary" role="status">
-                            <span class="visually-hidden">Загрузка...</span>
-                        </div>
-                        <p class="mt-2">Анализ данных...</p>
+                <!-- Топ-2 результат -->
+                <div class="bg-gradient-to-r from-gray-50 to-gray-100 border border-gray-300 rounded-lg p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-2xl">🥈</span>
+                        <span class="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded-full">TOP 2</span>
                     </div>
-                    <div class="results-table">
-                        <table class="table table-hover">
-                            <thead class="table-light sticky-top">
-                                <tr>
-                                    <th>Score Month Min</th>
-                                    <th>Кол-во сигналов</th>
-                                    <th>Общий P&L</th>
-                                    <th>Действия</th>
-                                </tr>
-                            </thead>
-                            <tbody id="monthResults"></tbody>
-                        </table>
+                    <div class="text-xs text-gray-600 mb-1">Фильтры</div>
+                    <div class="text-sm font-semibold mb-2" id="top2Filters">-</div>
+                    <div class="text-xs text-gray-600 mb-1">Общий P&L за 30 дней</div>
+                    <div class="text-xl font-bold" id="top2Pnl">$0.00</div>
+                    <div class="text-xs text-gray-500 mt-1">
+                        Win Rate: <span id="top2WinRate">0%</span> | 
+                        Сигналов: <span id="top2Signals">0</span>
                     </div>
                 </div>
 
-                <!-- Combined -->
-                <div class="tab-pane fade" id="combined" role="tabpanel">
-                    <div class="loading-spinner">
-                        <div class="spinner-border text-primary" role="status">
-                            <span class="visually-hidden">Загрузка...</span>
-                        </div>
-                        <p class="mt-2">Анализ данных...</p>
+                <!-- Топ-3 результат -->
+                <div class="bg-gradient-to-r from-orange-50 to-orange-100 border border-orange-300 rounded-lg p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-2xl">🥉</span>
+                        <span class="text-xs bg-orange-200 text-orange-800 px-2 py-1 rounded-full">TOP 3</span>
                     </div>
-                    <div class="results-table">
-                        <table class="table table-hover">
-                            <thead class="table-light sticky-top">
-                                <tr>
-                                    <th>Score Week Min</th>
-                                    <th>Score Month Min</th>
-                                    <th>Кол-во сигналов</th>
-                                    <th>Общий P&L</th>
-                                    <th>Действия</th>
-                                </tr>
-                            </thead>
-                            <tbody id="combinedResults"></tbody>
-                        </table>
+                    <div class="text-xs text-gray-600 mb-1">Фильтры</div>
+                    <div class="text-sm font-semibold mb-2" id="top3Filters">-</div>
+                    <div class="text-xs text-gray-600 mb-1">Общий P&L за 30 дней</div>
+                    <div class="text-xl font-bold" id="top3Pnl">$0.00</div>
+                    <div class="text-xs text-gray-500 mt-1">
+                        Win Rate: <span id="top3WinRate">0%</span> | 
+                        Сигналов: <span id="top3Signals">0</span>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
 
-    <!-- Модальное окно для детальной информации -->
-    <div class="modal fade" id="detailsModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Детальная информация по дням</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <strong>Параметры:</strong> <span id="modalParams"></span>
-                    </div>
-                    <div class="mb-3">
-                        <strong>Общий P&L:</strong> <span id="modalTotalPnl"></span>
-                    </div>
-                    <div class="daily-details-table">
-                        <table class="table table-sm">
-                            <thead class="table-light sticky-top">
-                                <tr>
-                                    <th>Дата</th>
-                                    <th>Сигналов</th>
-                                    <th>Побед</th>
-                                    <th>Поражений</th>
-                                    <th>P&L за день</th>
-                                </tr>
-                            </thead>
-                            <tbody id="dailyDetailsBody"></tbody>
-                        </table>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
-                </div>
+        <!-- Таблица всех результатов -->
+        <div class="bg-white rounded-lg shadow-lg overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
+                <h2 class="text-lg font-semibold text-gray-800">
+                    <i class="fas fa-table mr-2 text-blue-600"></i>
+                    Все комбинации фильтров
+                </h2>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                #
+                            </th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Score Week
+                            </th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Score Month
+                            </th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Всего сигналов
+                            </th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Win Rate
+                            </th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Средний P&L/день
+                            </th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Общий P&L (30 дней)
+                            </th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Действия
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200" id="resultsTableBody">
+                        <!-- Заполняется через JS -->
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script>
-        let currentResults = {};
+    <!-- Модальное окно с детализацией по дням -->
+    <div id="detailsModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden overflow-y-auto h-full w-full z-50">
+        <div class="relative top-20 mx-auto p-5 border w-full max-w-4xl shadow-lg rounded-md bg-white">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-gray-900">
+                    <i class="fas fa-calendar-alt mr-2 text-blue-600"></i>
+                    Детализация по дням
+                </h3>
+                <button onclick="closeDetailsModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            
+            <div class="mb-4 p-3 bg-gray-50 rounded-lg">
+                <div class="grid grid-cols-3 gap-4 text-sm">
+                    <div>
+                        <span class="text-gray-600">Фильтры:</span>
+                        <span class="font-semibold ml-1" id="modalFilters">-</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-600">Период:</span>
+                        <span class="font-semibold ml-1" id="modalPeriod">-</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-600">Итого P&L:</span>
+                        <span class="font-semibold ml-1" id="modalTotalPnl">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto max-h-96">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50 sticky top-0">
+                        <tr>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Дата</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Сигналов</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">TP</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">SL</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Timeout</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">P&L за день</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200" id="dailyDetailsBody">
+                        <!-- Заполняется через JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="mt-4 flex justify-end">
+                <button onclick="closeDetailsModal()" 
+                        class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md">
+                    Закрыть
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    
+    .loading-pulse {
+        animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let analysisResults = [];
+    let currentUserSettings = {};
+
+    // Загрузка текущих настроек пользователя
+    async function loadUserSettings() {
+        try {
+            const response = await fetch('/api/get_user_trading_mode');
+            const data = await response.json();
+            currentUserSettings = data;
+            
+            // Обновляем отображение параметров
+            const modeText = data.use_trailing_stop ? 
+                `Trailing Stop (${data.trailing_activation_pct}%/${data.trailing_distance_pct}%)` : 
+                'Fixed TP/SL';
+            
+            document.getElementById('tradingMode').textContent = modeText;
+            document.getElementById('tpSlParams').textContent = `${data.take_profit_percent}% / ${data.stop_loss_percent}%`;
+            document.getElementById('positionParams').textContent = `$${data.position_size} / ${data.leverage}x`;
+        } catch (error) {
+            console.error('Ошибка загрузки настроек:', error);
+        }
+    }
+
+    // Запуск анализа
+    async function startAnalysis() {
+        const button = document.getElementById('startBtn');
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Анализ запущен...';
         
-        $(document).ready(function() {
-            // Загрузка данных при открытии вкладки
-            $('.nav-link[data-bs-toggle="pill"]').on('shown.bs.tab', function(e) {
-                const analysisType = $(e.target).data('analysis-type');
-                loadAnalysisData(analysisType);
-            });
-            
-            // Загружаем данные для первой вкладки
-            loadAnalysisData('score_week');
-        });
+        // Показываем прогресс
+        document.getElementById('progressContainer').style.display = 'block';
+        document.getElementById('resultsContainer').style.display = 'none';
         
-        function loadAnalysisData(type) {
-            const tabPane = getTabPaneByType(type);
-            const spinner = tabPane.find('.loading-spinner');
-            const table = tabPane.find('.results-table');
-            
-            spinner.show();
-            table.hide();
-            
-            $.ajax({
-                url: '/api/efficiency/analyze',
+        try {
+            const response = await fetch('/api/efficiency/analyze_30days', {
                 method: 'POST',
-                contentType: 'application/json',
-                data: JSON.stringify({ type: type }),
-                success: function(response) {
-                    if (response.status === 'success') {
-                        currentResults[type] = response.results;
-                        displayResults(type, response.results);
-                        updateStatistics(response.results);
-                    }
-                },
-                error: function(xhr) {
-                    console.error('Ошибка загрузки данных:', xhr);
-                    alert('Ошибка при загрузке данных анализа');
-                },
-                complete: function() {
-                    spinner.hide();
-                    table.show();
-                }
-            });
-        }
-        
-        function getTabPaneByType(type) {
-            switch(type) {
-                case 'score_week': return $('#week');
-                case 'score_month': return $('#month');
-                case 'combined': return $('#combined');
-            }
-        }
-        
-        function displayResults(type, results) {
-            let tbody;
-            let html = '';
-            
-            switch(type) {
-                case 'score_week':
-                    tbody = $('#weekResults');
-                    results.forEach((item, index) => {
-                        const rowClass = index === 0 ? 'best-result' : '';
-                        const pnlClass = item.total_pnl >= 0 ? 'positive-pnl' : 'negative-pnl';
-                        html += `
-                            <tr class="${rowClass}">
-                                <td>${item.score_week}</td>
-                                <td>${item.signal_count}</td>
-                                <td class="${pnlClass}">$${item.total_pnl.toFixed(2)}</td>
-                                <td>
-                                    <button class="btn btn-sm btn-primary" 
-                                            onclick="showDetails('${type}', ${index})">
-                                        <i class="bi bi-eye"></i> Подробности
-                                    </button>
-                                </td>
-                            </tr>
-                        `;
-                    });
-                    break;
-                    
-                case 'score_month':
-                    tbody = $('#monthResults');
-                    results.forEach((item, index) => {
-                        const rowClass = index === 0 ? 'best-result' : '';
-                        const pnlClass = item.total_pnl >= 0 ? 'positive-pnl' : 'negative-pnl';
-                        html += `
-                            <tr class="${rowClass}">
-                                <td>${item.score_month}</td>
-                                <td>${item.signal_count}</td>
-                                <td class="${pnlClass}">$${item.total_pnl.toFixed(2)}</td>
-                                <td>
-                                    <button class="btn btn-sm btn-primary" 
-                                            onclick="showDetails('${type}', ${index})">
-                                        <i class="bi bi-eye"></i> Подробности
-                                    </button>
-                                </td>
-                            </tr>
-                        `;
-                    });
-                    break;
-                    
-                case 'combined':
-                    tbody = $('#combinedResults');
-                    results.forEach((item, index) => {
-                        const rowClass = index === 0 ? 'best-result' : '';
-                        const pnlClass = item.total_pnl >= 0 ? 'positive-pnl' : 'negative-pnl';
-                        html += `
-                            <tr class="${rowClass}">
-                                <td>${item.score_week}</td>
-                                <td>${item.score_month}</td>
-                                <td>${item.signal_count}</td>
-                                <td class="${pnlClass}">$${item.total_pnl.toFixed(2)}</td>
-                                <td>
-                                    <button class="btn btn-sm btn-primary" 
-                                            onclick="showDetails('${type}', ${index})">
-                                        <i class="bi bi-eye"></i> Подробности
-                                    </button>
-                                </td>
-                            </tr>
-                        `;
-                    });
-                    break;
-            }
-            
-            tbody.html(html);
-        }
-        
-        function updateStatistics(results) {
-            if (results.length === 0) return;
-            
-            $('#statsContainer').show();
-            
-            // Лучший результат
-            const bestResult = results[0];
-            $('#bestPnl').text('$' + bestResult.total_pnl.toFixed(2))
-                .removeClass('positive-pnl negative-pnl')
-                .addClass(bestResult.total_pnl >= 0 ? 'positive-pnl' : 'negative-pnl');
-            
-            // Всего сигналов
-            const totalSignals = results.reduce((sum, r) => sum + r.signal_count, 0);
-            $('#totalSignals').text(Math.round(totalSignals / results.length));
-            
-            // Средний P&L
-            const avgPnl = results.reduce((sum, r) => sum + r.total_pnl, 0) / results.length;
-            $('#avgPnl').text('$' + avgPnl.toFixed(2));
-            
-            // Прибыльных стратегий
-            const profitable = results.filter(r => r.total_pnl > 0).length;
-            $('#profitableCount').text(profitable + '/' + results.length);
-        }
-        
-        function showDetails(type, index) {
-            const result = currentResults[type][index];
-            
-            // Установка параметров
-            let params = '';
-            if (result.score_week !== undefined && result.score_month !== undefined) {
-                params = `Score Week ≥ ${result.score_week}, Score Month ≥ ${result.score_month}`;
-            } else if (result.score_week !== undefined) {
-                params = `Score Week ≥ ${result.score_week}`;
-            } else if (result.score_month !== undefined) {
-                params = `Score Month ≥ ${result.score_month}`;
-            }
-            
-            $('#modalParams').text(params);
-            $('#modalTotalPnl').text('$' + result.total_pnl.toFixed(2))
-                .removeClass('positive-pnl negative-pnl')
-                .addClass(result.total_pnl >= 0 ? 'positive-pnl' : 'negative-pnl');
-            
-            // Заполнение таблицы по дням
-            let dailyHtml = '';
-            result.daily_data.forEach(day => {
-                const pnlClass = day.daily_pnl >= 0 ? 'positive-pnl' : 'negative-pnl';
-                dailyHtml += `
-                    <tr>
-                        <td>${day.date}</td>
-                        <td>${day.signal_count}</td>
-                        <td class="text-success">${day.wins}</td>
-                        <td class="text-danger">${day.losses}</td>
-                        <td class="${pnlClass}">$${day.daily_pnl.toFixed(2)}</td>
-                    </tr>
-                `;
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({})
             });
             
-            $('#dailyDetailsBody').html(dailyHtml);
+            if (!response.ok) {
+                throw new Error('Ошибка сервера');
+            }
             
-            // Показ модального окна
-            const modal = new bootstrap.Modal(document.getElementById('detailsModal'));
-            modal.show();
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                analysisResults = result.data;
+                displayResults(result.data);
+                showNotification('Анализ успешно завершен', 'success');
+            } else {
+                throw new Error(result.message || 'Ошибка анализа');
+            }
+        } catch (error) {
+            console.error('Ошибка:', error);
+            showNotification('Ошибка при выполнении анализа: ' + error.message, 'error');
+        } finally {
+            button.disabled = false;
+            button.innerHTML = '<i class="fas fa-play mr-2"></i>Запустить анализ';
+            document.getElementById('progressContainer').style.display = 'none';
         }
-    </script>
-</body>
-</html>
+    }
+
+    // Обновление прогресса
+    function updateProgress(percent, text) {
+        document.getElementById('progressBar').style.width = percent + '%';
+        document.getElementById('currentProgress').textContent = text;
+        document.getElementById('progressDetails').textContent = `Обработано ${percent}%`;
+    }
+
+    // Отображение результатов
+    function displayResults(data) {
+        // Сортируем по убыванию P&L
+        data.sort((a, b) => b.total_pnl - a.total_pnl);
+        
+        // Показываем топ-3
+        if (data.length > 0) {
+            const top1 = data[0];
+            document.getElementById('top1Filters').textContent = `Week ≥${top1.score_week}%, Month ≥${top1.score_month}%`;
+            document.getElementById('top1Pnl').textContent = formatPnL(top1.total_pnl);
+            document.getElementById('top1Pnl').className = getPnLClass(top1.total_pnl, 'text-xl font-bold');
+            document.getElementById('top1WinRate').textContent = `${top1.win_rate.toFixed(1)}%`;
+            document.getElementById('top1Signals').textContent = top1.total_signals;
+        }
+        
+        if (data.length > 1) {
+            const top2 = data[1];
+            document.getElementById('top2Filters').textContent = `Week ≥${top2.score_week}%, Month ≥${top2.score_month}%`;
+            document.getElementById('top2Pnl').textContent = formatPnL(top2.total_pnl);
+            document.getElementById('top2Pnl').className = getPnLClass(top2.total_pnl, 'text-xl font-bold');
+            document.getElementById('top2WinRate').textContent = `${top2.win_rate.toFixed(1)}%`;
+            document.getElementById('top2Signals').textContent = top2.total_signals;
+        }
+        
+        if (data.length > 2) {
+            const top3 = data[2];
+            document.getElementById('top3Filters').textContent = `Week ≥${top3.score_week}%, Month ≥${top3.score_month}%`;
+            document.getElementById('top3Pnl').textContent = formatPnL(top3.total_pnl);
+            document.getElementById('top3Pnl').className = getPnLClass(top3.total_pnl, 'text-xl font-bold');
+            document.getElementById('top3WinRate').textContent = `${top3.win_rate.toFixed(1)}%`;
+            document.getElementById('top3Signals').textContent = top3.total_signals;
+        }
+        
+        // Заполняем таблицу
+        const tbody = document.getElementById('resultsTableBody');
+        tbody.innerHTML = data.map((item, index) => {
+            const rowClass = index === 0 ? 'bg-yellow-50' : index === 1 ? 'bg-gray-50' : index === 2 ? 'bg-orange-50' : '';
+            const avgDailyPnl = item.total_pnl / 30;
+            
+            return `
+                <tr class="${rowClass} hover:bg-gray-100 transition-colors">
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                        ${index + 1}
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                        ≥${item.score_week}%
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                        ≥${item.score_month}%
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                        ${item.total_signals}
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm">
+                        <span class="px-2 py-1 text-xs rounded-full ${
+                            item.win_rate >= 60 ? 'bg-green-100 text-green-800' :
+                            item.win_rate >= 50 ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-red-100 text-red-800'
+                        }">
+                            ${item.win_rate.toFixed(1)}%
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm ${getPnLClass(avgDailyPnl)}">
+                        ${formatPnL(avgDailyPnl)}
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-bold ${getPnLClass(item.total_pnl)}">
+                        ${formatPnL(item.total_pnl)}
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm">
+                        <button onclick="showDetails(${index})" 
+                                class="text-blue-600 hover:text-blue-800 font-medium">
+                            <i class="fas fa-chart-bar mr-1"></i>
+                            Детали
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+        
+        // Показываем результаты
+        document.getElementById('resultsContainer').style.display = 'block';
+    }
+
+    // Показать детали
+    function showDetails(index) {
+        const result = analysisResults[index];
+        
+        document.getElementById('modalFilters').textContent = 
+            `Score Week ≥${result.score_week}%, Score Month ≥${result.score_month}%`;
+        document.getElementById('modalPeriod').textContent = 
+            `${result.start_date} - ${result.end_date}`;
+        document.getElementById('modalTotalPnl').textContent = formatPnL(result.total_pnl);
+        document.getElementById('modalTotalPnl').className = getPnLClass(result.total_pnl, 'font-semibold ml-1');
+        
+        // Заполняем таблицу по дням
+        const tbody = document.getElementById('dailyDetailsBody');
+        tbody.innerHTML = result.daily_breakdown.map(day => {
+            return `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-2 text-sm text-gray-900">${day.date}</td>
+                    <td class="px-4 py-2 text-sm text-gray-900">${day.signal_count}</td>
+                    <td class="px-4 py-2 text-sm text-green-600">${day.tp_count}</td>
+                    <td class="px-4 py-2 text-sm text-red-600">${day.sl_count}</td>
+                    <td class="px-4 py-2 text-sm text-gray-500">${day.timeout_count}</td>
+                    <td class="px-4 py-2 text-sm font-semibold ${getPnLClass(day.daily_pnl)}">
+                        ${formatPnL(day.daily_pnl)}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+        
+        document.getElementById('detailsModal').classList.remove('hidden');
+    }
+
+    // Закрыть модальное окно
+    function closeDetailsModal() {
+        document.getElementById('detailsModal').classList.add('hidden');
+    }
+
+    // Форматирование P&L
+    function formatPnL(value) {
+        const prefix = value >= 0 ? '+' : '';
+        return prefix + '$' + Math.abs(value).toFixed(2);
+    }
+
+    // Получение класса для P&L
+    function getPnLClass(value, additionalClasses = '') {
+        const baseClass = value >= 0 ? 'text-green-600' : 'text-red-600';
+        return additionalClasses ? `${baseClass} ${additionalClasses}` : baseClass;
+    }
+
+    // Показ уведомлений
+    function showNotification(message, type) {
+        const notification = document.createElement('div');
+        notification.className = `fixed top-4 right-4 px-6 py-4 rounded-lg shadow-lg transition-all duration-500 z-50 ${
+            type === 'success' ? 'bg-green-500 text-white' :
+            type === 'error' ? 'bg-red-500 text-white' :
+            'bg-blue-500 text-white'
+        }`;
+        notification.innerHTML = `
+            <div class="flex items-center">
+                <i class="fas ${
+                    type === 'success' ? 'fa-check-circle' :
+                    type === 'error' ? 'fa-exclamation-circle' :
+                    'fa-info-circle'
+                } mr-3"></i>
+                <span>${message}</span>
+            </div>
+        `;
+        
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+            notification.style.opacity = '0';
+            setTimeout(() => notification.remove(), 500);
+        }, 3000);
+    }
+
+    // Инициализация при загрузке страницы
+    document.addEventListener('DOMContentLoaded', function() {
+        loadUserSettings();
+    });
+</script>
+{% endblock %}
