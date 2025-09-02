@@ -1317,6 +1317,7 @@ def api_efficiency_analyze_30days_progress():
     user_id = current_user.id
     
     def generate():
+        nonlocal session_id, force_recalc  # Указываем, что используем внешние переменные
         try:
             # Если это новая сессия (новый запуск анализа, а не переподключение)
             is_new_session = not session_id or session_id.startswith('eff_')
