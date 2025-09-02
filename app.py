@@ -1278,6 +1278,9 @@ def api_efficiency_analyze_30days_progress():
     import json
     import time
     
+    # Сохраняем user_id до создания генератора
+    user_id = current_user.id
+    
     def generate():
         try:
             # Получаем настройки пользователя
@@ -1287,7 +1290,7 @@ def api_efficiency_analyze_30days_progress():
                 FROM web.user_signal_filters
                 WHERE user_id = %s
             """
-            user_settings = db.execute_query(settings_query, (current_user.id,), fetch=True)
+            user_settings = db.execute_query(settings_query, (user_id,), fetch=True)
             
             if not user_settings:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Настройки пользователя не найдены'})}\n\n"
@@ -1360,10 +1363,10 @@ def api_efficiency_analyze_30days_progress():
                         }
                         
                         if raw_signals:
-                            session_id = f"eff_{current_user.id}_{uuid.uuid4().hex[:8]}"
+                            session_id = f"eff_{user_id}_{uuid.uuid4().hex[:8]}"
                             
                             result = process_scoring_signals_batch(
-                                db, raw_signals, session_id, current_user.id,
+                                db, raw_signals, session_id, user_id,
                                 tp_percent=tp_percent,
                                 sl_percent=sl_percent,
                                 position_size=position_size,
@@ -1390,7 +1393,7 @@ def api_efficiency_analyze_30days_progress():
                                 DELETE FROM web.scoring_analysis_temp
                                 WHERE session_id = %s AND user_id = %s
                             """
-                            db.execute_query(cleanup_query, (session_id, current_user.id))
+                            db.execute_query(cleanup_query, (session_id, user_id))
                         
                         combination_result['daily_breakdown'].append(daily_stats)
                         current_date += timedelta(days=1)
