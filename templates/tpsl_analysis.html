@@ -627,10 +627,46 @@
         }, 3000);
     }
 
+    // Функция загрузки сохраненных результатов
+    async function loadCachedResults() {
+        try {
+            const response = await fetch('/api/analysis/get_cached_results/tp_sl');
+            const data = await response.json();
+            
+            if (data.status === 'success' && data.has_cached && data.data) {
+                const cachedData = data.data;
+                
+                // Отображаем сохраненные результаты
+                displayResults(cachedData.results);
+                
+                // Показываем информацию о времени сохранения
+                const timestamp = new Date(cachedData.timestamp);
+                const timeString = timestamp.toLocaleString('ru-RU');
+                
+                showNotification(`Загружены результаты анализа от ${timeString}`, 'info');
+                
+                // Восстанавливаем параметры в форме, если они отличаются
+                if (cachedData.parameters) {
+                    document.getElementById('scoreWeek').value = cachedData.parameters.score_week;
+                    document.getElementById('scoreMonth').value = cachedData.parameters.score_month;
+                    document.getElementById('tpMin').value = cachedData.parameters.tp_min;
+                    document.getElementById('tpMax').value = cachedData.parameters.tp_max;
+                    document.getElementById('slMin').value = cachedData.parameters.sl_min;
+                    document.getElementById('slMax').value = cachedData.parameters.sl_max;
+                    document.getElementById('analysisStep').value = cachedData.parameters.step;
+                    updateCombinationsCount();
+                }
+            }
+        } catch (error) {
+            console.error('Ошибка загрузки сохраненных результатов:', error);
+        }
+    }
+    
     // Инициализация
     document.addEventListener('DOMContentLoaded', function() {
         loadUserSettings();
         updateCombinationsCount();
+        loadCachedResults(); // Загружаем сохраненные результаты
         
         ['tpMin', 'tpMax', 'slMin', 'slMax', 'analysisStep'].forEach(id => {
             document.getElementById(id).addEventListener('input', updateCombinationsCount);

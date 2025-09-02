@@ -70,6 +70,14 @@ try:
 except Exception as e:
     logger.error(f"Ошибка при инициализации схемы: {e}")
 
+# Глобальные переменные для хранения результатов анализа
+# Ключ - user_id, значение - словарь с результатами различных анализов
+analysis_results_cache = {
+    'efficiency': {},  # Результаты анализа эффективности
+    'tp_sl': {},       # Результаты анализа TP/SL
+    'trailing': {}     # Результаты анализа Trailing Stop
+}
+
 @login_manager.user_loader
 def load_user(user_id):
     """Загрузка пользователя для Flask-Login"""
@@ -1308,6 +1316,10 @@ def api_efficiency_analyze_30days_progress():
     
     def generate():
         try:
+            # Очищаем предыдущие результаты анализа эффективности для этого пользователя
+            if user_id in analysis_results_cache['efficiency']:
+                del analysis_results_cache['efficiency'][user_id]
+            
             # Отправляем немедленный heartbeat для проверки соединения
             yield f": heartbeat\n\n"
             yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
@@ -1506,6 +1518,24 @@ def api_efficiency_analyze_30days_progress():
             # Сортируем результаты по Win Rate
             results.sort(key=lambda x: x['win_rate'], reverse=True)
             
+            # Сохраняем результаты в глобальный кэш
+            analysis_results_cache['efficiency'][user_id] = {
+                'timestamp': datetime.now().isoformat(),
+                'results': results,
+                'parameters': {
+                    'score_week_min': score_week_min_param,
+                    'score_week_max': score_week_max_param,
+                    'score_month_min': score_month_min_param,
+                    'score_month_max': score_month_max_param,
+                    'step': step_param,
+                    'use_trailing_stop': use_trailing_stop,
+                    'tp_percent': tp_percent,
+                    'sl_percent': sl_percent,
+                    'position_size': position_size,
+                    'leverage': leverage
+                }
+            }
+            
             # Отправляем финальные результаты
             yield f"data: {json.dumps({'type': 'complete', 'data': results})}\n\n"
             
@@ -1551,6 +1581,10 @@ def api_tpsl_analyze_progress():
     
     def generate():
         try:
+            # Очищаем предыдущие результаты анализа TP/SL для этого пользователя
+            if user_id in analysis_results_cache['tp_sl']:
+                del analysis_results_cache['tp_sl'][user_id]
+            
             # Отправляем немедленный heartbeat
             yield f": heartbeat\n\n"
             yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
@@ -1732,6 +1766,23 @@ def api_tpsl_analyze_progress():
             # Сортируем по P&L
             results.sort(key=lambda x: x['total_pnl'], reverse=True)
             
+            # Сохраняем результаты в глобальный кэш
+            analysis_results_cache['tp_sl'][user_id] = {
+                'timestamp': datetime.now().isoformat(),
+                'results': results,
+                'parameters': {
+                    'score_week': score_week,
+                    'score_month': score_month,
+                    'tp_min': tp_min,
+                    'tp_max': tp_max,
+                    'sl_min': sl_min,
+                    'sl_max': sl_max,
+                    'step': step,
+                    'position_size': position_size,
+                    'leverage': leverage
+                }
+            }
+            
             # Отправляем результаты
             yield f"data: {json.dumps({'type': 'complete', 'data': results})}\n\n"
             
@@ -1778,6 +1829,10 @@ def api_trailing_analyze_progress():
     
     def generate():
         try:
+            # Очищаем предыдущие результаты анализа Trailing Stop для этого пользователя
+            if user_id in analysis_results_cache['trailing']:
+                del analysis_results_cache['trailing'][user_id]
+            
             # Отправляем немедленный heartbeat
             yield f": heartbeat\n\n"
             yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
@@ -1968,6 +2023,24 @@ def api_trailing_analyze_progress():
             
             # Сортируем по P&L
             results.sort(key=lambda x: x['total_pnl'], reverse=True)
+            
+            # Сохраняем результаты в глобальный кэш
+            analysis_results_cache['trailing'][user_id] = {
+                'timestamp': datetime.now().isoformat(),
+                'results': results,
+                'parameters': {
+                    'score_week': score_week,
+                    'score_month': score_month,
+                    'activation_min': activation_min,
+                    'activation_max': activation_max,
+                    'distance_min': distance_min,
+                    'distance_max': distance_max,
+                    'stop_loss': stop_loss,
+                    'step': step,
+                    'position_size': position_size,
+                    'leverage': leverage
+                }
+            }
             
             # Отправляем результаты
             yield f"data: {json.dumps({'type': 'complete', 'data': results})}\n\n"
@@ -2367,6 +2440,79 @@ def _calculate_efficiency_pnl_combined(total_score_min=60, indicator_score_min=6
             'win_rate': 0,
             'daily_data': []
         }
+
+# API endpoints для получения сохраненных результатов анализа
+@app.route('/api/analysis/get_cached_results/<analysis_type>')
+@login_required
+def get_cached_analysis_results(analysis_type):
+    """Получение сохраненных результатов анализа"""
+    try:
+        user_id = current_user.id
+        
+        # Проверяем тип анализа
+        if analysis_type not in ['efficiency', 'tp_sl', 'trailing']:
+            return jsonify({
+                'status': 'error',
+                'message': 'Неверный тип анализа'
+            }), 400
+        
+        # Проверяем наличие сохраненных результатов
+        if user_id not in analysis_results_cache[analysis_type]:
+            return jsonify({
+                'status': 'success',
+                'has_cached': False,
+                'data': None
+            })
+        
+        # Возвращаем сохраненные результаты
+        cached_data = analysis_results_cache[analysis_type][user_id]
+        return jsonify({
+            'status': 'success',
+            'has_cached': True,
+            'data': cached_data
+        })
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении кэшированных результатов: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/analysis/clear_cached_results/<analysis_type>', methods=['POST'])
+@login_required
+def clear_cached_analysis_results(analysis_type):
+    """Очистка сохраненных результатов анализа"""
+    try:
+        user_id = current_user.id
+        
+        # Проверяем тип анализа
+        if analysis_type not in ['efficiency', 'tp_sl', 'trailing', 'all']:
+            return jsonify({
+                'status': 'error',
+                'message': 'Неверный тип анализа'
+            }), 400
+        
+        # Очищаем результаты
+        if analysis_type == 'all':
+            for cache_type in ['efficiency', 'tp_sl', 'trailing']:
+                if user_id in analysis_results_cache[cache_type]:
+                    del analysis_results_cache[cache_type][user_id]
+        else:
+            if user_id in analysis_results_cache[analysis_type]:
+                del analysis_results_cache[analysis_type][user_id]
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Результаты успешно очищены'
+        })
+        
+    except Exception as e:
+        logger.error(f"Ошибка при очистке кэшированных результатов: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 # Обработка ошибок
 @app.errorhandler(404)

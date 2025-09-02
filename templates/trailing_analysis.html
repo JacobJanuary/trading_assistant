@@ -659,10 +659,47 @@
         }, 3000);
     }
 
+    // Функция загрузки сохраненных результатов
+    async function loadCachedResults() {
+        try {
+            const response = await fetch('/api/analysis/get_cached_results/trailing');
+            const data = await response.json();
+            
+            if (data.status === 'success' && data.has_cached && data.data) {
+                const cachedData = data.data;
+                
+                // Отображаем сохраненные результаты
+                displayResults(cachedData.results);
+                
+                // Показываем информацию о времени сохранения
+                const timestamp = new Date(cachedData.timestamp);
+                const timeString = timestamp.toLocaleString('ru-RU');
+                
+                showNotification(`Загружены результаты анализа от ${timeString}`, 'info');
+                
+                // Восстанавливаем параметры в форме, если они отличаются
+                if (cachedData.parameters) {
+                    document.getElementById('scoreWeek').value = cachedData.parameters.score_week;
+                    document.getElementById('scoreMonth').value = cachedData.parameters.score_month;
+                    document.getElementById('activationMin').value = cachedData.parameters.activation_min;
+                    document.getElementById('activationMax').value = cachedData.parameters.activation_max;
+                    document.getElementById('distanceMin').value = cachedData.parameters.distance_min;
+                    document.getElementById('distanceMax').value = cachedData.parameters.distance_max;
+                    document.getElementById('stopLoss').value = cachedData.parameters.stop_loss;
+                    document.getElementById('analysisStep').value = cachedData.parameters.step;
+                    updateCombinationsCount();
+                }
+            }
+        } catch (error) {
+            console.error('Ошибка загрузки сохраненных результатов:', error);
+        }
+    }
+    
     // Инициализация
     document.addEventListener('DOMContentLoaded', function() {
         loadUserSettings();
         updateCombinationsCount();
+        loadCachedResults(); // Загружаем сохраненные результаты
         
         ['activationMin', 'activationMax', 'distanceMin', 'distanceMax', 'analysisStep'].forEach(id => {
             document.getElementById(id).addEventListener('input', updateCombinationsCount);

@@ -713,10 +713,44 @@
         document.getElementById('combinationsCount').textContent = `Комбинаций: ${total}`;
     }
     
+    // Функция загрузки сохраненных результатов
+    async function loadCachedResults() {
+        try {
+            const response = await fetch('/api/analysis/get_cached_results/efficiency');
+            const data = await response.json();
+            
+            if (data.status === 'success' && data.has_cached && data.data) {
+                const cachedData = data.data;
+                
+                // Отображаем сохраненные результаты
+                displayResults(cachedData.results);
+                
+                // Показываем информацию о времени сохранения
+                const timestamp = new Date(cachedData.timestamp);
+                const timeString = timestamp.toLocaleString('ru-RU');
+                
+                showNotification(`Загружены результаты анализа от ${timeString}`, 'info');
+                
+                // Восстанавливаем параметры в форме, если они отличаются
+                if (cachedData.parameters) {
+                    document.getElementById('scoreWeekMin').value = cachedData.parameters.score_week_min;
+                    document.getElementById('scoreWeekMax').value = cachedData.parameters.score_week_max;
+                    document.getElementById('scoreMonthMin').value = cachedData.parameters.score_month_min;
+                    document.getElementById('scoreMonthMax').value = cachedData.parameters.score_month_max;
+                    document.getElementById('analysisStep').value = cachedData.parameters.step;
+                    updateCombinationsCount();
+                }
+            }
+        } catch (error) {
+            console.error('Ошибка загрузки сохраненных результатов:', error);
+        }
+    }
+    
     // Инициализация при загрузке страницы
     document.addEventListener('DOMContentLoaded', function() {
         loadUserSettings();
         updateCombinationsCount();
+        loadCachedResults(); // Загружаем сохраненные результаты
         
         // Добавляем обработчики для пересчета комбинаций
         ['scoreWeekMin', 'scoreWeekMax', 'scoreMonthMin', 'scoreMonthMax', 'analysisStep'].forEach(id => {
