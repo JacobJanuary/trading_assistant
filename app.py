@@ -1290,6 +1290,10 @@ def api_efficiency_analyze_30days_progress():
     
     def generate():
         try:
+            # Отправляем немедленный heartbeat для проверки соединения
+            yield f": heartbeat\n\n"
+            yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+            
             # Переменная для отслеживания времени последнего heartbeat
             last_heartbeat = time.time()
             
@@ -1328,6 +1332,7 @@ def api_efficiency_analyze_30days_progress():
             
             # Отправляем начальное сообщение
             yield f"data: {json.dumps({'type': 'start', 'message': 'Инициализация анализа за 30 дней...', 'total_combinations': total_combinations})}\n\n"
+            yield f": heartbeat\n\n"  # Немедленный heartbeat после старта
             
             # Перебираем все комбинации на основе пользовательских настроек
             for score_week_min in week_steps:
@@ -1351,6 +1356,9 @@ def api_efficiency_analyze_30days_progress():
                     progress_percent = int((current_combination - 0.5) / total_combinations * 100)
                     yield f"data: {json.dumps({'type': 'progress', 'percent': progress_percent, 'message': f'Анализ комбинации {current_combination}/{total_combinations}: Week≥{score_week_min}%, Month≥{score_month_min}%', 'current_combination': current_combination, 'total_combinations': total_combinations})}\n\n"
                     
+                    # Отправляем heartbeat после каждого обновления прогресса
+                    yield f": heartbeat\n\n"
+                    
                     # Обрабатываем каждый день
                     current_date = start_date
                     days_processed = 0
@@ -1359,14 +1367,15 @@ def api_efficiency_analyze_30days_progress():
                         days_processed += 1
                         date_str = current_date.strftime('%Y-%m-%d')
                         
-                        # Отправляем heartbeat каждые 5 секунд
+                        # Отправляем heartbeat каждые 2 секунды для надежности
                         current_time = time.time()
-                        if current_time - last_heartbeat > 5:
+                        if current_time - last_heartbeat > 2:
                             yield f": heartbeat\n\n"
+                            yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
                             last_heartbeat = current_time
                         
-                        # Обновляем прогресс только каждые 5 дней для уменьшения нагрузки
-                        if days_processed % 5 == 0 or days_processed == 1 or days_processed == 30:
+                        # Обновляем прогресс каждые 3 дня для баланса между информативностью и производительностью
+                        if days_processed % 3 == 0 or days_processed == 1 or days_processed == 30:
                             detail_progress = progress_percent + int((days_processed / 30) * (100 / total_combinations) * 0.9)
                             yield f"data: {json.dumps({'type': 'progress_detail', 'percent': detail_progress, 'message': f'Комбинация {current_combination}/{total_combinations}: обработка дня {days_processed}/30', 'date': date_str})}\n\n"
                         
@@ -1482,7 +1491,15 @@ def api_efficiency_analyze_30days_progress():
             logger.error(traceback.format_exc())
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
-    return Response(generate(), mimetype='text/event-stream')
+    return Response(
+        generate(), 
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'  # Для nginx
+        }
+    )
 
 @app.route('/api/efficiency/analyze_30days', methods=['POST'])
 @login_required

@@ -326,8 +326,24 @@
         }
     }
 
+    let analysisInProgress = false;
+    let currentEventSource = null;
+    
     // Запуск анализа с SSE для отслеживания прогресса
     function startAnalysis() {
+        // Проверяем, не запущен ли уже анализ
+        if (analysisInProgress) {
+            showNotification('Анализ уже выполняется. Пожалуйста, дождитесь завершения.', 'warning');
+            return;
+        }
+        
+        // Закрываем предыдущее соединение, если оно было
+        if (currentEventSource) {
+            currentEventSource.close();
+            currentEventSource = null;
+        }
+        
+        analysisInProgress = true;
         const button = document.getElementById('startBtn');
         button.disabled = true;
         button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Анализ запущен...';
@@ -382,13 +398,17 @@
         
         eventSource.onmessage = function(event) {
             lastActivity = Date.now();
-            const data = JSON.parse(event.data);
+            reconnectAttempts = 0; // Сбрасываем счетчик при успешном получении сообщения
             
-            switch(data.type) {
-                case 'start':
-                    updateProgress(0, data.message);
-                    document.getElementById('progressDetails').textContent = `Всего комбинаций для анализа: ${data.total_combinations}`;
-                    break;
+            try {
+                const data = JSON.parse(event.data);
+                console.log('Received SSE message:', data.type, data);
+                
+                switch(data.type) {
+                    case 'start':
+                        updateProgress(0, data.message);
+                        document.getElementById('progressDetails').textContent = `Всего комбинаций для анализа: ${data.total_combinations}`;
+                        break;
                     
                 case 'progress':
                     updateProgress(data.percent, data.message);
@@ -420,6 +440,8 @@
                     // Анализ завершен
                     clearInterval(activityTimeout);
                     eventSource.close();
+                    currentEventSource = null;
+                    analysisInProgress = false;
                     analysisResults = data.data;
                     displayResults(data.data);
                     showNotification('Анализ успешно завершен', 'success');
@@ -430,9 +452,19 @@
                     // Ошибка
                     clearInterval(activityTimeout);
                     eventSource.close();
+                    currentEventSource = null;
+                    analysisInProgress = false;
                     showNotification('Ошибка: ' + data.message, 'error');
                     resetAnalysisButton();
                     break;
+                    
+                case 'heartbeat':
+                    // Heartbeat сообщение для поддержания соединения
+                    console.log('Heartbeat received');
+                    break;
+            }
+            } catch (error) {
+                console.error('Error parsing SSE message:', error, event.data);
             }
         };
         
@@ -449,14 +481,18 @@
             }
         };
         
+        currentEventSource = eventSource;
         return eventSource;
         }
         
         // Функция сброса кнопки
         function resetAnalysisButton() {
+            const button = document.getElementById('startBtn');
             button.disabled = false;
             button.innerHTML = '<i class="fas fa-play mr-2"></i>Запустить анализ';
             document.getElementById('progressContainer').style.display = 'none';
+            analysisInProgress = false;
+            currentEventSource = null;
         }
         
         // Запускаем первое соединение
