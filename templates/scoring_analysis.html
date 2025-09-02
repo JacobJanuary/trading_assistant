@@ -12,299 +12,145 @@
     <!-- Фильтр даты с информацией о рынке -->
     <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
         <h2 class="text-lg font-semibold text-gray-800 mb-4">
-            <i class="fas fa-calendar-alt mr-2 text-blue-600"></i>
-            Выбор даты и анализ рынка
+            <i class="fas fa-filter mr-2 text-blue-600"></i>
+            Параметры фильтрации
         </h2>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <!-- Выбор даты -->
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-2">Дата анализа</label>
-                <input type="date" id="dateFilter"
-                       value="{{ selected_date }}"
-                       min="{{ date_range.min_date }}"
-                       max="{{ date_range.max_date }}"
-                       onchange="updateDateInfo()"
-                       class="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
-                <span class="text-xs text-gray-600 mt-1 block">
-                Доступно: {{ date_range.min_date }} — {{ date_range.max_date }}
-            </span>
-            </div>
-
-            <!-- Информация о режимах рынка -->
-            <div id="marketInfo" class="bg-gray-50 p-4 rounded-lg">
-                <h3 class="text-sm font-semibold text-gray-700 mb-3">Режимы рынка в выбранный день</h3>
-                <div id="marketRegimes" class="grid grid-cols-3 gap-2 mb-3">
-                    <!-- Заполняется через JS -->
-                </div>
-                <div id="dominantRegime" class="text-sm text-gray-600">
-                    <!-- Заполняется через JS -->
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Конструкторы фильтров -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <!-- Конструктор BUY сигналов -->
-        <div class="bg-white rounded-lg shadow-lg overflow-hidden">
-            <div class="bg-green-600 text-white px-6 py-3">
-                <h3 class="text-lg font-semibold">
-                    <i class="fas fa-arrow-up mr-2"></i>
-                    Конструктор BUY сигналов
-                </h3>
-            </div>
-            <div class="p-6">
-                <div class="space-y-4" id="buyFilterForm">
-                    <!-- Рынок -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
-                            Рынок (опционально)
-                        </label>
-                        <select id="buyMarket" class="w-full px-3 py-2 border border-gray-300 rounded-md">
-                            <option value="">Любой</option>
-                            <option value="BULL">BULL (Бычий)</option>
-                            <option value="NEUTRAL">NEUTRAL (Нейтральный)</option>
-                            <option value="BEAR">BEAR (Медвежий)</option>
-                        </select>
-                    </div>
-
-                    <!-- Recommended Action -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
-                            Рекомендация (опционально)
-                        </label>
-                        <select id="buyRecommended" class="w-full px-3 py-2 border border-gray-300 rounded-md">
-                            <option value="">Любая</option>
-                            <option value="STRONG_BUY">STRONG_BUY</option>
-                            <option value="BUY">BUY</option>
-                        </select>
-                    </div>
-                    <!-- Total Score -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Total Score</label>
-                        <div class="grid grid-cols-2 gap-2">
-                            <input type="number" id="buyTotalMin" placeholder="Min (-100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                            <input type="number" id="buyTotalMax" placeholder="Max (100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                        </div>
-                    </div>
-
-                    <!-- Indicator Score -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Indicator Score</label>
-                        <div class="grid grid-cols-2 gap-2">
-                            <input type="number" id="buyIndicatorMin" placeholder="Min (-100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                            <input type="number" id="buyIndicatorMax" placeholder="Max (100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                        </div>
-                    </div>
-
-                    <!-- Pattern Score -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Pattern Score</label>
-                        <div class="grid grid-cols-2 gap-2">
-                            <input type="number" id="buyPatternMin" placeholder="Min (-100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                            <input type="number" id="buyPatternMax" placeholder="Max (100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                        </div>
-                    </div>
-
-                    <!-- Combination Score -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Combination Score</label>
-                        <div class="grid grid-cols-2 gap-2">
-                            <input type="number" id="buyCombinationMin" placeholder="Min (-100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                            <input type="number" id="buyCombinationMax" placeholder="Max (100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                        </div>
-                    </div>
-
-                    <button onclick="addBuyFilter()"
-                            class="w-full bg-green-600 hover:bg-green-700 text-white py-2 rounded-md">
-                        <i class="fas fa-plus mr-2"></i>
-                        Добавить фильтр BUY
-                    </button>
+            <!-- Левая колонка: Дата и фильтры скоринга -->
+            <div class="space-y-4">
+                <!-- Выбор даты -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Дата анализа</label>
+                    <input type="date" id="dateFilter"
+                           value="{{ selected_date }}"
+                           min="{{ date_range.min_date }}"
+                           max="{{ date_range.max_date }}"
+                           onchange="updateDateInfo()"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                    <span class="text-xs text-gray-600 mt-1 block">
+                        Доступно: {{ date_range.min_date }} — {{ date_range.max_date }}
+                    </span>
                 </div>
 
-                <!-- Список активных BUY фильтров -->
-                <div class="mt-6">
-                    <h4 class="text-sm font-semibold text-gray-700 mb-2">Активные фильтры BUY:</h4>
-                    <div id="buyFiltersList" class="space-y-2 max-h-48 overflow-y-auto">
-                        <!-- Фильтры будут добавляться через JS -->
+                <!-- Фильтр Score Week -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        Минимальный Score Week
+                        <span id="scoreWeekValue" class="text-blue-600 font-semibold ml-2">0</span>
+                    </label>
+                    <div class="flex items-center space-x-3">
+                        <span class="text-sm text-gray-500">-100</span>
+                        <input type="range" id="scoreWeekFilter"
+                               min="-100" max="100" step="1" value="0"
+                               oninput="updateScoreDisplay('week', this.value)"
+                               class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                        <span class="text-sm text-gray-500">100</span>
+                    </div>
+                </div>
+
+                <!-- Фильтр Score Month -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        Минимальный Score Month
+                        <span id="scoreMonthValue" class="text-blue-600 font-semibold ml-2">0</span>
+                    </label>
+                    <div class="flex items-center space-x-3">
+                        <span class="text-sm text-gray-500">-100</span>
+                        <input type="range" id="scoreMonthFilter"
+                               min="-100" max="100" step="1" value="0"
+                               oninput="updateScoreDisplay('month', this.value)"
+                               class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                        <span class="text-sm text-gray-500">100</span>
                     </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Конструктор SELL сигналов -->
-        <div class="bg-white rounded-lg shadow-lg overflow-hidden">
-            <div class="bg-red-600 text-white px-6 py-3">
-                <h3 class="text-lg font-semibold">
-                    <i class="fas fa-arrow-down mr-2"></i>
-                    Конструктор SELL сигналов
-                </h3>
-            </div>
-            <div class="p-6">
-                <div class="space-y-4" id="sellFilterForm">
-                    <!-- Рынок -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
-                            Рынок (опционально)
-                        </label>
-                        <select id="sellMarket" class="w-full px-3 py-2 border border-gray-300 rounded-md">
-                            <option value="">Любой</option>
-                            <option value="BULL">BULL (Бычий)</option>
-                            <option value="NEUTRAL">NEUTRAL (Нейтральный)</option>
-                            <option value="BEAR">BEAR (Медвежий)</option>
-                        </select>
+            <!-- Правая колонка: Информация о рынке и результатах -->
+            <div class="space-y-4">
+                <!-- Информация о режимах рынка -->
+                <div id="marketInfo" class="bg-gray-50 p-4 rounded-lg">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3">Режимы рынка в выбранный день</h3>
+                    <div id="marketRegimes" class="grid grid-cols-3 gap-2 mb-3">
+                        <!-- Заполняется через JS -->
                     </div>
-
-                    <!-- Recommended Action -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
-                            Рекомендация (опционально)
-                        </label>
-                        <select id="sellRecommended" class="w-full px-3 py-2 border border-gray-300 rounded-md">
-                            <option value="">Любая</option>
-                            <option value="STRONG_SELL">STRONG_SELL</option>
-                            <option value="SELL">SELL</option>
-                        </select>
+                    <div id="dominantRegime" class="text-sm text-gray-600">
+                        <!-- Заполняется через JS -->
                     </div>
-                    <!-- Total Score -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Total Score</label>
-                        <div class="grid grid-cols-2 gap-2">
-                            <input type="number" id="sellTotalMin" placeholder="Min (-100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                            <input type="number" id="sellTotalMax" placeholder="Max (100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                        </div>
-                    </div>
-
-                    <!-- Indicator Score -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Indicator Score</label>
-                        <div class="grid grid-cols-2 gap-2">
-                            <input type="number" id="sellIndicatorMin" placeholder="Min (-100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                            <input type="number" id="sellIndicatorMax" placeholder="Max (100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                        </div>
-                    </div>
-
-                    <!-- Pattern Score -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Pattern Score</label>
-                        <div class="grid grid-cols-2 gap-2">
-                            <input type="number" id="sellPatternMin" placeholder="Min (-100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                            <input type="number" id="sellPatternMax" placeholder="Max (100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                        </div>
-                    </div>
-
-                    <!-- Combination Score -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Combination Score</label>
-                        <div class="grid grid-cols-2 gap-2">
-                            <input type="number" id="sellCombinationMin" placeholder="Min (-100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                            <input type="number" id="sellCombinationMax" placeholder="Max (100)"
-                                   min="-100" max="100" step="1"
-                                   class="px-3 py-2 border border-gray-300 rounded-md">
-                        </div>
-                    </div>
-
-                    <button onclick="addSellFilter()"
-                            class="w-full bg-red-600 hover:bg-red-700 text-white py-2 rounded-md">
-                        <i class="fas fa-plus mr-2"></i>
-                        Добавить фильтр SELL
-                    </button>
                 </div>
 
-                <!-- Список активных SELL фильтров -->
-                <div class="mt-6">
-                    <h4 class="text-sm font-semibold text-gray-700 mb-2">Активные фильтры SELL:</h4>
-                    <div id="sellFiltersList" class="space-y-2 max-h-48 overflow-y-auto">
-                        <!-- Фильтры будут добавляться через JS -->
+                <!-- Превью результатов -->
+                <div class="bg-blue-50 p-4 rounded-lg">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-2">Предварительный подсчет</h3>
+                    <div id="previewStats" class="text-sm text-gray-600">
+                        <div>Сигналов найдено: <span id="previewCount" class="font-bold text-blue-600">0</span></div>
+                        <div class="text-xs text-gray-500 mt-1">Нажмите "Применить фильтры" для детального анализа</div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Панель управления -->
+    <!-- Панель управления и параметры расчета -->
     <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
-        <div class="flex flex-wrap gap-4 items-end">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">
+            <i class="fas fa-cog mr-2 text-blue-600"></i>
+            Параметры торговли
+        </h2>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             <!-- Параметры расчета -->
-            <div class="flex-1 min-w-[200px]">
+            <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">TP %</label>
                 <input type="number" id="tpPercent" value="{{ params.tp_percent }}"
                        min="1" max="20" step="0.5"
                        class="w-full px-3 py-2 border border-gray-300 rounded-md">
             </div>
-            <div class="flex-1 min-w-[200px]">
+            <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">SL %</label>
                 <input type="number" id="slPercent" value="{{ params.sl_percent }}"
                        min="0.5" max="10" step="0.5"
                        class="w-full px-3 py-2 border border-gray-300 rounded-md">
             </div>
-            <div class="flex-1 min-w-[200px]">
+            <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">Позиция ($)</label>
                 <input type="number" id="positionSize" value="{{ params.position_size }}"
                        min="10" max="1000" step="10"
                        class="w-full px-3 py-2 border border-gray-300 rounded-md">
             </div>
-            <div class="flex-1 min-w-[200px]">
+            <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">Leverage</label>
                 <input type="number" id="leverage" value="{{ params.leverage }}"
                        min="1" max="20" step="1"
                        class="w-full px-3 py-2 border border-gray-300 rounded-md">
             </div>
-            <div class="mt-4 pt-4 border-t">
-                <div class="flex items-center space-x-4">
-                    <div class="flex items-center">
-                        <span class="text-sm font-medium text-gray-700 mr-3">Режим стратегии:</span>
-                        <span id="currentMode" class="px-3 py-1 rounded-full text-sm font-medium">
-                <!-- Заполнится через JS -->
-            </span>
-                    </div>
-                    <button onclick="switchTradingMode()"
-                            class="text-blue-600 hover:text-blue-700 text-sm underline">
-                        Изменить в настройках сигналов
-                    </button>
-                </div>
+        </div>
+
+        <!-- Режим стратегии и кнопки действий -->
+        <div class="flex flex-wrap items-center justify-between gap-4 pt-4 border-t">
+            <div class="flex items-center space-x-4">
+                <span class="text-sm font-medium text-gray-700">Режим стратегии:</span>
+                <span id="currentMode" class="px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
+                    <!-- Заполнится через JS -->
+                </span>
+                <button onclick="switchTradingMode()"
+                        class="text-blue-600 hover:text-blue-700 text-sm underline">
+                    Изменить в настройках сигналов
+                </button>
             </div>
+
             <!-- Кнопки действий -->
-            <button onclick="applyFilters()"
-                    class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-md">
-                <i class="fas fa-filter mr-2"></i>
-                Применить фильтры
-            </button>
-            <button onclick="saveCurrentFilters()"
-                    class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-md">
-                <i class="fas fa-save mr-2"></i>
-                Сохранить
-            </button>
+            <div class="flex space-x-3">
+                <button onclick="applyFilters()"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-md transition-colors">
+                    <i class="fas fa-play mr-2"></i>
+                    Применить фильтры
+                </button>
+                <button onclick="saveCurrentFilters()"
+                        class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-md transition-colors">
+                    <i class="fas fa-save mr-2"></i>
+                    Сохранить настройки
+                </button>
+            </div>
         </div>
 
         <!-- Сохраненные фильтры -->
@@ -323,7 +169,7 @@
     </div>
 
     <!-- Статистика -->
-    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6" id="statsContainer" style="display: none;">
         <h2 class="text-lg font-semibold text-gray-800 mb-4">
             <i class="fas fa-chart-bar mr-2 text-blue-600"></i>
             Статистика эффективности стратегии
@@ -332,34 +178,31 @@
         <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
             <div class="bg-blue-50 p-3 rounded-lg">
                 <div class="text-xs text-gray-600">Всего сигналов</div>
-                <div class="text-xl font-bold text-blue-600" id="statTotal">{{ stats.total }}</div>
+                <div class="text-xl font-bold text-blue-600" id="statTotal">0</div>
             </div>
             <div class="bg-green-50 p-3 rounded-lg">
                 <div class="text-xs text-gray-600">BUY</div>
-                <div class="text-xl font-bold text-green-600" id="statBuy">{{ stats.buy_signals }}</div>
+                <div class="text-xl font-bold text-green-600" id="statBuy">0</div>
             </div>
             <div class="bg-red-50 p-3 rounded-lg">
                 <div class="text-xs text-gray-600">SELL</div>
-                <div class="text-xl font-bold text-red-600" id="statSell">{{ stats.sell_signals }}</div>
+                <div class="text-xl font-bold text-red-600" id="statSell">0</div>
             </div>
             <div class="bg-emerald-50 p-3 rounded-lg">
                 <div class="text-xs text-gray-600">Take Profit</div>
-                <div class="text-xl font-bold text-emerald-600" id="statTP">{{ stats.tp_count }}</div>
+                <div class="text-xl font-bold text-emerald-600" id="statTP">0</div>
             </div>
             <div class="bg-rose-50 p-3 rounded-lg">
                 <div class="text-xs text-gray-600">Stop Loss</div>
-                <div class="text-xl font-bold text-rose-600" id="statSL">{{ stats.sl_count }}</div>
+                <div class="text-xl font-bold text-rose-600" id="statSL">0</div>
             </div>
             <div class="bg-orange-50 p-3 rounded-lg">
                 <div class="text-xs text-gray-600">Timeout (48ч)</div>
-                <div class="text-xl font-bold text-orange-600" id="statTimeout">{{ stats.timeout_count }}</div>
+                <div class="text-xl font-bold text-orange-600" id="statTimeout">0</div>
             </div>
-            <div class="{% if stats.total_pnl >= 0 %}bg-green-50{% else %}bg-red-50{% endif %} p-3 rounded-lg">
+            <div class="bg-green-50 p-3 rounded-lg" id="pnlContainer">
                 <div class="text-xs text-gray-600">P&L</div>
-                <div class="text-xl font-bold {% if stats.total_pnl >= 0 %}text-green-600{% else %}text-red-600{% endif %}"
-                     id="statPnL">
-                    {% if stats.total_pnl >= 0 %}+{% endif %}${{ "%.2f"|format(stats.total_pnl) }}
-                </div>
+                <div class="text-xl font-bold text-green-600" id="statPnL">$0.00</div>
             </div>
         </div>
 
@@ -367,26 +210,21 @@
         <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mt-4">
             <div class="bg-purple-50 p-3 rounded-lg">
                 <div class="text-xs text-gray-600">Win Rate</div>
-                <div class="text-lg font-bold text-purple-600" id="statWinRate">{{ "%.1f"|format(metrics.win_rate) }}%
-                </div>
+                <div class="text-lg font-bold text-purple-600" id="statWinRate">0.0%</div>
             </div>
             <div class="bg-indigo-50 p-3 rounded-lg">
                 <div class="text-xs text-gray-600">Эффективность TP</div>
-                <div class="text-lg font-bold text-indigo-600" id="statEfficiency">{{
-                    "%.1f"|format(metrics.tp_efficiency) }}%
-                </div>
+                <div class="text-lg font-bold text-indigo-600" id="statEfficiency">0.0%</div>
             </div>
             <div class="bg-yellow-50 p-3 rounded-lg">
                 <div class="text-xs text-gray-600">Макс. потенциал</div>
-                <div class="text-lg font-bold text-yellow-600" id="statMaxPotential">${{
-                    "%.2f"|format(stats.max_potential) }}
-                </div>
+                <div class="text-lg font-bold text-yellow-600" id="statMaxPotential">$0.00</div>
             </div>
         </div>
     </div>
 
     <!-- Таблица сигналов -->
-    <div class="bg-white rounded-lg shadow-lg overflow-hidden">
+    <div class="bg-white rounded-lg shadow-lg overflow-hidden" id="signalsContainer" style="display: none;">
         <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
             <h2 class="text-lg font-semibold text-gray-800">
                 <i class="fas fa-list mr-2 text-blue-600"></i>
@@ -407,16 +245,13 @@
                         Сигнал
                     </th>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Рынок
-                    </th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Scores
                     </th>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Вход
                     </th>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Закрытие
+                        Текущая
                     </th>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         P&L
@@ -430,456 +265,156 @@
                 </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200" id="signalsTableBody">
-                {% for signal in signals %}
-                <tr class="hover:bg-gray-50">
-                    <td class="px-4 py-3 text-sm text-gray-900">{{ signal.timestamp.strftime('%H:%M:%S') }}</td>
-                    <td class="px-4 py-3 text-sm">
-                        <span class="px-2 py-1 text-xs rounded-full {% if signal.exchange_name == 'Binance' %}bg-yellow-100 text-yellow-800{% else %}bg-blue-100 text-blue-800{% endif %}">
-                            {{ signal.exchange_name }}
-                        </span>
-                    </td>
-                    <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ signal.pair_symbol }}</td>
-                    <td class="px-4 py-3 text-sm">
-                        <span class="px-2 py-1 text-xs rounded-full {% if signal.signal_action == 'BUY' %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">
-                            {{ signal.signal_action }}
-                        </span>
-                    </td>
-                    <td class="px-4 py-3 text-sm">
-                        <span class="px-2 py-1 text-xs rounded-full {% if signal.market_regime == 'BULL' %}bg-green-100 text-green-800{% elif signal.market_regime == 'BEAR' %}bg-red-100 text-red-800{% else %}bg-gray-100 text-gray-800{% endif %}">
-                            {{ signal.market_regime }}
-                        </span>
-                    </td>
-                    <td class="px-4 py-3 text-xs">
-                        <div class="space-y-1">
-                            <div>T: <span class="font-medium">{{ "%.1f"|format(signal.total_score) }}</span></div>
-                            <div>I: <span class="font-medium">{{ "%.1f"|format(signal.indicator_score) }}</span></div>
-                            <div>P: <span class="font-medium">{{ "%.1f"|format(signal.pattern_score) }}</span></div>
-                        </div>
-                    </td>
-                    <td class="px-4 py-3 text-sm text-gray-900">{{ "%.8f"|format(signal.entry_price) }}</td>
-                    <td class="px-4 py-3 text-sm text-gray-900">{{ "%.8f"|format(signal.current_price) }}</td>
-                    <td class="px-4 py-3 text-sm font-medium {% if signal.pnl_usd >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
-                        {% if signal.pnl_usd >= 0 %}+{% endif %}${{ "%.2f"|format(signal.pnl_usd) }}
-                        <div class="text-xs">{{ "%.2f"|format(signal.pnl_percent) }}%</div>
-                    </td>
-                    <td class="px-4 py-3 text-sm font-medium text-blue-600">
-                        ${{ "%.2f"|format(signal.max_potential_profit_usd) }}
-                        <div class="text-xs">{{ "%.2f"|format(signal.max_potential_profit_usd / (params.position_size *
-                            params.leverage) * 100) }}%
-                        </div>
-                    </td>
-                    <td class="px-4 py-3 text-sm">
-                        {% if signal.close_reason == 'take_profit' %}
-                        <span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">TP</span>
-                        {% elif signal.close_reason == 'stop_loss' %}
-                        <span class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">SL</span>
-                        {% elif signal.close_reason == 'timeout' %}
-                        <span class="px-2 py-1 text-xs rounded-full bg-orange-100 text-orange-800">TIMEOUT</span>
-                        {% else %}
-                        <span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">ОТКРЫТА</span>
-                        {% endif %}
-                    </td>
-                    <td class="px-4 py-3 text-sm text-gray-600">
-                        {{ "%.1f"|format(signal.hours_to_close) }}ч
-                    </td>
-                </tr>
-                {% endfor %}
+                    <!-- Заполняется через JS -->
                 </tbody>
             </table>
         </div>
     </div>
 </div>
+
 <style>
-    /* Добавляем плавные переходы */
-    tbody tr {
-        transition: background-color 0.2s ease;
+    /* Стилизация слайдеров */
+    input[type="range"] {
+        -webkit-appearance: none;
     }
 
-    /* Улучшаем читаемость моноширинного шрифта */
-    .font-mono {
-        font-variant-numeric: tabular-nums;
-        letter-spacing: -0.025em;
+    input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 20px;
+        height: 20px;
+        background: #2563eb;
+        cursor: pointer;
+        border-radius: 50%;
     }
 
-    /* Делаем badges более заметными */
-    .rounded-full {
-        box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    input[type="range"]::-moz-range-thumb {
+        width: 20px;
+        height: 20px;
+        background: #2563eb;
+        cursor: pointer;
+        border-radius: 50%;
+        border: none;
     }
 
-    /* Улучшаем отображение на мобильных */
-    @media (max-width: 768px) {
-        .overflow-x-auto {
-            -webkit-overflow-scrolling: touch;
-        }
+    /* Анимация появления */
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .fade-in {
+        animation: fadeIn 0.3s ease-out;
     }
 </style>
 {% endblock %}
 
 {% block scripts %}
 <script>
-    // Глобальные переменные для фильтров
-    let buyFilters = {{ buy_filters|tojson }};
-    let sellFilters = {{ sell_filters|tojson }};
+    // Глобальные переменные
     let savedFiltersData = {{ saved_filters|tojson }};
+    let currentScoreWeek = 0;
+    let currentScoreMonth = 0;
 
-function addBuyFilter() {
-    const market = document.getElementById('buyMarket').value;
-    const recommended = document.getElementById('buyRecommended').value;
-
-    // Проверяем, что есть хотя бы один критерий
-    const hasScores = document.getElementById('buyTotalMin').value ||
-                     document.getElementById('buyTotalMax').value ||
-                     document.getElementById('buyIndicatorMin').value ||
-                     document.getElementById('buyIndicatorMax').value ||
-                     document.getElementById('buyPatternMin').value ||
-                     document.getElementById('buyPatternMax').value ||
-                     document.getElementById('buyCombinationMin').value ||
-                     document.getElementById('buyCombinationMax').value;
-
-    if (!market && !recommended && !hasScores) {
-        alert('Добавьте хотя бы один критерий фильтрации (рынок, рекомендацию или scores)!');
-        return;
-    }
-
-    const filter = {
-        order_type: 'BUY'
-    };
-
-    // Добавляем только если указаны
-    if (market) {
-        filter.market = market;
-    }
-
-    if (recommended) {
-        filter.recommended_action = recommended;
-    }
-
-    // Правильная обработка числовых значений
-    const totalMin = document.getElementById('buyTotalMin').value;
-    const totalMax = document.getElementById('buyTotalMax').value;
-    if (totalMin !== '') filter.total_score_min = parseFloat(totalMin);
-    if (totalMax !== '') filter.total_score_max = parseFloat(totalMax);
-
-    const indicatorMin = document.getElementById('buyIndicatorMin').value;
-    const indicatorMax = document.getElementById('buyIndicatorMax').value;
-    if (indicatorMin !== '') filter.indicator_score_min = parseFloat(indicatorMin);
-    if (indicatorMax !== '') filter.indicator_score_max = parseFloat(indicatorMax);
-
-    const patternMin = document.getElementById('buyPatternMin').value;
-    const patternMax = document.getElementById('buyPatternMax').value;
-    if (patternMin !== '') filter.pattern_score_min = parseFloat(patternMin);
-    if (patternMax !== '') filter.pattern_score_max = parseFloat(patternMax);
-
-    const combinationMin = document.getElementById('buyCombinationMin').value;
-    const combinationMax = document.getElementById('buyCombinationMax').value;
-    if (combinationMin !== '') filter.combination_score_min = parseFloat(combinationMin);
-    if (combinationMax !== '') filter.combination_score_max = parseFloat(combinationMax);
-
-    buyFilters.push(filter);
-    updateBuyFiltersList();
-    clearBuyForm();
-
-    // Показываем уведомление
-    showNotification('Фильтр BUY добавлен', 'success');
-}
-
-function addSellFilter() {
-    const market = document.getElementById('sellMarket').value;
-    const recommended = document.getElementById('sellRecommended').value;
-
-    // Проверяем, что есть хотя бы один критерий
-    const hasScores = document.getElementById('sellTotalMin').value ||
-                     document.getElementById('sellTotalMax').value ||
-                     document.getElementById('sellIndicatorMin').value ||
-                     document.getElementById('sellIndicatorMax').value ||
-                     document.getElementById('sellPatternMin').value ||
-                     document.getElementById('sellPatternMax').value ||
-                     document.getElementById('sellCombinationMin').value ||
-                     document.getElementById('sellCombinationMax').value;
-
-    if (!market && !recommended && !hasScores) {
-        alert('Добавьте хотя бы один критерий фильтрации (рынок, рекомендацию или scores)!');
-        return;
-    }
-
-    const filter = {
-        order_type: 'SELL'
-    };
-
-    // Добавляем только если указаны
-    if (market) {
-        filter.market = market;
-    }
-
-    if (recommended) {
-        filter.recommended_action = recommended;
-    }
-
-    const totalMin = document.getElementById('sellTotalMin').value;
-    const totalMax = document.getElementById('sellTotalMax').value;
-    if (totalMin !== '') filter.total_score_min = parseFloat(totalMin);
-    if (totalMax !== '') filter.total_score_max = parseFloat(totalMax);
-
-    const indicatorMin = document.getElementById('sellIndicatorMin').value;
-    const indicatorMax = document.getElementById('sellIndicatorMax').value;
-    if (indicatorMin !== '') filter.indicator_score_min = parseFloat(indicatorMin);
-    if (indicatorMax !== '') filter.indicator_score_max = parseFloat(indicatorMax);
-
-    const patternMin = document.getElementById('sellPatternMin').value;
-    const patternMax = document.getElementById('sellPatternMax').value;
-    if (patternMin !== '') filter.pattern_score_min = parseFloat(patternMin);
-    if (patternMax !== '') filter.pattern_score_max = parseFloat(patternMax);
-
-    const combinationMin = document.getElementById('sellCombinationMin').value;
-    const combinationMax = document.getElementById('sellCombinationMax').value;
-    if (combinationMin !== '') filter.combination_score_min = parseFloat(combinationMin);
-    if (combinationMax !== '') filter.combination_score_max = parseFloat(combinationMax);
-
-    sellFilters.push(filter);
-    updateSellFiltersList();
-    clearSellForm();
-
-    // Показываем уведомление
-    showNotification('Фильтр SELL добавлен', 'success');
-}
-
-    // Исправляем форматирование деталей фильтра
-function formatFilterDetails(filter) {
-    let details = [];
-
-    // Добавляем отображение recommended_action
-    if (filter.recommended_action) {
-        details.push(`<strong>Рекомендация: ${filter.recommended_action}</strong>`);
-    }
-
-    if ('total_score_min' in filter || 'total_score_max' in filter) {
-        const min = 'total_score_min' in filter ? filter.total_score_min : '-∞';
-        const max = 'total_score_max' in filter ? filter.total_score_max : '+∞';
-        details.push(`Total: ${min} to ${max}`);
-    }
-    if ('indicator_score_min' in filter || 'indicator_score_max' in filter) {
-        const min = 'indicator_score_min' in filter ? filter.indicator_score_min : '-∞';
-        const max = 'indicator_score_max' in filter ? filter.indicator_score_max : '+∞';
-        details.push(`Indicator: ${min} to ${max}`);
-    }
-    if ('pattern_score_min' in filter || 'pattern_score_max' in filter) {
-        const min = 'pattern_score_min' in filter ? filter.pattern_score_min : '-∞';
-        const max = 'pattern_score_max' in filter ? filter.pattern_score_max : '+∞';
-        details.push(`Pattern: ${min} to ${max}`);
-    }
-    if ('combination_score_min' in filter || 'combination_score_max' in filter) {
-        const min = 'combination_score_min' in filter ? filter.combination_score_min : '-∞';
-        const max = 'combination_score_max' in filter ? filter.combination_score_max : '+∞';
-        details.push(`Combination: ${min} to ${max}`);
-    }
-
-    return details.length > 0 ? '<div class="mt-1 text-xs text-gray-600">' + details.join('<br>') + '</div>' : '';
-}
-
-function updateBuyFiltersList() {
-    const list = document.getElementById('buyFiltersList');
-    if (buyFilters.length === 0) {
-        list.innerHTML = '<div class="text-gray-500 text-sm">Нет активных фильтров</div>';
-        return;
-    }
-
-    list.innerHTML = buyFilters.map((filter, index) => {
-        // Формируем заголовок фильтра
-        let header = 'BUY';
-        if (filter.market) {
-            header += ` @ ${filter.market}`;
+    // Обновление отображения значения слайдера
+    function updateScoreDisplay(type, value) {
+        if (type === 'week') {
+            document.getElementById('scoreWeekValue').textContent = value;
+            currentScoreWeek = parseInt(value);
+        } else if (type === 'month') {
+            document.getElementById('scoreMonthValue').textContent = value;
+            currentScoreMonth = parseInt(value);
         }
-        if (filter.recommended_action) {
-            header += ` [${filter.recommended_action}]`;
-        }
-
-        return `
-            <div class="bg-green-50 p-3 rounded-lg border border-green-200">
-                <div class="flex justify-between items-start">
-                    <div class="text-sm">
-                        <strong>${header}</strong>
-                        ${formatFilterDetails(filter)}
-                    </div>
-                    <button onclick="removeBuyFilter(${index})" class="text-red-500 hover:text-red-700">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-            </div>
-        `;
-    }).join('');
-}
-
-function updateSellFiltersList() {
-    const list = document.getElementById('sellFiltersList');
-    if (sellFilters.length === 0) {
-        list.innerHTML = '<div class="text-gray-500 text-sm">Нет активных фильтров</div>';
-        return;
+        // Обновляем превью количества сигналов
+        updatePreviewCount();
     }
 
-    list.innerHTML = sellFilters.map((filter, index) => {
-        // Формируем заголовок фильтра
-        let header = 'SELL';
-        if (filter.market) {
-            header += ` @ ${filter.market}`;
-        }
-        if (filter.recommended_action) {
-            header += ` [${filter.recommended_action}]`;
-        }
+    // Обновление информации о дате и превью сигналов
+    function updateDateInfo() {
+        const date = document.getElementById('dateFilter').value;
 
-        return `
-            <div class="bg-red-50 p-3 rounded-lg border border-red-200">
-                <div class="flex justify-between items-start">
-                    <div class="text-sm">
-                        <strong>${header}</strong>
-                        ${formatFilterDetails(filter)}
-                    </div>
-                    <button onclick="removeSellFilter(${index})" class="text-red-500 hover:text-red-700">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-            </div>
-        `;
-    }).join('');
-}
-
-    // Удаление фильтров
-    function removeBuyFilter(index) {
-        buyFilters.splice(index, 1);
-        updateBuyFiltersList();
-    }
-
-    function removeSellFilter(index) {
-        sellFilters.splice(index, 1);
-        updateSellFiltersList();
-    }
-
-    // Очистка форм
-    function clearBuyForm() {
-        document.getElementById('buyMarket').value = '';
-        document.getElementById('buyRecommended').value = '';
-        document.getElementById('buyTotalMin').value = '';
-        document.getElementById('buyTotalMax').value = '';
-        document.getElementById('buyIndicatorMin').value = '';
-        document.getElementById('buyIndicatorMax').value = '';
-        document.getElementById('buyPatternMin').value = '';
-        document.getElementById('buyPatternMax').value = '';
-        document.getElementById('buyCombinationMin').value = '';
-        document.getElementById('buyCombinationMax').value = '';
-    }
-
-    function clearSellForm() {
-        document.getElementById('sellMarket').value = '';
-        document.getElementById('sellRecommended').value = '';
-        document.getElementById('sellTotalMin').value = '';
-        document.getElementById('sellTotalMax').value = '';
-        document.getElementById('sellIndicatorMin').value = '';
-        document.getElementById('sellIndicatorMax').value = '';
-        document.getElementById('sellPatternMin').value = '';
-        document.getElementById('sellPatternMax').value = '';
-        document.getElementById('sellCombinationMin').value = '';
-        document.getElementById('sellCombinationMax').value = '';
-    }
-
-// Обновление информации о дате (БЕЗ проверки сигналов)
-function updateDateInfo() {
-    const date = document.getElementById('dateFilter').value;
-
-    fetch('/api/scoring/get_date_info', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            date: date,
-            buy_filters: [],  // Отправляем пустые фильтры для получения только информации о рынке
-            sell_filters: []
+        fetch('/api/scoring/get_date_info', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                date: date,
+                score_week: currentScoreWeek,
+                score_month: currentScoreMonth
+            })
         })
-    })
-    .then(response => response.json())
-    .then(result => {
-        if (result.status === 'success') {
-            // Обновляем информацию о режимах рынка
-            const regimes = result.market_regimes;
-            const regimesHtml = `
-                <div class="text-center">
-                    <div class="text-xs text-gray-600">BULL</div>
-                    <div class="text-lg font-bold text-green-600">${regimes.BULL || 0}</div>
-                </div>
-                <div class="text-center">
-                    <div class="text-xs text-gray-600">NEUTRAL</div>
-                    <div class="text-lg font-bold text-gray-600">${regimes.NEUTRAL || 0}</div>
-                </div>
-                <div class="text-center">
-                    <div class="text-xs text-gray-600">BEAR</div>
-                    <div class="text-lg font-bold text-red-600">${regimes.BEAR || 0}</div>
-                </div>
-            `;
-            document.getElementById('marketRegimes').innerHTML = regimesHtml;
+        .then(response => response.json())
+        .then(result => {
+            if (result.status === 'success') {
+                // Обновляем информацию о режимах рынка
+                const regimes = result.market_regimes;
+                const regimesHtml = `
+                    <div class="text-center">
+                        <div class="text-xs text-gray-600">BULL</div>
+                        <div class="text-lg font-bold text-green-600">${regimes.BULL || 0}</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-xs text-gray-600">NEUTRAL</div>
+                        <div class="text-lg font-bold text-gray-600">${regimes.NEUTRAL || 0}</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-xs text-gray-600">BEAR</div>
+                        <div class="text-lg font-bold text-red-600">${regimes.BEAR || 0}</div>
+                    </div>
+                `;
+                document.getElementById('marketRegimes').innerHTML = regimesHtml;
 
-            // Доминирующий режим
-            const dominantColor = result.dominant_regime === 'BULL' ? 'green' :
-                                 result.dominant_regime === 'BEAR' ? 'red' : 'gray';
-            document.getElementById('dominantRegime').innerHTML =
-                `<strong>Доминирующий режим:</strong>
-                <span class="font-bold text-${dominantColor}-600">${result.dominant_regime}</span>`;
-        }
-    })
-    .catch(error => {
-        console.error('Ошибка получения информации о дате:', error);
-    });
-}
+                // Доминирующий режим
+                const dominantColor = result.dominant_regime === 'BULL' ? 'green' :
+                                     result.dominant_regime === 'BEAR' ? 'red' : 'gray';
+                document.getElementById('dominantRegime').innerHTML =
+                    `<strong>Доминирующий режим:</strong>
+                    <span class="font-bold text-${dominantColor}-600">${result.dominant_regime}</span>`;
 
-// Отдельная функция для подсчета сигналов
-function countSignals(callback) {
-    const date = document.getElementById('dateFilter').value;
-
-    // Проверяем только если есть активные фильтры
-    if (buyFilters.length === 0 && sellFilters.length === 0) {
-        if (callback) callback(0);
-        return;
-    }
-
-    fetch('/api/scoring/get_date_info', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            date: date,
-            buy_filters: buyFilters,
-            sell_filters: sellFilters
+                // Обновляем превью количества сигналов
+                document.getElementById('previewCount').textContent = result.signal_count || 0;
+            }
         })
-    })
-    .then(response => response.json())
-    .then(result => {
-        if (result.status === 'success' && callback) {
-            callback(result.signal_count);
-        }
-    })
-    .catch(error => {
-        console.error('Ошибка подсчета сигналов:', error);
-        if (callback) callback(0);
-    });
-}
-
-// Обновленная функция применения фильтров с учетом режима
-function applyFilters() {
-    // Сначала проверяем наличие фильтров
-    if (buyFilters.length === 0 && sellFilters.length === 0) {
-        alert('Добавьте хотя бы один фильтр BUY или SELL');
-        return;
+        .catch(error => {
+            console.error('Ошибка получения информации о дате:', error);
+        });
     }
 
-    const date = document.getElementById('dateFilter').value;
-    const tp = parseFloat(document.getElementById('tpPercent').value);
-    const sl = parseFloat(document.getElementById('slPercent').value);
-    const positionSize = parseFloat(document.getElementById('positionSize').value);
-    const leverage = parseInt(document.getElementById('leverage').value);
+    // Обновление превью количества сигналов
+    function updatePreviewCount() {
+        const date = document.getElementById('dateFilter').value;
 
-    // Сначала получаем количество сигналов
-    countSignals(function(signalCount) {
-        if (signalCount === 0) {
-            alert('Не найдено сигналов по заданным фильтрам');
+        fetch('/api/scoring/get_date_info', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                date: date,
+                score_week: currentScoreWeek,
+                score_month: currentScoreMonth
+            })
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.status === 'success') {
+                document.getElementById('previewCount').textContent = result.signal_count || 0;
+            }
+        });
+    }
+
+    // Применение фильтров
+    function applyFilters() {
+        const date = document.getElementById('dateFilter').value;
+        const tp = parseFloat(document.getElementById('tpPercent').value);
+        const sl = parseFloat(document.getElementById('slPercent').value);
+        const positionSize = parseFloat(document.getElementById('positionSize').value);
+        const leverage = parseInt(document.getElementById('leverage').value);
+
+        // Проверка минимальных значений фильтров
+        if (currentScoreWeek < -100 || currentScoreMonth < -100) {
+            alert('Неверные значения фильтров');
             return;
         }
 
-        // Показываем предупреждение с информацией о режиме
+        // Получаем режим торговли
         fetch('/api/get_user_trading_mode')
             .then(response => response.json())
             .then(modeData => {
@@ -887,14 +422,13 @@ function applyFilters() {
                     `Trailing Stop (Activation: ${modeData.trailing_activation_pct}%, Distance: ${modeData.trailing_distance_pct}%)` :
                     `Fixed TP/SL`;
 
-                const message = `Будет обработано ${signalCount} сигналов.\n` +
+                // Подтверждение
+                const message = `Будут обработаны сигналы с:\n` +
+                              `- Score Week >= ${currentScoreWeek}\n` +
+                              `- Score Month >= ${currentScoreMonth}\n\n` +
                               `Режим: ${modeText}\n` +
-                              `Параметры:\n` +
-                              `- TP: ${tp}%\n` +
-                              `- SL: ${sl}%\n` +
-                              `- Позиция: $${positionSize}\n` +
-                              `- Leverage: ${leverage}x\n\n` +
-                              `Это может занять некоторое время. Продолжить?`;
+                              `Параметры: TP=${tp}%, SL=${sl}%, Size=$${positionSize}, Lev=${leverage}x\n\n` +
+                              `Продолжить?`;
 
                 if (!confirm(message)) {
                     return;
@@ -904,16 +438,16 @@ function applyFilters() {
                 const button = document.querySelector('button[onclick="applyFilters()"]');
                 const originalText = button.innerHTML;
                 button.disabled = true;
-                button.innerHTML = `<i class="fas fa-spinner fa-spin mr-2"></i>Обработка ${signalCount} сигналов...`;
+                button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Обработка...';
 
-                // Отправляем запрос на обработку
+                // Отправляем запрос
                 fetch('/api/scoring/apply_filters', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         date: date,
-                        buy_filters: buyFilters,
-                        sell_filters: sellFilters,
+                        score_week_min: currentScoreWeek,
+                        score_month_min: currentScoreMonth,
                         tp_percent: tp,
                         sl_percent: sl,
                         position_size: positionSize,
@@ -924,14 +458,7 @@ function applyFilters() {
                 .then(result => {
                     if (result.status === 'success') {
                         updateResults(result.data);
-
-                        // Показываем сообщение с учетом режима
-                        const stats = result.data.stats;
-                        let successMsg = `Обработано ${stats.total} сигналов`;
-                        if (stats.mode && stats.mode.includes('Trailing')) {
-                            successMsg += ` (Режим: Trailing Stop, ${stats.trailing_count || 0} trailing stops)`;
-                        }
-                        showNotification(successMsg, 'success');
+                        showNotification(`Обработано ${result.data.stats.total} сигналов`, 'success');
                     } else {
                         alert('Ошибка: ' + result.message);
                     }
@@ -944,204 +471,159 @@ function applyFilters() {
                     button.innerHTML = originalText;
                 });
             });
-    });
-}
-
-
-// Обновление результатов
-function updateResults(data) {
-    // ИСПРАВЛЕНО: Обновляем статистику с учетом trailing stops
-    const stats = data.stats;
-    const metrics = data.metrics;
-
-    // Обновляем основную статистику
-    document.getElementById('statTotal').textContent = stats.total || 0;
-    document.getElementById('statBuy').textContent = stats.buy_signals || 0;
-    document.getElementById('statSell').textContent = stats.sell_signals || 0;
-
-    // ВАЖНО: tp_count уже включает прибыльные trailing stops
-    document.getElementById('statTP').textContent = stats.tp_count || 0;
-    // ВАЖНО: sl_count уже включает убыточные trailing stops
-    document.getElementById('statSL').textContent = stats.sl_count || 0;
-    document.getElementById('statTimeout').textContent = stats.timeout_count || 0;
-
-    // Обновляем P&L
-    const pnlElement = document.getElementById('statPnL');
-    const totalPnL = stats.total_pnl || 0;
-    pnlElement.textContent = (totalPnL >= 0 ? '+' : '') + '$' + totalPnL.toFixed(2);
-
-    // Меняем цвет фона в зависимости от P&L
-    const pnlContainer = pnlElement.parentElement;
-    if (totalPnL >= 0) {
-        pnlContainer.className = 'bg-green-50 p-3 rounded-lg';
-        pnlElement.className = 'text-xl font-bold text-green-600';
-    } else {
-        pnlContainer.className = 'bg-red-50 p-3 rounded-lg';
-        pnlElement.className = 'text-xl font-bold text-red-600';
     }
 
-    // Обновляем метрики
-    document.getElementById('statWinRate').textContent = (metrics.win_rate || 0).toFixed(1) + '%';
-    document.getElementById('statEfficiency').textContent = (metrics.tp_efficiency || 0).toFixed(1) + '%';
-    document.getElementById('statMaxPotential').textContent = '$' + (stats.max_potential || 0).toFixed(2);
+    // Обновление результатов
+    function updateResults(data) {
+        // Показываем контейнеры
+        document.getElementById('statsContainer').style.display = 'block';
+        document.getElementById('signalsContainer').style.display = 'block';
 
-    // ДОБАВЛЕНО: Показываем режим работы
-    if (stats.mode) {
-        const modeIndicator = document.getElementById('currentMode');
-        if (modeIndicator) {
-            modeIndicator.textContent = stats.mode;
-            if (stats.mode.includes('Trailing')) {
-                modeIndicator.className = 'px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800';
-            } else {
-                modeIndicator.className = 'px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800';
-            }
-        }
-    }
+        // Обновляем статистику
+        const stats = data.stats;
+        const metrics = data.metrics;
 
-    // ДОБАВЛЕНО: Если есть trailing stops, показываем дополнительную информацию
-    if (stats.trailing_count && stats.trailing_count > 0) {
-        // Создаем дополнительный блок с информацией о trailing stops
-        const trailingInfo = `
-            <div class="bg-purple-50 p-3 rounded-lg">
-                <div class="text-xs text-gray-600">Trailing Stops</div>
-                <div class="text-xl font-bold text-purple-600">${stats.trailing_count}</div>
-                <div class="text-xs text-gray-500 mt-1">
-                    Прибыльных: ${stats.tp_count - (stats.tp_count - stats.trailing_count > 0 ? stats.tp_count - stats.trailing_count : 0)}<br>
-                    Убыточных: ${stats.sl_count - (stats.sl_count - stats.trailing_count > 0 ? stats.sl_count - stats.trailing_count : 0)}
-                </div>
-            </div>
-        `;
+        document.getElementById('statTotal').textContent = stats.total || 0;
+        document.getElementById('statBuy').textContent = stats.buy_signals || 0;
+        document.getElementById('statSell').textContent = stats.sell_signals || 0;
+        document.getElementById('statTP').textContent = stats.tp_count || 0;
+        document.getElementById('statSL').textContent = stats.sl_count || 0;
+        document.getElementById('statTimeout').textContent = stats.timeout_count || 0;
 
-        // Можно вставить этот блок в статистику, если есть подходящий контейнер
-        const statsContainer = document.querySelector('.grid.grid-cols-2.md\\:grid-cols-4.lg\\:grid-cols-7');
-        if (statsContainer && !document.getElementById('trailingStatsBlock')) {
-            const div = document.createElement('div');
-            div.id = 'trailingStatsBlock';
-            div.innerHTML = trailingInfo;
-            statsContainer.appendChild(div.firstElementChild);
-        }
-    }
+        // P&L
+        const pnlElement = document.getElementById('statPnL');
+        const totalPnL = stats.total_pnl || 0;
+        pnlElement.textContent = (totalPnL >= 0 ? '+' : '') + '$' + totalPnL.toFixed(2);
 
-    // Обновляем таблицу сигналов
-    updateSignalsTable(data.signals);
-
-    // Показываем уведомление об успехе
-    showNotification(`Обработано ${stats.total} сигналов`, 'success');
-}
-function updateSignalsTable(signals) {
-    const tbody = document.getElementById('signalsTableBody');
-
-    if (!signals || signals.length === 0) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="10" class="px-4 py-8 text-center text-gray-500">
-                    Нет сигналов по заданным фильтрам
-                </td>
-            </tr>
-        `;
-        return;
-    }
-
-    tbody.innerHTML = signals.map(signal => {
-        const time = new Date(signal.timestamp).toLocaleTimeString('ru-RU', {
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-
-        // Определяем статус badge
-        let statusBadge = '';
-        if (signal.close_reason === 'take_profit') {
-            statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800 font-medium">TP</span>';
-        } else if (signal.close_reason === 'stop_loss') {
-            statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800 font-medium">SL</span>';
-        } else if (signal.close_reason === 'trailing_stop') {
-            // Определяем цвет trailing stop по P&L
-            const trailingColor = signal.pnl_usd >= 0 ? 'bg-purple-100 text-purple-800' : 'bg-orange-100 text-orange-800';
-            statusBadge = `<span class="px-2 py-1 text-xs rounded-full ${trailingColor} font-medium">TRAIL</span>`;
-        } else if (signal.close_reason === 'timeout') {
-            statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-800 font-medium">TIMEOUT</span>';
+        // Цвет фона для P&L
+        const pnlContainer = document.getElementById('pnlContainer');
+        if (totalPnL >= 0) {
+            pnlContainer.className = 'bg-green-50 p-3 rounded-lg';
+            pnlElement.className = 'text-xl font-bold text-green-600';
         } else {
-            statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800 font-medium">ОТКРЫТА</span>';
+            pnlContainer.className = 'bg-red-50 p-3 rounded-lg';
+            pnlElement.className = 'text-xl font-bold text-red-600';
         }
 
-        const pnlColor = signal.pnl_usd >= 0 ? 'text-green-600' : 'text-red-600';
-        const pnlPrefix = signal.pnl_usd >= 0 ? '+' : '';
+        // Метрики
+        document.getElementById('statWinRate').textContent = (metrics.win_rate || 0).toFixed(1) + '%';
+        document.getElementById('statEfficiency').textContent = (metrics.tp_efficiency || 0).toFixed(1) + '%';
+        document.getElementById('statMaxPotential').textContent = '$' + (stats.max_potential || 0).toFixed(2);
 
-        return `
-            <tr class="hover:bg-gray-50 transition-colors">
-                <td class="px-4 py-3 whitespace-nowrap">
-                    <div class="flex flex-col">
-                        <span class="text-sm font-medium text-gray-900">${time}</span>
-                        <span class="text-xs text-gray-500">${signal.exchange_name || 'Unknown'}</span>
-                    </div>
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap">
-                    <span class="text-sm font-medium text-gray-900">${signal.pair_symbol}</span>
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap">
-                    <span class="px-2 py-1 text-xs rounded-full font-medium ${
-                        signal.signal_action === 'BUY' ?
-                        'bg-green-100 text-green-800' :
-                        'bg-red-100 text-red-800'
-                    }">
-                        ${signal.signal_action}
-                    </span>
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap">
-                    <span class="px-2 py-1 text-xs rounded-full ${
-                        signal.market_regime === 'BULL' ? 'bg-green-100 text-green-800' :
-                        signal.market_regime === 'BEAR' ? 'bg-red-100 text-red-800' :
-                        'bg-gray-100 text-gray-800'
-                    }">
-                        ${signal.market_regime}
-                    </span>
-                </td>
-                <td class="px-4 py-3">
-                    <div class="flex flex-col space-y-0.5 text-xs">
-                        <div>T: <span class="font-semibold">${signal.total_score.toFixed(1)}</span></div>
-                        <div>I: ${signal.indicator_score.toFixed(1)}</div>
-                        <div>P: ${signal.pattern_score.toFixed(1)}</div>
-                    </div>
-                </td>
-                <td class="px-4 py-3 text-sm text-gray-900 font-mono">
-                    ${signal.entry_price.toFixed(8)}
-                </td>
-                <td class="px-4 py-3 text-sm text-gray-900 font-mono">
-                    ${signal.current_price.toFixed(8)}
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap">
-                    <div class="flex flex-col">
-                        <span class="text-sm font-bold ${pnlColor}">
-                            ${pnlPrefix}$${Math.abs(signal.pnl_usd).toFixed(2)}
+        // Обновляем таблицу сигналов
+        updateSignalsTable(data.signals);
+
+        // Анимация появления
+        document.getElementById('statsContainer').classList.add('fade-in');
+        document.getElementById('signalsContainer').classList.add('fade-in');
+    }
+
+    // Обновление таблицы сигналов
+    function updateSignalsTable(signals) {
+        const tbody = document.getElementById('signalsTableBody');
+
+        if (!signals || signals.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="9" class="px-4 py-8 text-center text-gray-500">
+                        Нет сигналов по заданным фильтрам
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        tbody.innerHTML = signals.map(signal => {
+            const time = new Date(signal.timestamp).toLocaleTimeString('ru-RU', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            // Определяем статус badge
+            let statusBadge = '';
+            if (signal.close_reason === 'take_profit') {
+                statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800 font-medium">TP</span>';
+            } else if (signal.close_reason === 'stop_loss') {
+                statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800 font-medium">SL</span>';
+            } else if (signal.close_reason === 'trailing_stop') {
+                const trailingColor = signal.pnl_usd >= 0 ? 'bg-purple-100 text-purple-800' : 'bg-orange-100 text-orange-800';
+                statusBadge = `<span class="px-2 py-1 text-xs rounded-full ${trailingColor} font-medium">TRAIL</span>`;
+            } else if (signal.close_reason === 'timeout') {
+                statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-800 font-medium">TIMEOUT</span>';
+            } else {
+                statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800 font-medium">ОТКРЫТА</span>';
+            }
+
+            const pnlColor = signal.pnl_usd >= 0 ? 'text-green-600' : 'text-red-600';
+            const pnlPrefix = signal.pnl_usd >= 0 ? '+' : '';
+
+            return `
+                <tr class="hover:bg-gray-50 transition-colors">
+                    <td class="px-4 py-3 whitespace-nowrap">
+                        <div class="flex flex-col">
+                            <span class="text-sm font-medium text-gray-900">${time}</span>
+                            <span class="text-xs text-gray-500">${signal.exchange_name || 'Unknown'}</span>
+                        </div>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                        <span class="text-sm font-medium text-gray-900">${signal.pair_symbol}</span>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                        <span class="px-2 py-1 text-xs rounded-full font-medium ${
+                            signal.signal_action === 'BUY' ?
+                            'bg-green-100 text-green-800' :
+                            'bg-red-100 text-red-800'
+                        }">
+                            ${signal.signal_action}
                         </span>
-                        <span class="text-xs ${pnlColor}">
-                            ${signal.pnl_percent.toFixed(2)}%
-                        </span>
-                    </div>
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap">
-                    <div class="flex flex-col">
-                        <span class="text-sm font-medium text-blue-600">
-                            $${(signal.max_potential_profit || 0).toFixed(2)}
-                        </span>
-                    </div>
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap">
-                    <div class="flex items-center space-x-2">
-                        ${statusBadge}
-                        ${signal.hours_to_close ?
-                            `<span class="text-xs text-gray-500">${signal.hours_to_close.toFixed(1)}ч</span>` :
-                            ''
-                        }
-                    </div>
-                </td>
-            </tr>
-        `;
-    }).join('');
-}
+                    </td>
+                    <td class="px-4 py-3">
+                        <div class="flex flex-col space-y-0.5 text-xs">
+                            <div>T: <span class="font-semibold">${signal.total_score.toFixed(1)}</span></div>
+                            <div>W: <span class="font-semibold">${signal.score_week || 'N/A'}</span></div>
+                            <div>M: <span class="font-semibold">${signal.score_month || 'N/A'}</span></div>
+                        </div>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-900 font-mono">
+                        ${signal.entry_price.toFixed(8)}
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-900 font-mono">
+                        ${signal.current_price.toFixed(8)}
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                        <div class="flex flex-col">
+                            <span class="text-sm font-bold ${pnlColor}">
+                                ${pnlPrefix}$${Math.abs(signal.pnl_usd).toFixed(2)}
+                            </span>
+                            <span class="text-xs ${pnlColor}">
+                                ${signal.pnl_percent.toFixed(2)}%
+                            </span>
+                        </div>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                        <div class="flex flex-col">
+                            <span class="text-sm font-medium text-blue-600">
+                                $${(signal.max_potential_profit || 0).toFixed(2)}
+                            </span>
+                        </div>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                        <div class="flex items-center space-x-2">
+                            ${statusBadge}
+                            ${signal.hours_to_close ?
+                                `<span class="text-xs text-gray-500">${signal.hours_to_close.toFixed(1)}ч</span>` :
+                                ''
+                            }
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+
     // Сохранение текущих фильтров
     function saveCurrentFilters() {
-        const filterName = prompt('Введите название для фильтра:');
+        const filterName = prompt('Введите название для набора фильтров:');
         if (!filterName) return;
 
         fetch('/api/scoring/save_filters', {
@@ -1149,133 +631,20 @@ function updateSignalsTable(signals) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 name: filterName,
-                buy_filters: buyFilters,
-                sell_filters: sellFilters
+                score_week_min: currentScoreWeek,
+                score_month_min: currentScoreMonth
             })
         })
         .then(response => response.json())
         .then(result => {
             if (result.status === 'success') {
-                alert('Фильтры сохранены!');
-                location.reload(); // Перезагружаем для обновления списка
+                showNotification('Фильтры сохранены!', 'success');
+                setTimeout(() => location.reload(), 1500);
             } else {
                 alert('Ошибка: ' + result.message);
             }
         });
     }
-
-// Функция показа уведомлений
-function showNotification(message, type) {
-    const notification = document.createElement('div');
-    notification.className = `fixed top-4 right-4 px-6 py-4 rounded-lg shadow-lg transition-all duration-500 z-50 ${
-        type === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'
-    }`;
-    notification.innerHTML = `
-        <div class="flex items-center">
-            <i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'} mr-3"></i>
-            <span>${message}</span>
-        </div>
-    `;
-
-    document.body.appendChild(notification);
-
-    setTimeout(() => {
-        notification.style.opacity = '0';
-        setTimeout(() => notification.remove(), 500);
-    }, 3000);
-}
-
-// Функция загрузки текущего режима при инициализации страницы
-function loadCurrentMode() {
-    fetch('/api/get_user_trading_mode')
-        .then(response => response.json())
-        .then(data => {
-            const modeElement = document.getElementById('currentMode');
-            if (!modeElement) {
-                // Создаем элемент если его нет
-                const container = document.querySelector('.mt-4.pt-4.border-t');
-                if (container) {
-                    const modeDiv = document.createElement('div');
-                    modeDiv.className = 'flex items-center space-x-4 mb-4';
-                    modeDiv.innerHTML = `
-                        <div class="flex items-center">
-                            <span class="text-sm font-medium text-gray-700 mr-3">Режим стратегии:</span>
-                            <span id="currentMode" class="px-3 py-1 rounded-full text-sm font-medium">
-                                <!-- Заполнится через JS -->
-                            </span>
-                        </div>
-                        <button onclick="switchTradingMode()"
-                                class="text-blue-600 hover:text-blue-700 text-sm underline">
-                            Изменить в настройках сигналов
-                        </button>
-                    `;
-                    container.insertBefore(modeDiv, container.firstChild);
-                }
-            }
-
-            updateModeDisplay(data);
-        })
-        .catch(error => {
-            console.error('Ошибка загрузки режима:', error);
-        });
-}
-
-// Функция переключения на страницу настроек
-function switchTradingMode() {
-    if (confirm('Перейти в настройки сигналов для изменения режима?')) {
-        window.location.href = '/signal_performance';
-    }
-}
-
-// Функция обновления отображения режима
-function updateModeDisplay(modeData) {
-    const modeElement = document.getElementById('currentMode');
-    if (!modeElement) return;
-
-    if (modeData.use_trailing_stop) {
-        modeElement.className = 'px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800';
-        modeElement.innerHTML = `
-            <i class="fas fa-chart-line mr-1"></i>
-            Trailing Stop (Act: ${modeData.trailing_activation_pct}%, Dist: ${modeData.trailing_distance_pct}%)
-        `;
-    } else {
-        modeElement.className = 'px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800';
-        modeElement.innerHTML = `
-            <i class="fas fa-lock mr-1"></i>
-            Fixed TP/SL (TP: ${modeData.take_profit_percent}%, SL: ${modeData.stop_loss_percent || modeData.insurance_sl}%)
-        `;
-    }
-}
-
-function switchTradingMode() {
-    if (confirm('Перейти в настройки сигналов для изменения режима?')) {
-        window.location.href = '/signal_performance';
-    }
-}
-
-// Добавьте в блок инициализации (DOMContentLoaded):
-document.addEventListener('DOMContentLoaded', function() {
-    // Инициализируем списки фильтров
-    updateBuyFiltersList();
-    updateSellFiltersList();
-
-    // Загружаем информацию о режимах рынка для текущей даты
-    updateDateInfo();
-
-    // ДОБАВЛЕНО: Загружаем текущий режим торговли
-    loadCurrentMode();
-
-    // Проверяем есть ли статистика от предыдущей обработки
-    const existingStats = document.getElementById('statTotal');
-    if (existingStats && existingStats.textContent !== '0') {
-        // Если есть статистика, обновляем индикатор режима из данных
-        const modeFromStats = document.querySelector('[data-mode]');
-        if (modeFromStats) {
-            const mode = modeFromStats.dataset.mode;
-            updateModeDisplay({use_trailing_stop: mode.includes('Trailing')});
-        }
-    }
-});
 
     // Загрузка сохраненного фильтра
     function loadSavedFilter() {
@@ -1286,11 +655,97 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const filter = savedFiltersData[index];
         if (filter) {
-            buyFilters = filter.buy_filters || [];
-            sellFilters = filter.sell_filters || [];
-            updateBuyFiltersList();
-            updateSellFiltersList();
+            // Устанавливаем значения слайдеров
+            if (filter.score_week_min !== undefined) {
+                document.getElementById('scoreWeekFilter').value = filter.score_week_min;
+                updateScoreDisplay('week', filter.score_week_min);
+            }
+            if (filter.score_month_min !== undefined) {
+                document.getElementById('scoreMonthFilter').value = filter.score_month_min;
+                updateScoreDisplay('month', filter.score_month_min);
+            }
+
+            showNotification('Фильтры загружены', 'info');
         }
     }
+
+    // Переключение режима торговли
+    function switchTradingMode() {
+        if (confirm('Перейти в настройки сигналов для изменения режима?')) {
+            window.location.href = '/signal_performance';
+        }
+    }
+
+    // Загрузка текущего режима
+    function loadCurrentMode() {
+        fetch('/api/get_user_trading_mode')
+            .then(response => response.json())
+            .then(data => {
+                updateModeDisplay(data);
+            })
+            .catch(error => {
+                console.error('Ошибка загрузки режима:', error);
+            });
+    }
+
+    // Обновление отображения режима
+    function updateModeDisplay(modeData) {
+        const modeElement = document.getElementById('currentMode');
+        if (!modeElement) return;
+
+        if (modeData.use_trailing_stop) {
+            modeElement.className = 'px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800';
+            modeElement.innerHTML = `
+                <i class="fas fa-chart-line mr-1"></i>
+                Trailing Stop (Act: ${modeData.trailing_activation_pct}%, Dist: ${modeData.trailing_distance_pct}%)
+            `;
+        } else {
+            modeElement.className = 'px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800';
+            modeElement.innerHTML = `
+                <i class="fas fa-lock mr-1"></i>
+                Fixed TP/SL (TP: ${modeData.take_profit_percent}%, SL: ${modeData.insurance_sl || modeData.stop_loss_percent}%)
+            `;
+        }
+    }
+
+    // Функция показа уведомлений
+    function showNotification(message, type) {
+        const notification = document.createElement('div');
+        notification.className = `fixed top-4 right-4 px-6 py-4 rounded-lg shadow-lg transition-all duration-500 z-50 ${
+            type === 'success' ? 'bg-green-500 text-white' :
+            type === 'info' ? 'bg-blue-500 text-white' :
+            'bg-red-500 text-white'
+        }`;
+        notification.innerHTML = `
+            <div class="flex items-center">
+                <i class="fas ${
+                    type === 'success' ? 'fa-check-circle' :
+                    type === 'info' ? 'fa-info-circle' :
+                    'fa-exclamation-circle'
+                } mr-3"></i>
+                <span>${message}</span>
+            </div>
+        `;
+
+        document.body.appendChild(notification);
+
+        setTimeout(() => {
+            notification.style.opacity = '0';
+            setTimeout(() => notification.remove(), 500);
+        }, 3000);
+    }
+
+    // Инициализация при загрузке страницы
+    document.addEventListener('DOMContentLoaded', function() {
+        // Загружаем информацию о режимах рынка для текущей даты
+        updateDateInfo();
+
+        // Загружаем текущий режим торговли
+        loadCurrentMode();
+
+        // Устанавливаем начальные значения слайдеров
+        updateScoreDisplay('week', 0);
+        updateScoreDisplay('month', 0);
+    });
 </script>
 {% endblock %}

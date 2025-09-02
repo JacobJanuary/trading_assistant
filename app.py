@@ -719,7 +719,7 @@ def signal_performance():
 @app.route('/scoring_analysis')
 @login_required
 def scoring_analysis():
-    """Страница анализа скоринга"""
+    """Страница анализа скоринга - УПРОЩЕННАЯ ВЕРСИЯ"""
     try:
         # Получаем диапазон дат
         date_range = db.execute_query("""
@@ -732,17 +732,9 @@ def scoring_analysis():
         # Получаем выбранную дату или используем максимальную
         selected_date = request.args.get('date', str(date_range['max_date']))
 
-        # Получаем фильтры из запроса (JSON формат)
-        import json
-        buy_filters_json = request.args.get('buy_filters', '[]')
-        sell_filters_json = request.args.get('sell_filters', '[]')
-
-        try:
-            buy_filters = json.loads(buy_filters_json) if buy_filters_json else []
-            sell_filters = json.loads(sell_filters_json) if sell_filters_json else []
-        except:
-            buy_filters = []
-            sell_filters = []
+        # Получаем параметры фильтрации из запроса
+        score_week_min = request.args.get('score_week', type=float, default=0)
+        score_month_min = request.args.get('score_month', type=float, default=0)
 
         # Параметры расчета
         tp_percent = request.args.get('tp', type=float, default=4.0)
@@ -750,11 +742,8 @@ def scoring_analysis():
         position_size = request.args.get('position_size', type=float, default=100.0)
         leverage = request.args.get('leverage', type=int, default=5)
 
-        # Получаем сохраненные фильтры пользователя
-        from database import get_user_scoring_filters, get_scoring_signals, process_scoring_signals_batch, \
-            get_scoring_analysis_results
-        import uuid
-
+        # Получаем сохраненные фильтры пользователя (упрощенные)
+        from database import get_user_scoring_filters
         saved_filters = get_user_scoring_filters(db, current_user.id)
 
         # Инициализация данных по умолчанию
@@ -778,81 +767,12 @@ def scoring_analysis():
             'net_pnl': 0
         }
 
-        # Если есть активные фильтры, получаем и обрабатываем сигналы
-        if buy_filters or sell_filters:
-            # Получаем сигналы
-            raw_signals = get_scoring_signals(db, selected_date, buy_filters, sell_filters)
-
-            # Обрабатываем сигналы
-            if raw_signals:
-                # Генерируем ID сессии для этого запроса
-                session_id = f"scoring_{current_user.id}_{uuid.uuid4().hex[:8]}"
-
-                # Обрабатываем пакетно и сохраняем в БД
-                result = process_scoring_signals_batch(
-                    db, raw_signals, session_id, current_user.id,
-                    tp_percent=tp_percent,
-                    sl_percent=sl_percent,
-                    position_size=position_size,
-                    leverage=leverage
-                )
-
-                # Получаем обработанные результаты из БД
-                db_signals = get_scoring_analysis_results(db, session_id, current_user.id)
-
-                # Форматируем для отображения
-                for signal in db_signals:
-                    signals_data.append({
-                        'timestamp': signal['signal_timestamp'],
-                        'pair_symbol': signal['pair_symbol'],
-                        'signal_action': signal['signal_action'],
-                        'market_regime': signal['market_regime'],
-                        'total_score': float(signal['total_score'] or 0),
-                        'indicator_score': float(signal['indicator_score'] or 0),
-                        'pattern_score': float(signal['pattern_score'] or 0),
-                        'combination_score': float(signal['combination_score'] or 0),
-                        'entry_price': float(signal['entry_price']),
-                        'current_price': float(signal['close_price']),
-                        'is_closed': signal['is_closed'],
-                        'close_reason': signal['close_reason'],
-                        'hours_to_close': float(signal['hours_to_close'] or 0),
-                        'pnl_usd': float(signal['pnl_usd'] or 0),
-                        'pnl_percent': float(signal['pnl_percent'] or 0),
-                        'max_potential_profit_usd': float(signal['max_potential_profit_usd'] or 0)
-                    })
-
-                # Обновляем статистику
-                if result and 'stats' in result:
-                    db_stats = result['stats']
-                    stats = {
-                        'total': db_stats['total'] or 0,
-                        'buy_signals': db_stats['buy_signals'] or 0,
-                        'sell_signals': db_stats['sell_signals'] or 0,
-                        'tp_count': db_stats['tp_count'] or 0,
-                        'sl_count': db_stats['sl_count'] or 0,
-                        'timeout_count': db_stats['timeout_count'] or 0,
-                        'total_pnl': float(db_stats['total_pnl'] or 0),
-                        'realized_profit': float(db_stats['tp_profit'] or 0),
-                        'realized_loss': float(db_stats['sl_loss'] or 0),
-                        'max_potential': float(db_stats['total_max_potential'] or 0)
-                    }
-
-                    # Рассчитываем метрики
-                    total_closed = stats['tp_count'] + stats['sl_count']
-                    if total_closed > 0:
-                        metrics['win_rate'] = (stats['tp_count'] / total_closed) * 100
-
-                    if stats['max_potential'] > 0:
-                        metrics['tp_efficiency'] = (stats['realized_profit'] / stats['max_potential']) * 100
-
-                    metrics['net_pnl'] = stats['total_pnl']
-
         return render_template(
             'scoring_analysis.html',
             date_range=date_range,
             selected_date=selected_date,
-            buy_filters=buy_filters,
-            sell_filters=sell_filters,
+            score_week_min=score_week_min,
+            score_month_min=score_month_min,
             saved_filters=saved_filters,
             signals=signals_data,
             stats=stats,
@@ -873,10 +793,11 @@ def scoring_analysis():
         return redirect(url_for('dashboard'))
 
 
+
 @app.route('/api/scoring/apply_filters', methods=['POST'])
 @login_required
 def api_scoring_apply_filters():
-    """API для применения фильтров скоринга с поддержкой Trailing Stop"""
+    """API для применения упрощенных фильтров скоринга с поддержкой Trailing Stop"""
     try:
         data = request.get_json()
 
@@ -888,14 +809,14 @@ def api_scoring_apply_filters():
 
         # Получаем параметры
         selected_date = data.get('date')
-        buy_filters = data.get('buy_filters', [])
-        sell_filters = data.get('sell_filters', [])
+        score_week_min = data.get('score_week_min')
+        score_month_min = data.get('score_month_min')
         tp_percent = data.get('tp_percent', 4.0)
         sl_percent = data.get('sl_percent', 3.0)
         position_size = data.get('position_size', 100.0)
         leverage = data.get('leverage', 5)
 
-        # НОВОЕ: Получаем настройки trailing из user_signal_filters
+        # Получаем настройки trailing из user_signal_filters
         settings_query = """
             SELECT use_trailing_stop, trailing_distance_pct, trailing_activation_pct
             FROM web.user_signal_filters
@@ -914,11 +835,11 @@ def api_scoring_apply_filters():
             trailing_activation_pct = float(settings.get('trailing_activation_pct', 1.0))
 
         print(f"[API] Обработка фильтров для даты {selected_date}")
+        print(f"[API] Фильтры: score_week >= {score_week_min}, score_month >= {score_month_min}")
         print(f"[API] Режим: {'Trailing Stop' if use_trailing_stop else 'Fixed TP/SL'}")
-        print(f"[API] BUY фильтров: {len(buy_filters)}, SELL фильтров: {len(sell_filters)}")
 
-        # Получаем сигналы по фильтрам
-        raw_signals = get_scoring_signals(db, selected_date, buy_filters, sell_filters)
+        # Получаем сигналы по упрощенным фильтрам
+        raw_signals = get_scoring_signals(db, selected_date, score_week_min, score_month_min)
 
         if raw_signals:
             print(f"[API] Найдено {len(raw_signals)} сигналов")
@@ -951,6 +872,8 @@ def api_scoring_apply_filters():
                     'indicator_score': float(signal['indicator_score'] or 0),
                     'pattern_score': float(signal['pattern_score'] or 0),
                     'combination_score': float(signal['combination_score'] or 0),
+                    'score_week': float(signal.get('score_week', 0)) if signal.get('score_week') else None,
+                    'score_month': float(signal.get('score_month', 0)) if signal.get('score_month') else None,
                     'entry_price': float(signal['entry_price']),
                     'current_price': float(signal['close_price']),
                     'is_closed': signal['is_closed'],
@@ -967,15 +890,15 @@ def api_scoring_apply_filters():
             # Считаем trailing_stop с прибылью как победу
             tp_count = int(stats_data.get('tp_count') or 0)
             trailing_count = int(stats_data.get('trailing_count') or 0)
-            total_wins = tp_count + trailing_count  # Все trailing считаем победами если с прибылью
+            total_wins = tp_count + trailing_count
 
             stats = {
                 'total': int(stats_data.get('total') or 0),
                 'buy_signals': int(stats_data.get('buy_signals') or 0),
                 'sell_signals': int(stats_data.get('sell_signals') or 0),
-                'tp_count': total_wins,  # Включаем trailing с прибылью
+                'tp_count': total_wins,
                 'sl_count': int(stats_data.get('sl_count') or 0),
-                'trailing_count': trailing_count,  # Отдельный счетчик для UI
+                'trailing_count': trailing_count,
                 'timeout_count': int(stats_data.get('timeout_count') or 0),
                 'total_pnl': float(stats_data.get('total_pnl') or 0),
                 'realized_profit': float(stats_data.get('tp_profit') or 0),
@@ -1002,7 +925,7 @@ def api_scoring_apply_filters():
                 'mode': stats['mode']
             }
 
-            print(f"[API] Статистика: Total={stats['total']}, TP={stats['tp_count']}, "
+            print(f"[API] Обработано: Total={stats['total']}, TP={stats['tp_count']}, "
                   f"SL={stats['sl_count']}, Trailing={stats['trailing_count']}, P&L=${stats['total_pnl']:.2f}")
 
             return jsonify({
@@ -1048,17 +971,40 @@ def api_scoring_apply_filters():
 @app.route('/api/scoring/save_filters', methods=['POST'])
 @login_required
 def api_scoring_save_filters():
-    """API для сохранения фильтров скоринга"""
+    """API для сохранения упрощенных фильтров скоринга"""
     try:
         data = request.get_json()
 
-        from database import save_user_scoring_filters
+        from datetime import datetime
 
         filter_name = data.get('name', f'Filter_{datetime.now().strftime("%Y%m%d_%H%M%S")}')
-        buy_filters = data.get('buy_filters', [])
-        sell_filters = data.get('sell_filters', [])
+        score_week_min = data.get('score_week_min')
+        score_month_min = data.get('score_month_min')
 
-        save_user_scoring_filters(db, current_user.id, filter_name, buy_filters, sell_filters)
+        # Сохраняем в упрощенном формате
+        save_query = """
+            INSERT INTO web.user_scoring_filters (
+                user_id, filter_name, buy_filters, sell_filters
+            ) VALUES (%s, %s, %s, %s)
+            ON CONFLICT (user_id, filter_name) DO UPDATE SET
+                buy_filters = EXCLUDED.buy_filters,
+                sell_filters = EXCLUDED.sell_filters,
+                updated_at = NOW()
+        """
+
+        import json
+        # Сохраняем параметры в JSON для обратной совместимости
+        filter_data = {
+            'score_week_min': score_week_min,
+            'score_month_min': score_month_min
+        }
+
+        db.execute_query(save_query, (
+            current_user.id,
+            filter_name,
+            json.dumps(filter_data),  # Используем buy_filters для хранения
+            json.dumps({})  # sell_filters оставляем пустым
+        ))
 
         return jsonify({
             'status': 'success',
@@ -1164,52 +1110,24 @@ def api_save_filters():
 @app.route('/api/scoring/get_date_info', methods=['POST'])
 @login_required
 def api_scoring_get_date_info():
-    """API для получения информации о выбранной дате"""
+    """API для получения информации о выбранной дате - УПРОЩЕННАЯ ВЕРСИЯ"""
     try:
         data = request.get_json()
         selected_date = data.get('date')
-        buy_filters = data.get('buy_filters', [])
-        sell_filters = data.get('sell_filters', [])
+        score_week_min = data.get('score_week')
+        score_month_min = data.get('score_month')
 
-        # Получаем режимы рынка для этой даты
-        market_query = """
-            SELECT DISTINCT 
-                DATE_TRUNC('hour', timestamp) as hour,
-                regime
-            FROM fas.market_regime
-            WHERE timestamp::date = %s
-                AND timeframe = '4h'
-            ORDER BY hour
-        """
-        market_data = db.execute_query(market_query, (selected_date,), fetch=True)
+        from database import get_scoring_date_info
 
-        # Подсчитываем распределение режимов
-        regime_counts = {'BULL': 0, 'NEUTRAL': 0, 'BEAR': 0}
-        for row in market_data:
-            regime = row['regime']
-            if regime in regime_counts:
-                regime_counts[regime] += 1
-
-        # Определяем доминирующий режим
-        dominant_regime = max(regime_counts, key=regime_counts.get)
-
-        # Если есть фильтры, подсчитываем количество сигналов
-        signal_count = 0
-        if buy_filters or sell_filters:
-            from database import get_scoring_signals
-            raw_signals = get_scoring_signals(db, selected_date, buy_filters, sell_filters)
-            signal_count = len(raw_signals) if raw_signals else 0
+        # Получаем информацию через новую упрощенную функцию
+        date_info = get_scoring_date_info(db, selected_date, score_week_min, score_month_min)
 
         return jsonify({
             'status': 'success',
             'date': selected_date,
-            'market_regimes': regime_counts,
-            'dominant_regime': dominant_regime,
-            'signal_count': signal_count,
-            'market_timeline': [
-                {'hour': row['hour'].strftime('%H:%M'), 'regime': row['regime']}
-                for row in market_data[:6]  # Первые 6 записей для отображения
-            ]
+            'market_regimes': date_info['market_regimes'],
+            'dominant_regime': date_info['dominant_regime'],
+            'signal_count': date_info['signal_count']
         })
 
     except Exception as e:

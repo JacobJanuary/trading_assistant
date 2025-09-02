@@ -1393,123 +1393,21 @@ def get_scoring_date_range(db):
     return result[0] if result else {'min_date': None, 'max_date': None}
 
 
-def build_scoring_filter_conditions(filters):
+def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=None):
     """
-    Построение SQL условий из фильтров скоринга
-    """
-    conditions = []
-    params = []
-
-    # Отладочный вывод
-    print(f"\n[DEBUG] Обработка фильтра:")
-    print(f"  Order Type: {filters.get('order_type')}")
-    print(f"  Market: {filters.get('market', 'Не указан')}")
-    print(f"  Recommended Action: {filters.get('recommended_action', 'Не указано')}")
-
-    # Базовое условие - начинаем с пустой скобки
-    # Теперь market НЕ обязательный
-    if filters.get('order_type') not in ['BUY', 'SELL']:
-        print("[DEBUG] ОШИБКА: Не указан или неверный order_type!")
-        return "", []
-
-    # Собираем все условия
-    all_conditions = []
-
-    # Market - теперь опциональный
-    if filters.get('market'):
-        all_conditions.append("mr.regime = %s")
-        params.append(str(filters['market']))
-        print(f"[DEBUG] Добавлено условие market: {filters['market']}")
-
-    # Recommended Action - опциональный
-    if filters.get('recommended_action'):
-        all_conditions.append("sh.recommended_action = %s")
-        params.append(filters['recommended_action'])
-        print(f"[DEBUG] Добавлено условие recommended_action: {filters['recommended_action']}")
-
-    # Total score
-    if filters.get('total_score_min') is not None:
-        all_conditions.append("sh.total_score >= %s")
-        params.append(float(filters['total_score_min']))
-    if filters.get('total_score_max') is not None:
-        all_conditions.append("sh.total_score <= %s")
-        params.append(float(filters['total_score_max']))
-
-    # Indicator score
-    if filters.get('indicator_score_min') is not None:
-        all_conditions.append("sh.indicator_score >= %s")
-        params.append(float(filters['indicator_score_min']))
-    if filters.get('indicator_score_max') is not None:
-        all_conditions.append("sh.indicator_score <= %s")
-        params.append(float(filters['indicator_score_max']))
-
-    # Pattern score
-    if filters.get('pattern_score_min') is not None:
-        all_conditions.append("sh.pattern_score >= %s")
-        params.append(float(filters['pattern_score_min']))
-    if filters.get('pattern_score_max') is not None:
-        all_conditions.append("sh.pattern_score <= %s")
-        params.append(float(filters['pattern_score_max']))
-
-    # Combination score
-    if filters.get('combination_score_min') is not None:
-        all_conditions.append("sh.combination_score >= %s")
-        params.append(float(filters['combination_score_min']))
-    if filters.get('combination_score_max') is not None:
-        all_conditions.append("sh.combination_score <= %s")
-        params.append(float(filters['combination_score_max']))
-
-    # Если нет условий вообще - возвращаем пустое условие
-    if not all_conditions:
-        print("[DEBUG] Нет условий для фильтрации!")
-        return "", []
-
-    # Собираем полное условие
-    full_condition = "(" + " AND ".join(all_conditions) + ")"
-
-    print(f"[DEBUG] Сформированное условие: {full_condition}")
-    print(f"[DEBUG] Количество параметров: {len(params)}")
-
-    return full_condition, params
-
-
-def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
-    """
-    Получение сигналов на основе фильтров скоринга
-    ИСПРАВЛЕНО: Корректная работа с Bybit и правильное получение exchange_name
+    Получение сигналов на основе простых фильтров score_week и score_month
+    НОВАЯ ЛОГИКА: Прямой запрос к fas.scoring_history без сложных конструкторов
     """
 
-    # Сначала собираем все условия и параметры для CASE
-    case_conditions = []
-    case_params = []
-    all_conditions = []
+    print(f"\n[SCORING] ========== ПОЛУЧЕНИЕ СИГНАЛОВ ==========")
+    print(f"[SCORING] Дата: {date_filter}")
+    print(f"[SCORING] Минимальный score_week: {score_week_min}")
+    print(f"[SCORING] Минимальный score_month: {score_month_min}")
 
-    # Обрабатываем BUY фильтры
-    if buy_filters:
-        for idx, filter_set in enumerate(buy_filters):
-            condition, filter_params = build_scoring_filter_conditions(filter_set)
-            if condition:
-                case_conditions.append(f"WHEN {condition} THEN 'BUY'")
-                all_conditions.append(condition)
-                case_params.extend(filter_params)
-
-    # Обрабатываем SELL фильтры
-    if sell_filters:
-        for idx, filter_set in enumerate(sell_filters):
-            condition, filter_params = build_scoring_filter_conditions(filter_set)
-            if condition:
-                case_conditions.append(f"WHEN {condition} THEN 'SELL'")
-                all_conditions.append(condition)
-                case_params.extend(filter_params)
-
-    # Если нет фильтров, возвращаем пустой список
-    if not case_conditions:
-        print("[DEBUG] Нет активных фильтров")
-        return []
-
-    # ИСПРАВЛЕННЫЙ запрос с правильным получением exchange_name
+    # Базовый запрос к fas.scoring_history
     query = """
         WITH market_regime_data AS (
+            -- Получаем режимы рынка для выбранной даты
             SELECT DISTINCT ON (DATE_TRUNC('hour', timestamp))
                 DATE_TRUNC('hour', timestamp) as hour_bucket,
                 regime,
@@ -1520,18 +1418,21 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
             ORDER BY DATE_TRUNC('hour', timestamp), timestamp DESC
         )
         SELECT
-            sh.*,
-            tp.pair_symbol as symbol,
+            sh.id as signal_id,
+            sh.timestamp,
+            sh.trading_pair_id,
+            sh.pair_symbol,
+            sh.recommended_action as signal_action,
+            sh.total_score,
+            sh.indicator_score,
+            sh.pattern_score,
+            sh.combination_score,
+            sh.score_week,
+            sh.score_month,
             tp.exchange_id,
             ex.exchange_name,
-            COALESCE(mr.regime, 'NEUTRAL') AS market_regime,
-            sh.recommended_action,
-            CASE 
-    """
-
-    query += "\n".join(case_conditions) + """
-            END as signal_action
-        FROM fas.scoring_history AS sh
+            COALESCE(mr.regime, 'NEUTRAL') AS market_regime
+        FROM fas.scoring_history sh
         JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
         JOIN public.exchanges ex ON ex.id = tp.exchange_id
         LEFT JOIN LATERAL (
@@ -1544,50 +1445,122 @@ def get_scoring_signals(db, date_filter, buy_filters=None, sell_filters=None):
         WHERE sh.timestamp::date = %s
             AND tp.contract_type_id = 1
             AND tp.exchange_id IN (1, 2)
-            AND (
     """
 
-    query += " OR ".join(all_conditions) + ")"
+    params = [date_filter, date_filter]
+
+    # Добавляем фильтр по score_week если задан
+    if score_week_min is not None:
+        query += " AND sh.score_week >= %s"
+        params.append(score_week_min)
+
+    # Добавляем фильтр по score_month если задан
+    if score_month_min is not None:
+        query += " AND sh.score_month >= %s"
+        params.append(score_month_min)
+
     query += " ORDER BY sh.timestamp DESC"
 
-    # Собираем все параметры в правильном порядке
-    all_params = []
-    all_params.append(date_filter)  # Для market_regime CTE
-    all_params.extend(case_params)  # Параметры для CASE
-    all_params.append(date_filter)  # Дата для WHERE
-    all_params.extend(case_params)  # Те же параметры для WHERE условий
-
-    # Отладочный вывод
-    print("\n" + "=" * 80)
-    print(f"[DEBUG] Выполняем запрос для даты: {date_filter}")
-    print(f"[DEBUG] Количество BUY фильтров: {len(buy_filters) if buy_filters else 0}")
-    print(f"[DEBUG] Количество SELL фильтров: {len(sell_filters) if sell_filters else 0}")
-    print("=" * 80)
-
-    # Выполняем запрос
     try:
-        results = db.execute_query(query, tuple(all_params), fetch=True)
+        results = db.execute_query(query, tuple(params), fetch=True)
 
         if results:
-            print(f"[DEBUG] Найдено сигналов: {len(results)}")
+            print(f"[SCORING] Найдено сигналов: {len(results)}")
 
             # Группируем по биржам для статистики
             exchanges_count = {}
+            actions_count = {'BUY': 0, 'SELL': 0, 'LONG': 0, 'SHORT': 0, 'NEUTRAL': 0}
+
             for signal in results:
                 exchange = signal.get('exchange_name', 'Unknown')
                 exchanges_count[exchange] = exchanges_count.get(exchange, 0) + 1
 
-            print("\n[DEBUG] Распределение по биржам:")
+                action = signal.get('signal_action', 'NEUTRAL')
+                if action in actions_count:
+                    actions_count[action] += 1
+
+            print("\n[SCORING] Распределение по биржам:")
             for exchange, count in exchanges_count.items():
                 print(f"  {exchange}: {count} сигналов")
+
+            print("\n[SCORING] Распределение по типам сигналов:")
+            for action, count in actions_count.items():
+                if count > 0:
+                    print(f"  {action}: {count}")
+        else:
+            print("[SCORING] Сигналов не найдено")
 
         return results if results else []
 
     except Exception as e:
-        print(f"[DEBUG] ОШИБКА выполнения запроса: {e}")
+        print(f"[SCORING] ОШИБКА выполнения запроса: {e}")
         import traceback
         print(traceback.format_exc())
-        raise
+        return []
+
+
+def get_scoring_date_info(db, date, score_week_min=None, score_month_min=None):
+    """
+    Получение информации о выбранной дате: режимы рынка и количество сигналов
+    """
+    result = {
+        'market_regimes': {'BULL': 0, 'NEUTRAL': 0, 'BEAR': 0},
+        'dominant_regime': 'NEUTRAL',
+        'signal_count': 0
+    }
+
+    try:
+        # Получаем режимы рынка для этой даты
+        market_query = """
+            SELECT DISTINCT 
+                DATE_TRUNC('hour', timestamp) as hour,
+                regime
+            FROM fas.market_regime
+            WHERE timestamp::date = %s
+                AND timeframe = '4h'
+            ORDER BY hour
+        """
+        market_data = db.execute_query(market_query, (date,), fetch=True)
+
+        # Подсчитываем распределение режимов
+        for row in market_data:
+            regime = row['regime']
+            if regime in result['market_regimes']:
+                result['market_regimes'][regime] += 1
+
+        # Определяем доминирующий режим
+        if result['market_regimes']:
+            result['dominant_regime'] = max(result['market_regimes'],
+                                            key=result['market_regimes'].get)
+
+        # Подсчитываем количество сигналов с учетом фильтров
+        count_query = """
+            SELECT COUNT(*) as count
+            FROM fas.scoring_history sh
+            JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
+            WHERE sh.timestamp::date = %s
+                AND tp.contract_type_id = 1
+                AND tp.exchange_id IN (1, 2)
+        """
+
+        params = [date]
+
+        if score_week_min is not None:
+            count_query += " AND sh.score_week >= %s"
+            params.append(score_week_min)
+
+        if score_month_min is not None:
+            count_query += " AND sh.score_month >= %s"
+            params.append(score_month_min)
+
+        count_result = db.execute_query(count_query, tuple(params), fetch=True)
+        if count_result:
+            result['signal_count'] = count_result[0]['count']
+
+    except Exception as e:
+        print(f"[SCORING] Ошибка получения информации о дате: {e}")
+
+    return result
 
 
 def process_scoring_signals_batch(db, signals, session_id, user_id,
@@ -1598,7 +1571,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                                   trailing_activation_pct=1.0):
     """
     Пакетная обработка сигналов скоринга с поддержкой Trailing Stop
-    ИСПРАВЛЕНО: Корректная обработка результатов trailing stop
+    ИСПРАВЛЕНО: Корректная обработка имен полей
     """
 
     # Очищаем предыдущие результаты для этой сессии
@@ -1635,6 +1608,13 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
     for idx, signal in enumerate(signals):
         try:
             exchange_name = signal.get('exchange_name', 'Unknown')
+
+            # ИСПРАВЛЕНИЕ: Используем правильное имя поля
+            pair_symbol = signal.get('pair_symbol')  # Изменено с 'symbol' на 'pair_symbol'
+            if not pair_symbol:
+                print(f"[SCORING] Предупреждение: отсутствует pair_symbol для сигнала {signal.get('signal_id')}")
+                error_count += 1
+                continue
 
             # Получаем цену входа
             entry_price_query = """
@@ -1724,15 +1704,15 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                     sl_percent,
                     position_size,
                     leverage,
-                    signal_timestamp=signal['timestamp']  # ВАЖНО: передаем timestamp
+                    signal_timestamp=signal['timestamp']
                 )
 
-                # ИСПРАВЛЕНО: Правильно извлекаем все данные из результата
+                # Извлекаем все данные из результата
                 is_closed = result['is_closed']
                 close_price = result['close_price']
                 close_time = result['close_time']
                 close_reason = result['close_reason']
-                best_price_reached = result['absolute_best_price']  # Используем absolute_best_price
+                best_price_reached = result['absolute_best_price']
                 max_profit_usd = result['max_profit_usd']
 
                 # Рассчитываем финальный P&L
@@ -1741,9 +1721,9 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                     final_pnl_usd = result['pnl_usd']
                     hours_to_close = (close_time - signal['timestamp']).total_seconds() / 3600 if close_time else None
                 else:
-                    # Для открытых позиций (не должно быть при правильной работе таймаута)
+                    # Для открытых позиций
                     last_price = float(history[-1]['close_price'])
-                    close_price = last_price  # Для отображения текущей цены
+                    close_price = last_price
                     close_time = history[-1]['timestamp']
 
                     if signal['signal_action'] in ['SELL', 'SHORT']:
@@ -1751,7 +1731,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                     else:
                         final_pnl_percent = ((last_price - entry_price) / entry_price) * 100
                     final_pnl_usd = position_size * (final_pnl_percent / 100) * leverage
-                    hours_to_close = 48.0  # Максимальное время
+                    hours_to_close = 48.0
 
                 # Расчет max_profit_percent для сохранения
                 max_profit_percent = (max_profit_usd / (position_size * leverage)) * 100 if (
@@ -1771,27 +1751,8 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                 else:
                     debug_stats['still_open'] += 1
 
-                # Отладка для первых сигналов
-                if idx < 3:
-                    print(f"\n[DEBUG] Сигнал {signal['symbol']} ({signal['signal_action']}):")
-                    print(f"  Entry price: {entry_price:.8f}")
-                    print(f"  Trailing activated: {result.get('trailing_activated', False)}")
-                    print(f"  Is closed: {is_closed}")
-                    print(f"  Close reason: {close_reason}")
-                    # ИСПРАВЛЕННАЯ СТРОКА:
-                    if close_price is not None and close_price != 0:
-                        print(f"  Close price: {close_price:.8f}")
-                    else:
-                        print(f"  Close price: N/A")
-                    print(f"  Final P&L: ${final_pnl_usd:.2f} ({final_pnl_percent:.2f}%)")
-                    print(f"  Max profit: ${max_profit_usd:.2f}")
-                    if hours_to_close is not None:
-                        print(f"  Hours to close: {hours_to_close:.1f}")
-                    else:
-                        print(f"  Hours to close: N/A")
-
             else:
-                # СУЩЕСТВУЮЩАЯ ЛОГИКА Fixed TP/SL (оставляем как есть)
+                # СУЩЕСТВУЮЩАЯ ЛОГИКА Fixed TP/SL
                 is_closed = False
                 close_reason = None
                 close_price = None
@@ -1809,7 +1770,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                     tp_price = entry_price * (1 + tp_percent / 100)
                     sl_price = entry_price * (1 - sl_percent / 100)
 
-                # ... остальная логика Fixed TP/SL ...
+                # Проходим по истории
                 for candle in history:
                     current_time = candle['timestamp']
                     hours_passed = (current_time - signal['timestamp']).total_seconds() / 3600
@@ -1881,7 +1842,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                         hours_to_close = 48.0
                         debug_stats['closed_timeout'] += 1
                     else:
-                        # Остается открытой (не должно быть для исторических данных)
+                        # Остается открытой
                         close_price = last_price
                         close_time = history[-1]['timestamp']
                         hours_to_close = hours_passed
@@ -1899,7 +1860,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                 session_id,
                 user_id,
                 signal['timestamp'],
-                signal['symbol'],
+                pair_symbol,  # ИСПРАВЛЕНО: используем правильную переменную
                 signal['trading_pair_id'],
                 signal['signal_action'],
                 signal.get('market_regime', 'NEUTRAL'),
@@ -1912,8 +1873,8 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                 best_price_reached,
                 close_price,
                 close_time,
-                is_closed,  # ВАЖНО: используем правильное значение
-                close_reason,  # ВАЖНО: используем правильное значение
+                is_closed,
+                close_reason,
                 hours_to_close,
                 final_pnl_percent,
                 final_pnl_usd,
@@ -1936,7 +1897,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
 
         except Exception as e:
             error_count += 1
-            print(f"[SCORING] Ошибка обработки сигнала {signal.get('symbol', 'UNKNOWN')}: {e}")
+            print(f"[SCORING] Ошибка обработки сигнала {signal.get('pair_symbol', 'UNKNOWN')}: {e}")
             import traceback
             traceback.print_exc()
             continue
@@ -1957,11 +1918,6 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
     print(f"[SCORING] Закрыто по timeout: {debug_stats['closed_timeout']}")
     print(f"[SCORING] Остались открытыми: {debug_stats['still_open']}")
     print(f"[SCORING] Ошибок: {error_count}")
-
-    # Возвращаем статистику из БД
-    # В функции process_scoring_signals_batch в database.py
-    # найдите блок с возвратом статистики (около строки 2040-2080)
-    # и замените запрос stats_query на исправленный:
 
     # Возвращаем статистику из БД
     stats_query = """
