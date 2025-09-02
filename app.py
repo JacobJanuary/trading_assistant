@@ -1250,6 +1250,164 @@ def api_get_user_trading_mode():
         logger.error(f"Ошибка получения режима торговли: {e}")
         return jsonify({'error': str(e)}), 500
 
+
+# ========== АНАЛИЗ ЭФФЕКТИВНОСТИ ==========
+
+@app.route('/efficiency_analysis')
+@login_required
+def efficiency_analysis():
+    """Страница анализа эффективности"""
+    return render_template('efficiency_analysis.html', 
+                          username=current_user.username,
+                          is_admin=current_user.is_admin)
+
+
+@app.route('/api/efficiency/analyze', methods=['POST'])
+@login_required
+def api_efficiency_analyze():
+    """API для анализа эффективности с различными параметрами скоринга"""
+    try:
+        data = request.get_json()
+        analysis_type = data.get('type', 'score_week')  # score_week, score_month, combined
+        
+        results = []
+        
+        if analysis_type == 'score_week':
+            # Анализ по score_week от 60 до 99
+            for score_min in range(60, 100):
+                pnl_data = _calculate_efficiency_pnl(
+                    score_week_min=score_min,
+                    score_month_min=None
+                )
+                results.append({
+                    'score_week': score_min,
+                    'total_pnl': pnl_data['total_pnl'],
+                    'signal_count': pnl_data['signal_count'],
+                    'daily_data': pnl_data['daily_data']
+                })
+                
+        elif analysis_type == 'score_month':
+            # Анализ по score_month от 60 до 99
+            for score_min in range(60, 100):
+                pnl_data = _calculate_efficiency_pnl(
+                    score_week_min=None,
+                    score_month_min=score_min
+                )
+                results.append({
+                    'score_month': score_min,
+                    'total_pnl': pnl_data['total_pnl'],
+                    'signal_count': pnl_data['signal_count'],
+                    'daily_data': pnl_data['daily_data']
+                })
+                
+        elif analysis_type == 'combined':
+            # Анализ по комбинациям score_week и score_month
+            for week_score in range(60, 100, 5):  # С шагом 5 для ускорения
+                for month_score in range(60, 100, 5):
+                    pnl_data = _calculate_efficiency_pnl(
+                        score_week_min=week_score,
+                        score_month_min=month_score
+                    )
+                    results.append({
+                        'score_week': week_score,
+                        'score_month': month_score,
+                        'total_pnl': pnl_data['total_pnl'],
+                        'signal_count': pnl_data['signal_count'],
+                        'daily_data': pnl_data['daily_data']
+                    })
+        
+        # Сортируем по убыванию total_pnl
+        results.sort(key=lambda x: x['total_pnl'], reverse=True)
+        
+        return jsonify({
+            'status': 'success',
+            'results': results[:100]  # Возвращаем топ-100 результатов
+        })
+        
+    except Exception as e:
+        logger.error(f"Ошибка анализа эффективности: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+def _calculate_efficiency_pnl(score_week_min=None, score_month_min=None):
+    """Вспомогательная функция для расчета P&L за 30 дней"""
+    try:
+        # Базовый запрос для получения результатов за последние 32 дня
+        query = """
+            WITH filtered_results AS (
+                SELECT 
+                    DATE(shr.signal_timestamp) as signal_date,
+                    shr.pair_symbol,
+                    shr.signal_type,
+                    shr.pnl_usd,
+                    shr.is_win,
+                    shr.close_reason,
+                    sh.score_week,
+                    sh.score_month
+                FROM web.scoring_history_results_v2 shr
+                JOIN fas.scoring_history sh ON sh.id = shr.scoring_history_id
+                WHERE shr.signal_timestamp >= NOW() - INTERVAL '32 days'
+                    AND shr.signal_timestamp < NOW() - INTERVAL '2 days'
+                    AND shr.is_closed = true
+        """
+        
+        params = []
+        
+        # Добавляем фильтры по скорингу
+        if score_week_min is not None:
+            query += " AND sh.score_week >= %s"
+            params.append(score_week_min)
+            
+        if score_month_min is not None:
+            query += " AND sh.score_month >= %s"
+            params.append(score_month_min)
+            
+        query += """
+            )
+            SELECT 
+                signal_date,
+                COUNT(*) as signal_count,
+                SUM(pnl_usd) as daily_pnl,
+                SUM(CASE WHEN is_win = true THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN is_win = false THEN 1 ELSE 0 END) as losses
+            FROM filtered_results
+            GROUP BY signal_date
+            ORDER BY signal_date DESC
+        """
+        
+        results = db.execute_query(query, params, fetch=True)
+        
+        daily_data = []
+        total_pnl = 0
+        total_signals = 0
+        
+        for row in results:
+            daily_pnl = float(row['daily_pnl'] or 0)
+            total_pnl += daily_pnl
+            total_signals += row['signal_count']
+            
+            daily_data.append({
+                'date': row['signal_date'].strftime('%Y-%m-%d'),
+                'signal_count': row['signal_count'],
+                'daily_pnl': round(daily_pnl, 2),
+                'wins': row['wins'],
+                'losses': row['losses']
+            })
+        
+        return {
+            'total_pnl': round(total_pnl, 2),
+            'signal_count': total_signals,
+            'daily_data': daily_data
+        }
+        
+    except Exception as e:
+        logger.error(f"Ошибка расчета P&L: {e}")
+        return {
+            'total_pnl': 0,
+            'signal_count': 0,
+            'daily_data': []
+        }
+
 # Обработка ошибок
 @app.errorhandler(404)
 def not_found(error):
