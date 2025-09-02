@@ -1294,8 +1294,10 @@ def api_efficiency_analyze_30days_progress():
             yield f": heartbeat\n\n"
             yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
             
-            # Переменная для отслеживания времени последнего heartbeat
+            # Переменные для отслеживания времени и обработки
             last_heartbeat = time.time()
+            last_yield = time.time()
+            processed_combinations = 0
             
             # Получаем настройки пользователя
             settings_query = """
@@ -1338,6 +1340,7 @@ def api_efficiency_analyze_30days_progress():
             for score_week_min in week_steps:
                 for score_month_min in month_steps:
                     current_combination += 1
+                    processed_combinations += 1
                     
                     combination_result = {
                         'score_week': score_week_min,
@@ -1352,12 +1355,12 @@ def api_efficiency_analyze_30days_progress():
                         'daily_breakdown': []
                     }
                     
-                    # Отправляем информацию о текущей комбинации
-                    progress_percent = int((current_combination - 0.5) / total_combinations * 100)
-                    yield f"data: {json.dumps({'type': 'progress', 'percent': progress_percent, 'message': f'Анализ комбинации {current_combination}/{total_combinations}: Week≥{score_week_min}%, Month≥{score_month_min}%', 'current_combination': current_combination, 'total_combinations': total_combinations})}\n\n"
-                    
-                    # Отправляем heartbeat после каждого обновления прогресса
-                    yield f": heartbeat\n\n"
+                    # Отправляем прогресс только каждые 5 комбинаций для уменьшения нагрузки
+                    if processed_combinations % 5 == 1 or current_combination == total_combinations:
+                        progress_percent = int((current_combination - 0.5) / total_combinations * 100)
+                        yield f"data: {json.dumps({'type': 'progress', 'percent': progress_percent, 'message': f'Обработка {current_combination}/{total_combinations}', 'current_combination': current_combination, 'total_combinations': total_combinations})}\n\n"
+                        yield f": heartbeat\n\n"
+                        last_yield = time.time()
                     
                     # Обрабатываем каждый день
                     current_date = start_date
@@ -1367,17 +1370,18 @@ def api_efficiency_analyze_30days_progress():
                         days_processed += 1
                         date_str = current_date.strftime('%Y-%m-%d')
                         
-                        # Отправляем heartbeat каждые 2 секунды для надежности
+                        # Отправляем heartbeat только если давно не отправляли данные
                         current_time = time.time()
-                        if current_time - last_heartbeat > 2:
-                            yield f": heartbeat\n\n"
-                            yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
-                            last_heartbeat = current_time
+                        if current_time - last_yield > 3:
+                            yield f": keepalive\n\n"
+                            last_yield = current_time
                         
-                        # Обновляем прогресс каждые 3 дня для баланса между информативностью и производительностью
-                        if days_processed % 3 == 0 or days_processed == 1 or days_processed == 30:
+                        # Не отправляем детальный прогресс для уменьшения нагрузки при большом количестве комбинаций
+                        # Только для малого количества комбинаций
+                        if total_combinations <= 50 and (days_processed % 10 == 0 or days_processed == 1 or days_processed == 30):
                             detail_progress = progress_percent + int((days_processed / 30) * (100 / total_combinations) * 0.9)
-                            yield f"data: {json.dumps({'type': 'progress_detail', 'percent': detail_progress, 'message': f'Комбинация {current_combination}/{total_combinations}: обработка дня {days_processed}/30', 'date': date_str})}\n\n"
+                            yield f"data: {json.dumps({'type': 'progress_detail', 'percent': detail_progress, 'message': f'Комбинация {current_combination}: день {days_processed}/30'})}\n\n"
+                            last_yield = current_time
                         
                         # Проверяем кэш для этой комбинации и дня
                         cache_key = f"{date_str}_{score_week_min}_{score_month_min}_{use_trailing_stop}"
@@ -1476,8 +1480,10 @@ def api_efficiency_analyze_30days_progress():
                         
                         results.append(combination_result)
                         
-                        # Отправляем промежуточный результат
-                        yield f"data: {json.dumps({'type': 'intermediate', 'combination': f'Week≥{score_week_min}%, Month≥{score_month_min}%', 'pnl': round(combination_result['total_pnl'], 2), 'signals': combination_result['total_signals'], 'win_rate': round(combination_result['win_rate'], 1)})}\n\n"
+                        # Отправляем промежуточный результат только для малого количества комбинаций
+                        if total_combinations <= 50:
+                            yield f"data: {json.dumps({'type': 'intermediate', 'combination': f'Week≥{score_week_min}%, Month≥{score_month_min}%', 'pnl': round(combination_result['total_pnl'], 2), 'signals': combination_result['total_signals'], 'win_rate': round(combination_result['win_rate'], 1)})}\n\n"
+                            last_yield = time.time()
             
             # Сортируем результаты по Win Rate
             results.sort(key=lambda x: x['win_rate'], reverse=True)

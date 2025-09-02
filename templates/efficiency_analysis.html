@@ -362,11 +362,21 @@
         const scoreMonthMax = parseInt(document.getElementById('scoreMonthMax').value);
         const step = parseInt(document.getElementById('analysisStep').value);
         
+        // Вычисляем количество комбинаций
+        const weekSteps = Math.floor((scoreWeekMax - scoreWeekMin) / step) + 1;
+        const monthSteps = Math.floor((scoreMonthMax - scoreMonthMin) / step) + 1;
+        const total_combinations = weekSteps * monthSteps;
+        
+        console.log(`Starting analysis with ${total_combinations} combinations`);
+        if (total_combinations > 100) {
+            showNotification(`Внимание: анализ ${total_combinations} комбинаций может занять длительное время`, 'warning');
+        }
+        
         // Временные результаты для промежуточного отображения
         let intermediateResults = [];
         let lastActivity = Date.now();
         let reconnectAttempts = 0;
-        const maxReconnectAttempts = 3;
+        const maxReconnectAttempts = total_combinations > 100 ? 5 : 3; // Больше попыток для больших анализов
         
         function createEventSource() {
             // Создаем SSE соединение с параметрами
@@ -379,22 +389,44 @@
             });
             const eventSource = new EventSource(`/api/efficiency/analyze_30days_progress?${params}`);
             
-            // Отслеживаем активность
-            const activityTimeout = setInterval(() => {
-                if (Date.now() - lastActivity > 30000) { // 30 секунд без активности
-                    console.log('Timeout detected, attempting to reconnect...');
-                    eventSource.close();
-                    clearInterval(activityTimeout);
-                    
-                    if (reconnectAttempts < maxReconnectAttempts) {
-                        reconnectAttempts++;
-                        setTimeout(() => createEventSource(), 2000);
-                    } else {
-                        showNotification('Превышено время ожидания. Попробуйте еще раз.', 'error');
-                        resetAnalysisButton();
+            // Отслеживаем активность для больших анализов
+            let activityTimeout = null;
+            if (total_combinations > 50) {
+                // Для больших анализов увеличиваем timeout
+                activityTimeout = setInterval(() => {
+                    if (Date.now() - lastActivity > 60000) { // 60 секунд без активности для больших анализов
+                        console.log('Timeout detected for large analysis, attempting to reconnect...');
+                        eventSource.close();
+                        clearInterval(activityTimeout);
+                        
+                        if (reconnectAttempts < maxReconnectAttempts) {
+                            reconnectAttempts++;
+                            showNotification(`Переподключение... Попытка ${reconnectAttempts}/${maxReconnectAttempts}`, 'info');
+                            setTimeout(() => createEventSource(), 3000);
+                        } else {
+                            showNotification('Превышено время ожидания. Анализ слишком большой, попробуйте уменьшить диапазон.', 'error');
+                            resetAnalysisButton();
+                        }
                     }
-                }
-            }, 5000);
+                }, 10000); // Проверяем каждые 10 секунд для больших анализов
+            } else {
+                // Для малых анализов стандартный timeout
+                activityTimeout = setInterval(() => {
+                    if (Date.now() - lastActivity > 30000) { // 30 секунд без активности
+                        console.log('Timeout detected, attempting to reconnect...');
+                        eventSource.close();
+                        clearInterval(activityTimeout);
+                        
+                        if (reconnectAttempts < maxReconnectAttempts) {
+                            reconnectAttempts++;
+                            setTimeout(() => createEventSource(), 2000);
+                        } else {
+                            showNotification('Превышено время ожидания. Попробуйте еще раз.', 'error');
+                            resetAnalysisButton();
+                        }
+                    }
+                }, 5000);
+            }
         
         eventSource.onmessage = function(event) {
             lastActivity = Date.now();
@@ -431,9 +463,11 @@
                     });
                     
                     // Обновляем детали прогресса с информацией о найденных результатах
-                    document.getElementById('progressDetails').innerHTML = 
-                        `Обработано комбинаций: ${intermediateResults.length}/16<br>` +
-                        `Последняя: ${data.combination} - P&L: $${data.pnl}, Сигналов: ${data.signals}, WR: ${data.win_rate}%`;
+                    if (total_combinations <= 50) {
+                        document.getElementById('progressDetails').innerHTML = 
+                            `Обработано комбинаций: ${intermediateResults.length}/${total_combinations}<br>` +
+                            `Последняя: ${data.combination} - P&L: $${data.pnl}, Сигналов: ${data.signals}, WR: ${data.win_rate}%`;
+                    }
                     break;
                     
                 case 'complete':
