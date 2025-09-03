@@ -1849,7 +1849,8 @@ def api_trailing_analyze_progress():
     activation_max = float(request.args.get('activation_max', 3.0))
     distance_min = float(request.args.get('distance_min', 0.5))
     distance_max = float(request.args.get('distance_max', 3.0))
-    stop_loss = float(request.args.get('stop_loss', 3.0))
+    stop_loss_min = float(request.args.get('stop_loss_min', 1.0))
+    stop_loss_max = float(request.args.get('stop_loss_max', 5.0))
     step = float(request.args.get('step', 0.5))
     
     # Сохраняем user_id до создания генератора
