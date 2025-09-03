@@ -2030,7 +2030,7 @@ def api_trailing_analyze_progress():
                                     DELETE FROM web.scoring_analysis_temp
                                     WHERE session_id = %s AND user_id = %s
                                 """
-                                    db.execute_query(cleanup_query, (session_id, user_id))
+                                db.execute_query(cleanup_query, (session_id, user_id))
                             
                             # Обновляем статистику
                             combination_result['total_signals'] += daily_stats['signal_count']
