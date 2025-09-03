@@ -1915,88 +1915,89 @@ def api_trailing_analyze_progress():
             # Перебираем все комбинации Trailing параметров
             for activation_pct in activation_values:
                 for distance_pct in distance_values:
-                    current_combination += 1
-                    
-                    # Отправляем прогресс каждые 5 комбинаций или в конце
-                    if current_combination % 5 == 1 or current_combination == total_combinations:
-                        progress_percent = int((current_combination / total_combinations) * 100)
-                        yield f"data: {json.dumps({'type': 'progress', 'percent': progress_percent, 'message': f'Анализ Activation: {activation_pct}%, Distance: {distance_pct}%', 'details': f'Комбинация {current_combination} из {total_combinations}'})}\n\n"
-                        last_yield = time.time()
-                    
-                    combination_result = {
-                        'activation': activation_pct,
-                        'distance': distance_pct,
-                        'stop_loss': stop_loss,
-                        'start_date': start_date.strftime('%Y-%m-%d'),
-                        'end_date': end_date.strftime('%Y-%m-%d'),
-                        'total_pnl': 0.0,
-                        'total_signals': 0,
-                        'total_wins': 0,
-                        'total_losses': 0,
-                        'trailing_count': 0,
-                        'win_rate': 0.0,
-                        'daily_breakdown': []
-                    }
-                    
-                    # Обрабатываем каждый день
-                    current_date = start_date
-                    while current_date <= end_date:
-                        date_str = current_date.strftime('%Y-%m-%d')
+                    for stop_loss in stop_loss_values:
+                        current_combination += 1
                         
-                        # Отправляем keepalive если давно не отправляли данные
-                        current_time = time.time()
-                        if current_time - last_yield > 3:
-                            yield f": keepalive\n\n"
-                            last_yield = current_time
+                        # Отправляем прогресс каждые 10 комбинаций или в конце
+                        if current_combination % 10 == 1 or current_combination == total_combinations:
+                            progress_percent = int((current_combination / total_combinations) * 100)
+                            yield f"data: {json.dumps({'type': 'progress', 'percent': progress_percent, 'message': f'Анализ Act: {activation_pct}%, Dist: {distance_pct}%, SL: {stop_loss}%', 'details': f'Комбинация {current_combination} из {total_combinations}'})}\n\n"
+                            last_yield = time.time()
                         
-                        # Проверяем кэш
-                        cache_key = f"trail_{date_str}_{score_week}_{score_month}_{activation_pct}_{distance_pct}_{stop_loss}"
-                        cache_query = """
-                            SELECT signal_count, tp_count, sl_count, timeout_count, daily_pnl
-                            FROM web.efficiency_cache
-                            WHERE cache_key = %s AND user_id = %s
-                                AND created_at > NOW() - INTERVAL '1 hour'
-                        """
-                        cached_result = db.execute_query(cache_query, (cache_key, user_id), fetch=True)
+                        combination_result = {
+                            'activation': activation_pct,
+                            'distance': distance_pct,
+                            'stop_loss': stop_loss,
+                            'start_date': start_date.strftime('%Y-%m-%d'),
+                            'end_date': end_date.strftime('%Y-%m-%d'),
+                            'total_pnl': 0.0,
+                            'total_signals': 0,
+                            'total_wins': 0,
+                            'total_losses': 0,
+                            'trailing_count': 0,
+                            'win_rate': 0.0,
+                            'daily_breakdown': []
+                        }
                         
-                        if cached_result:
-                            daily_stats = {
-                                'date': date_str,
-                                'signal_count': cached_result[0]['signal_count'],
-                                'tp_count': cached_result[0]['tp_count'],
-                                'trailing_count': cached_result[0].get('tp_count', 0),  # В кэше trailing записан как tp_count
-                                'sl_count': cached_result[0]['sl_count'],
-                                'timeout_count': cached_result[0]['timeout_count'],
-                                'daily_pnl': float(cached_result[0]['daily_pnl'])
-                            }
-                        else:
-                            # Получаем сигналы с фильтрами Score Week и Score Month
-                            raw_signals = get_scoring_signals(db, date_str, score_week, score_month)
+                        # Обрабатываем каждый день
+                        current_date = start_date
+                        while current_date <= end_date:
+                            date_str = current_date.strftime('%Y-%m-%d')
                             
-                            daily_stats = {
-                                'date': date_str,
-                                'signal_count': 0,
-                                'tp_count': 0,
-                                'trailing_count': 0,
-                                'sl_count': 0,
-                                'timeout_count': 0,
-                                'daily_pnl': 0.0
-                            }
+                            # Отправляем keepalive если давно не отправляли данные
+                            current_time = time.time()
+                            if current_time - last_yield > 3:
+                                yield f": keepalive\n\n"
+                                last_yield = current_time
                             
-                            if raw_signals:
-                                session_id = f"trail_{user_id}_{uuid.uuid4().hex[:8]}"
+                            # Проверяем кэш
+                            cache_key = f"trail_{date_str}_{score_week}_{score_month}_{activation_pct}_{distance_pct}_{stop_loss}"
+                            cache_query = """
+                                SELECT signal_count, tp_count, sl_count, timeout_count, daily_pnl
+                                FROM web.efficiency_cache
+                                WHERE cache_key = %s AND user_id = %s
+                                    AND created_at > NOW() - INTERVAL '1 hour'
+                            """
+                            cached_result = db.execute_query(cache_query, (cache_key, user_id), fetch=True)
+                            
+                            if cached_result:
+                                daily_stats = {
+                                    'date': date_str,
+                                    'signal_count': cached_result[0]['signal_count'],
+                                    'tp_count': cached_result[0]['tp_count'],
+                                    'trailing_count': cached_result[0].get('tp_count', 0),  # В кэше trailing записан как tp_count
+                                    'sl_count': cached_result[0]['sl_count'],
+                                    'timeout_count': cached_result[0]['timeout_count'],
+                                    'daily_pnl': float(cached_result[0]['daily_pnl'])
+                                }
+                            else:
+                                # Получаем сигналы с фильтрами Score Week и Score Month
+                                raw_signals = get_scoring_signals(db, date_str, score_week, score_month)
                                 
-                                # Обрабатываем с Trailing Stop
-                                result = process_scoring_signals_batch(
-                                    db, raw_signals, session_id, user_id,
-                                    tp_percent=tp_percent,  # Максимальный TP
-                                    sl_percent=stop_loss,
-                                    position_size=position_size,
-                                    leverage=leverage,
-                                    use_trailing_stop=True,
-                                    trailing_activation_pct=activation_pct,
-                                    trailing_distance_pct=distance_pct
-                                )
+                                daily_stats = {
+                                    'date': date_str,
+                                    'signal_count': 0,
+                                    'tp_count': 0,
+                                    'trailing_count': 0,
+                                    'sl_count': 0,
+                                    'timeout_count': 0,
+                                    'daily_pnl': 0.0
+                                }
+                                
+                                if raw_signals:
+                                    session_id = f"trail_{user_id}_{uuid.uuid4().hex[:8]}"
+                                    
+                                    # Обрабатываем с Trailing Stop
+                                    result = process_scoring_signals_batch(
+                                        db, raw_signals, session_id, user_id,
+                                        tp_percent=tp_percent,  # Максимальный TP
+                                        sl_percent=stop_loss,
+                                        position_size=position_size,
+                                        leverage=leverage,
+                                        use_trailing_stop=True,
+                                        trailing_activation_pct=activation_pct,
+                                        trailing_distance_pct=distance_pct
+                                    )
                                 
                                 stats = result['stats']
                                 daily_stats['signal_count'] = int(stats.get('total', 0))
@@ -2029,26 +2030,26 @@ def api_trailing_analyze_progress():
                                     DELETE FROM web.scoring_analysis_temp
                                     WHERE session_id = %s AND user_id = %s
                                 """
-                                db.execute_query(cleanup_query, (session_id, user_id))
+                                    db.execute_query(cleanup_query, (session_id, user_id))
+                            
+                            # Обновляем статистику
+                            combination_result['total_signals'] += daily_stats['signal_count']
+                            combination_result['total_pnl'] += daily_stats['daily_pnl']
+                            # tp_count уже включает прибыльные trailing stops, не дублируем
+                            combination_result['total_wins'] += daily_stats.get('tp_count', 0)
+                            combination_result['trailing_count'] += daily_stats.get('trailing_count', 0)
+                            combination_result['total_losses'] += daily_stats.get('sl_count', 0)
+                            combination_result['daily_breakdown'].append(daily_stats)
+                            
+                            current_date += timedelta(days=1)
                         
-                        # Обновляем статистику
-                        combination_result['total_signals'] += daily_stats['signal_count']
-                        combination_result['total_pnl'] += daily_stats['daily_pnl']
-                        # tp_count уже включает прибыльные trailing stops, не дублируем
-                        combination_result['total_wins'] += daily_stats.get('tp_count', 0)
-                        combination_result['trailing_count'] += daily_stats.get('trailing_count', 0)
-                        combination_result['total_losses'] += daily_stats.get('sl_count', 0)
-                        combination_result['daily_breakdown'].append(daily_stats)
-                        
-                        current_date += timedelta(days=1)
-                    
-                    # Рассчитываем win rate
-                    if combination_result['total_signals'] > 0:
-                        total_closed = combination_result['total_wins'] + combination_result['total_losses']
-                        if total_closed > 0:
-                            combination_result['win_rate'] = (combination_result['total_wins'] / total_closed) * 100
-                        
-                        results.append(combination_result)
+                        # Рассчитываем win rate
+                        if combination_result['total_signals'] > 0:
+                            total_closed = combination_result['total_wins'] + combination_result['total_losses']
+                            if total_closed > 0:
+                                combination_result['win_rate'] = (combination_result['total_wins'] / total_closed) * 100
+                            
+                            results.append(combination_result)
             
             # Сортируем по P&L
             results.sort(key=lambda x: x['total_pnl'], reverse=True)
