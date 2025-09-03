@@ -2040,15 +2040,15 @@ def api_trailing_analyze_progress():
                         combination_result['total_losses'] += daily_stats.get('sl_count', 0)
                         combination_result['daily_breakdown'].append(daily_stats)
                         
-                        current_date += timedelta(days=1)
-                    
-                    # Рассчитываем win rate
-                    if combination_result['total_signals'] > 0:
-                        total_closed = combination_result['total_wins'] + combination_result['total_losses']
-                        if total_closed > 0:
-                            combination_result['win_rate'] = (combination_result['total_wins'] / total_closed) * 100
+                            current_date += timedelta(days=1)
                         
-                        results.append(combination_result)
+                        # Рассчитываем win rate
+                        if combination_result['total_signals'] > 0:
+                            total_closed = combination_result['total_wins'] + combination_result['total_losses']
+                            if total_closed > 0:
+                                combination_result['win_rate'] = (combination_result['total_wins'] / total_closed) * 100
+                            
+                            results.append(combination_result)
             
             # Сортируем по P&L
             results.sort(key=lambda x: x['total_pnl'], reverse=True)

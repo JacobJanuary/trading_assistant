@@ -96,11 +96,16 @@
                 <div>
                     <label class="block text-xs font-medium text-gray-600 mb-2">
                         Stop Loss (%)
-                        <i class="fas fa-question-circle text-gray-400 ml-1" title="Защитный стоп-лосс"></i>
+                        <i class="fas fa-question-circle text-gray-400 ml-1" title="Диапазон защитного стоп-лосса для анализа"></i>
                     </label>
-                    <input type="number" id="stopLoss" value="3" min="0.5" max="20" step="0.5"
-                           class="w-32 px-2 py-1 border border-gray-300 rounded text-sm">
-                    <span class="text-gray-500 ml-1">%</span>
+                    <div class="flex items-center space-x-2">
+                        <input type="number" id="stopLossMin" value="1" min="0.5" max="20" step="0.5"
+                               class="w-24 px-2 py-1 border border-gray-300 rounded text-sm">
+                        <span class="text-gray-500">-</span>
+                        <input type="number" id="stopLossMax" value="5" min="0.5" max="20" step="0.5"
+                               class="w-24 px-2 py-1 border border-gray-300 rounded text-sm">
+                        <span class="text-gray-500">%</span>
+                    </div>
                 </div>
                 
                 <!-- Шаг анализа -->
@@ -331,11 +336,14 @@
         const activationMax = parseFloat(document.getElementById('activationMax').value);
         const distanceMin = parseFloat(document.getElementById('distanceMin').value);
         const distanceMax = parseFloat(document.getElementById('distanceMax').value);
+        const stopLossMin = parseFloat(document.getElementById('stopLossMin').value);
+        const stopLossMax = parseFloat(document.getElementById('stopLossMax').value);
         const step = parseFloat(document.getElementById('analysisStep').value);
         
         const activationSteps = Math.floor((activationMax - activationMin) / step) + 1;
         const distanceSteps = Math.floor((distanceMax - distanceMin) / step) + 1;
-        const total = activationSteps * distanceSteps;
+        const stopLossSteps = Math.floor((stopLossMax - stopLossMin) / step) + 1;
+        const total = activationSteps * distanceSteps * stopLossSteps;
         
         document.getElementById('combinationsCount').textContent = `Комбинаций: ${total}`;
     }
@@ -382,13 +390,15 @@
         const activationMax = parseFloat(document.getElementById('activationMax').value);
         const distanceMin = parseFloat(document.getElementById('distanceMin').value);
         const distanceMax = parseFloat(document.getElementById('distanceMax').value);
-        const stopLoss = parseFloat(document.getElementById('stopLoss').value);
+        const stopLossMin = parseFloat(document.getElementById('stopLossMin').value);
+        const stopLossMax = parseFloat(document.getElementById('stopLossMax').value);
         const step = parseFloat(document.getElementById('analysisStep').value);
         
         // Вычисляем количество комбинаций
         const activationSteps = Math.floor((activationMax - activationMin) / step) + 1;
         const distanceSteps = Math.floor((distanceMax - distanceMin) / step) + 1;
-        const total_combinations = activationSteps * distanceSteps;
+        const stopLossSteps = Math.floor((stopLossMax - stopLossMin) / step) + 1;
+        const total_combinations = activationSteps * distanceSteps * stopLossSteps;
         
         console.log(`Starting Trailing Stop analysis with ${total_combinations} combinations`);
         
@@ -404,7 +414,8 @@
                 activation_max: activationMax,
                 distance_min: distanceMin,
                 distance_max: distanceMax,
-                stop_loss: stopLoss,
+                stop_loss_min: stopLossMin,
+                stop_loss_max: stopLossMax,
                 step: step
             });
             
@@ -513,7 +524,7 @@
         // Топ-3
         if (data.length > 0) {
             const top1 = data[0];
-            document.getElementById('top1Params').textContent = `Act: ${top1.activation}%, Dist: ${top1.distance}%`;
+            document.getElementById('top1Params').textContent = `Act: ${top1.activation}%, Dist: ${top1.distance}%, SL: ${top1.stop_loss}%`;
             document.getElementById('top1Pnl').textContent = formatPnL(top1.total_pnl);
             document.getElementById('top1Pnl').className = getPnLClass(top1.total_pnl, 'text-xl font-bold');
             document.getElementById('top1WinRate').textContent = `${top1.win_rate.toFixed(1)}%`;
@@ -522,7 +533,7 @@
         
         if (data.length > 1) {
             const top2 = data[1];
-            document.getElementById('top2Params').textContent = `Act: ${top2.activation}%, Dist: ${top2.distance}%`;
+            document.getElementById('top2Params').textContent = `Act: ${top2.activation}%, Dist: ${top2.distance}%, SL: ${top2.stop_loss}%`;
             document.getElementById('top2Pnl').textContent = formatPnL(top2.total_pnl);
             document.getElementById('top2Pnl').className = getPnLClass(top2.total_pnl, 'text-xl font-bold');
             document.getElementById('top2WinRate').textContent = `${top2.win_rate.toFixed(1)}%`;
@@ -531,7 +542,7 @@
         
         if (data.length > 2) {
             const top3 = data[2];
-            document.getElementById('top3Params').textContent = `Act: ${top3.activation}%, Dist: ${top3.distance}%`;
+            document.getElementById('top3Params').textContent = `Act: ${top3.activation}%, Dist: ${top3.distance}%, SL: ${top3.stop_loss}%`;
             document.getElementById('top3Pnl').textContent = formatPnL(top3.total_pnl);
             document.getElementById('top3Pnl').className = getPnLClass(top3.total_pnl, 'text-xl font-bold');
             document.getElementById('top3WinRate').textContent = `${top3.win_rate.toFixed(1)}%`;
@@ -685,7 +696,8 @@
                     document.getElementById('activationMax').value = cachedData.parameters.activation_max;
                     document.getElementById('distanceMin').value = cachedData.parameters.distance_min;
                     document.getElementById('distanceMax').value = cachedData.parameters.distance_max;
-                    document.getElementById('stopLoss').value = cachedData.parameters.stop_loss;
+                    document.getElementById('stopLossMin').value = cachedData.parameters.stop_loss_min || 1;
+                    document.getElementById('stopLossMax').value = cachedData.parameters.stop_loss_max || 5;
                     document.getElementById('analysisStep').value = cachedData.parameters.step;
                     updateCombinationsCount();
                 }
@@ -701,7 +713,7 @@
         updateCombinationsCount();
         loadCachedResults(); // Загружаем сохраненные результаты
         
-        ['activationMin', 'activationMax', 'distanceMin', 'distanceMax', 'analysisStep'].forEach(id => {
+        ['activationMin', 'activationMax', 'distanceMin', 'distanceMax', 'stopLossMin', 'stopLossMax', 'analysisStep'].forEach(id => {
             document.getElementById(id).addEventListener('input', updateCombinationsCount);
         });
     });
