@@ -1894,6 +1894,8 @@ def api_trailing_analyze_progress():
             # Генерируем комбинации Trailing параметров
             activation_values = []
             distance_values = []
+            stop_loss_values = []
+            
             current = activation_min
             while current <= activation_max:
                 activation_values.append(round(current, 1))
@@ -1904,7 +1906,12 @@ def api_trailing_analyze_progress():
                 distance_values.append(round(current, 1))
                 current += step
             
-            total_combinations = len(activation_values) * len(distance_values)
+            current = stop_loss_min
+            while current <= stop_loss_max:
+                stop_loss_values.append(round(current, 1))
+                current += step
+            
+            total_combinations = len(activation_values) * len(distance_values) * len(stop_loss_values)
             current_combination = 0
             
             # Отправляем начальное сообщение
