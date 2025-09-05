@@ -828,6 +828,7 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
     is_trailing_active = False
     trailing_stop_price = None
     best_price_for_trailing = entry_price
+    activation_candle_time = None  # Время свечи, на которой активировался trailing
 
     # ВАЖНО: Отдельная переменная для АБСОЛЮТНОГО максимума за весь период
     absolute_best_price = entry_price
@@ -885,7 +886,7 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
         # ============ БЛОК 2: Управление позицией (только если еще открыта) ============
         if not is_closed:
             if signal_action in ['SELL', 'SHORT']:
-                # Проверка страховочного SL
+                # Проверка страховочного SL (только если trailing не активен)
                 if not is_trailing_active and high_price >= insurance_sl_price:
                     is_closed = True
                     close_reason = 'stop_loss'
@@ -893,27 +894,29 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
                     close_time = current_time
                     continue  # Переходим к следующей свече для продолжения отслеживания max_profit
 
-                # Обновляем best_price для trailing
+                # СНАЧАЛА обновляем best_price
                 if low_price < best_price_for_trailing:
                     best_price_for_trailing = low_price
 
-                    # Проверка активации trailing stop
-                    if not is_trailing_active and low_price <= activation_price:
-                        is_trailing_active = True
-                        result['trailing_activated'] = True
-                        trailing_stop_price = best_price_for_trailing * (1 + trailing_distance_pct / 100)
-                        print(
-                            f"[TRAILING] SHORT активирован на {best_price_for_trailing:.8f}, stop={trailing_stop_price:.8f}")
+                # ЗАТЕМ проверяем активацию trailing stop
+                if not is_trailing_active and best_price_for_trailing <= activation_price:
+                    is_trailing_active = True
+                    result['trailing_activated'] = True
+                    activation_candle_time = current_time  # Запоминаем время активации
+                    trailing_stop_price = best_price_for_trailing * (1 + trailing_distance_pct / 100)
+                    print(
+                        f"[TRAILING] SHORT активирован на {best_price_for_trailing:.8f}, stop={trailing_stop_price:.8f}")
+                
+                # Если trailing активен, обновляем стоп при изменении best_price
+                if is_trailing_active:
+                    new_stop = best_price_for_trailing * (1 + trailing_distance_pct / 100)
+                    if new_stop < trailing_stop_price:
+                        trailing_stop_price = new_stop
+                        print(f"[TRAILING] SHORT стоп обновлен до {trailing_stop_price:.8f}")
 
-                    # Если trailing активен, двигаем стоп
-                    elif is_trailing_active:
-                        new_stop = best_price_for_trailing * (1 + trailing_distance_pct / 100)
-                        if new_stop < trailing_stop_price:
-                            trailing_stop_price = new_stop
-                            print(f"[TRAILING] SHORT стоп обновлен до {trailing_stop_price:.8f}")
-
-                # Проверка срабатывания trailing stop
-                if is_trailing_active and high_price >= trailing_stop_price:
+                # ПОСЛЕ обновления проверяем срабатывание trailing stop
+                # НЕ проверяем на свече активации
+                if is_trailing_active and current_time != activation_candle_time and high_price >= trailing_stop_price:
                     is_closed = True
                     close_reason = 'trailing_stop'
                     close_price = trailing_stop_price
@@ -921,7 +924,7 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
                     print(f"[TRAILING] SHORT закрыт по trailing stop на {close_price:.8f}")
 
             else:  # BUY, LONG
-                # Проверка страховочного SL
+                # Проверка страховочного SL (только если trailing не активен)
                 if not is_trailing_active and low_price <= insurance_sl_price:
                     is_closed = True
                     close_reason = 'stop_loss'
@@ -929,27 +932,29 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
                     close_time = current_time
                     continue
 
-                # Обновляем best_price для trailing
+                # СНАЧАЛА обновляем best_price
                 if high_price > best_price_for_trailing:
                     best_price_for_trailing = high_price
 
-                    # Проверка активации trailing stop
-                    if not is_trailing_active and high_price >= activation_price:
-                        is_trailing_active = True
-                        result['trailing_activated'] = True
-                        trailing_stop_price = best_price_for_trailing * (1 - trailing_distance_pct / 100)
-                        print(
-                            f"[TRAILING] LONG активирован на {best_price_for_trailing:.8f}, stop={trailing_stop_price:.8f}")
+                # ЗАТЕМ проверяем активацию trailing stop
+                if not is_trailing_active and best_price_for_trailing >= activation_price:
+                    is_trailing_active = True
+                    result['trailing_activated'] = True
+                    activation_candle_time = current_time  # Запоминаем время активации
+                    trailing_stop_price = best_price_for_trailing * (1 - trailing_distance_pct / 100)
+                    print(
+                        f"[TRAILING] LONG активирован на {best_price_for_trailing:.8f}, stop={trailing_stop_price:.8f}")
+                
+                # Если trailing активен, обновляем стоп при изменении best_price
+                if is_trailing_active:
+                    new_stop = best_price_for_trailing * (1 - trailing_distance_pct / 100)
+                    if new_stop > trailing_stop_price:
+                        trailing_stop_price = new_stop
+                        print(f"[TRAILING] LONG стоп обновлен до {trailing_stop_price:.8f}")
 
-                    # Если trailing активен, двигаем стоп
-                    elif is_trailing_active:
-                        new_stop = best_price_for_trailing * (1 - trailing_distance_pct / 100)
-                        if new_stop > trailing_stop_price:
-                            trailing_stop_price = new_stop
-                            print(f"[TRAILING] LONG стоп обновлен до {trailing_stop_price:.8f}")
-
-                # Проверка срабатывания trailing stop
-                if is_trailing_active and low_price <= trailing_stop_price:
+                # ПОСЛЕ обновления проверяем срабатывание trailing stop
+                # НЕ проверяем на свече активации
+                if is_trailing_active and current_time != activation_candle_time and low_price <= trailing_stop_price:
                     is_closed = True
                     close_reason = 'trailing_stop'
                     close_price = trailing_stop_price
