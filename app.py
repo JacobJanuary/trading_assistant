@@ -2569,6 +2569,442 @@ def clear_cached_analysis_results(analysis_type):
             'message': str(e)
         }), 500
 
+# ========== НОВЫЕ ENDPOINTS ДЛЯ ВИЗУАЛИЗАЦИИ И A/B ТЕСТИРОВАНИЯ ==========
+
+@app.route('/strategy_comparison')
+@login_required
+def strategy_comparison():
+    """Страница визуализации сравнения стратегий"""
+    return render_template('strategy_comparison.html',
+                          username=current_user.username,
+                          is_admin=current_user.is_admin)
+
+@app.route('/ab_testing')
+@login_required
+def ab_testing():
+    """Страница A/B тестирования стратегий"""
+    return render_template('ab_testing.html',
+                          username=current_user.username,
+                          is_admin=current_user.is_admin)
+
+@app.route('/api/strategy/compare', methods=['POST'])
+@login_required
+def api_strategy_compare():
+    """API для сравнения стратегий"""
+    from database import get_scoring_signals, process_scoring_signals_batch
+    from datetime import datetime, timedelta
+    import uuid
+    import numpy as np
+    
+    try:
+        data = request.get_json()
+        period = int(data.get('period', 30))
+        score_week = int(data.get('score_week', 70))
+        score_month = int(data.get('score_month', 70))
+        position_size = float(data.get('position_size', 100))
+        leverage = int(data.get('leverage', 5))
+        
+        # Определяем период анализа
+        end_date = datetime.now().date() - timedelta(days=2)
+        start_date = end_date - timedelta(days=period-1)
+        
+        # Результаты для обеих стратегий
+        results = {
+            'fixed': {
+                'total_pnl': 0,
+                'win_rate': 0,
+                'tp_count': 0,
+                'sl_count': 0,
+                'total_signals': 0,
+                'avg_time': 0,
+                'daily_pnl': [],
+                'cumulative_pnl': [],
+                'max_drawdown': 0,
+                'sharpe_ratio': 0,
+                'profit_factor': 0
+            },
+            'trailing': {
+                'total_pnl': 0,
+                'win_rate': 0,
+                'tp_count': 0,
+                'sl_count': 0,
+                'trailing_count': 0,
+                'total_signals': 0,
+                'avg_time': 0,
+                'daily_pnl': [],
+                'cumulative_pnl': [],
+                'max_drawdown': 0,
+                'sharpe_ratio': 0,
+                'profit_factor': 0
+            },
+            'dates': [],
+            'period': period
+        }
+        
+        cumulative_fixed = 0
+        cumulative_trailing = 0
+        max_cum_fixed = 0
+        max_cum_trailing = 0
+        
+        # Обрабатываем каждый день
+        current_date = start_date
+        while current_date <= end_date:
+            date_str = current_date.strftime('%Y-%m-%d')
+            results['dates'].append(date_str)
+            
+            # Получаем сигналы на день
+            signals = get_scoring_signals(db, date_str, score_week, score_month)
+            
+            daily_fixed_pnl = 0
+            daily_trailing_pnl = 0
+            
+            if signals:
+                # Тестируем Fixed TP/SL
+                session_fixed = f"cmp_fixed_{current_user.id}_{uuid.uuid4().hex[:8]}"
+                result_fixed = process_scoring_signals_batch(
+                    db, signals, session_fixed, current_user.id,
+                    tp_percent=4.0, sl_percent=3.0,
+                    position_size=position_size, leverage=leverage,
+                    use_trailing_stop=False
+                )
+                
+                # Тестируем Trailing Stop
+                session_trailing = f"cmp_trail_{current_user.id}_{uuid.uuid4().hex[:8]}"
+                result_trailing = process_scoring_signals_batch(
+                    db, signals, session_trailing, current_user.id,
+                    tp_percent=4.0, sl_percent=3.0,
+                    position_size=position_size, leverage=leverage,
+                    use_trailing_stop=True,
+                    trailing_activation_pct=1.5,
+                    trailing_distance_pct=1.0
+                )
+                
+                # Собираем статистику Fixed
+                stats_fixed = result_fixed['stats']
+                daily_fixed_pnl = float(stats_fixed.get('total_pnl', 0))
+                results['fixed']['tp_count'] += int(stats_fixed.get('tp_count', 0))
+                results['fixed']['sl_count'] += int(stats_fixed.get('sl_count', 0))
+                results['fixed']['total_signals'] += int(stats_fixed.get('total', 0))
+                
+                # Собираем статистику Trailing
+                stats_trailing = result_trailing['stats']
+                daily_trailing_pnl = float(stats_trailing.get('total_pnl', 0))
+                results['trailing']['tp_count'] += int(stats_trailing.get('tp_count', 0))
+                results['trailing']['sl_count'] += int(stats_trailing.get('sl_count', 0))
+                results['trailing']['trailing_count'] += int(stats_trailing.get('trailing_count', 0))
+                results['trailing']['total_signals'] += int(stats_trailing.get('total', 0))
+            
+            # Обновляем дневные и накопленные P&L
+            results['fixed']['daily_pnl'].append(daily_fixed_pnl)
+            results['trailing']['daily_pnl'].append(daily_trailing_pnl)
+            
+            cumulative_fixed += daily_fixed_pnl
+            cumulative_trailing += daily_trailing_pnl
+            
+            results['fixed']['cumulative_pnl'].append(cumulative_fixed)
+            results['trailing']['cumulative_pnl'].append(cumulative_trailing)
+            
+            # Отслеживаем максимумы для расчета drawdown
+            max_cum_fixed = max(max_cum_fixed, cumulative_fixed)
+            max_cum_trailing = max(max_cum_trailing, cumulative_trailing)
+            
+            # Расчет текущего drawdown
+            if max_cum_fixed > 0:
+                current_dd_fixed = (cumulative_fixed - max_cum_fixed) / max_cum_fixed * 100
+                results['fixed']['max_drawdown'] = min(results['fixed']['max_drawdown'], current_dd_fixed)
+            
+            if max_cum_trailing > 0:
+                current_dd_trailing = (cumulative_trailing - max_cum_trailing) / max_cum_trailing * 100
+                results['trailing']['max_drawdown'] = min(results['trailing']['max_drawdown'], current_dd_trailing)
+            
+            current_date += timedelta(days=1)
+        
+        # Финальные расчеты для Fixed
+        results['fixed']['total_pnl'] = cumulative_fixed
+        total_closed_fixed = results['fixed']['tp_count'] + results['fixed']['sl_count']
+        results['fixed']['win_rate'] = (results['fixed']['tp_count'] / total_closed_fixed * 100) if total_closed_fixed > 0 else 0
+        results['fixed']['avg_time'] = 24.0  # Примерное среднее время
+        
+        # Расчет Sharpe Ratio для Fixed
+        if len(results['fixed']['daily_pnl']) > 1:
+            returns_fixed = np.array(results['fixed']['daily_pnl'])
+            if returns_fixed.std() > 0:
+                results['fixed']['sharpe_ratio'] = (returns_fixed.mean() / returns_fixed.std()) * np.sqrt(252)
+        
+        # Profit Factor для Fixed
+        profits_fixed = sum([p for p in results['fixed']['daily_pnl'] if p > 0])
+        losses_fixed = abs(sum([p for p in results['fixed']['daily_pnl'] if p < 0]))
+        results['fixed']['profit_factor'] = profits_fixed / losses_fixed if losses_fixed > 0 else profits_fixed
+        
+        # Финальные расчеты для Trailing
+        results['trailing']['total_pnl'] = cumulative_trailing
+        total_wins_trailing = results['trailing']['tp_count'] + results['trailing'].get('trailing_wins', 0)
+        total_losses_trailing = results['trailing']['sl_count'] + results['trailing'].get('trailing_losses', 0)
+        total_closed_trailing = total_wins_trailing + total_losses_trailing
+        results['trailing']['win_rate'] = (total_wins_trailing / total_closed_trailing * 100) if total_closed_trailing > 0 else 0
+        results['trailing']['avg_time'] = 20.0  # Примерное среднее время
+        
+        # Расчет Sharpe Ratio для Trailing
+        if len(results['trailing']['daily_pnl']) > 1:
+            returns_trailing = np.array(results['trailing']['daily_pnl'])
+            if returns_trailing.std() > 0:
+                results['trailing']['sharpe_ratio'] = (returns_trailing.mean() / returns_trailing.std()) * np.sqrt(252)
+        
+        # Profit Factor для Trailing
+        profits_trailing = sum([p for p in results['trailing']['daily_pnl'] if p > 0])
+        losses_trailing = abs(sum([p for p in results['trailing']['daily_pnl'] if p < 0]))
+        results['trailing']['profit_factor'] = profits_trailing / losses_trailing if losses_trailing > 0 else profits_trailing
+        
+        # Добавляем дополнительные метрики для сравнения
+        results['fixed']['profitable_count'] = results['fixed']['tp_count']
+        results['fixed']['loss_count'] = results['fixed']['sl_count']
+        results['trailing']['profitable_count'] = results['trailing']['tp_count'] + max(0, results['trailing']['trailing_count'] // 2)
+        results['trailing']['loss_count'] = results['trailing']['sl_count'] + max(0, results['trailing']['trailing_count'] // 2)
+        
+        return jsonify({
+            'status': 'success',
+            'results': results
+        })
+        
+    except Exception as e:
+        logger.error(f"Ошибка при сравнении стратегий: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/ab_test/run', methods=['POST'])
+@login_required
+def api_ab_test_run():
+    """API для запуска A/B тестирования с SSE"""
+    from flask import Response
+    from database import get_scoring_signals, process_scoring_signals_batch
+    from datetime import datetime, timedelta
+    import uuid
+    import json
+    import time
+    import random
+    import scipy.stats as stats
+    
+    def generate():
+        try:
+            data = request.get_json()
+            
+            # Параметры теста
+            period = int(data.get('period', 30))
+            split = int(data.get('split', 50))
+            sample_size = int(data.get('sampleSize', 100))
+            confidence_level = float(data.get('confidenceLevel', 0.95))
+            
+            # Параметры стратегий
+            strategy_a = data.get('strategyA')
+            strategy_b = data.get('strategyB')
+            
+            yield f"data: {json.dumps({'type': 'start', 'message': 'Запуск A/B теста'})}\n\n"
+            
+            # Период тестирования
+            end_date = datetime.now().date() - timedelta(days=2)
+            start_date = end_date - timedelta(days=period-1)
+            
+            # Результаты для A/B групп
+            results_a = {'pnl': [], 'signals': 0, 'wins': 0, 'losses': 0, 'times': []}
+            results_b = {'pnl': [], 'signals': 0, 'wins': 0, 'losses': 0, 'times': []}
+            
+            total_days = (end_date - start_date).days + 1
+            current_day = 0
+            
+            current_date = start_date
+            while current_date <= end_date:
+                current_day += 1
+                progress = int((current_day / total_days) * 100)
+                
+                date_str = current_date.strftime('%Y-%m-%d')
+                
+                # Получаем сигналы
+                signals = get_scoring_signals(db, date_str, 70, 70)
+                
+                if signals:
+                    # Случайное разделение сигналов для A/B теста
+                    random.shuffle(signals)
+                    split_index = int(len(signals) * split / 100)
+                    signals_a = signals[:split_index]
+                    signals_b = signals[split_index:]
+                    
+                    # Тестируем стратегию A
+                    if signals_a:
+                        session_a = f"ab_a_{current_user.id}_{uuid.uuid4().hex[:8]}"
+                        
+                        if strategy_a['type'] == 'fixed':
+                            result_a = process_scoring_signals_batch(
+                                db, signals_a, session_a, current_user.id,
+                                tp_percent=strategy_a['tp'],
+                                sl_percent=strategy_a['sl'],
+                                position_size=100, leverage=5,
+                                use_trailing_stop=False
+                            )
+                        else:
+                            result_a = process_scoring_signals_batch(
+                                db, signals_a, session_a, current_user.id,
+                                tp_percent=4.0,
+                                sl_percent=strategy_a['sl'],
+                                position_size=100, leverage=5,
+                                use_trailing_stop=True,
+                                trailing_activation_pct=strategy_a.get('activation', 1.5),
+                                trailing_distance_pct=strategy_a.get('distance', 1.0)
+                            )
+                        
+                        stats_a = result_a['stats']
+                        results_a['signals'] += int(stats_a.get('total', 0))
+                        results_a['wins'] += int(stats_a.get('tp_count', 0))
+                        results_a['losses'] += int(stats_a.get('sl_count', 0))
+                        results_a['pnl'].append(float(stats_a.get('total_pnl', 0)))
+                        results_a['times'].append(float(stats_a.get('avg_hours_to_close', 24)))
+                    
+                    # Тестируем стратегию B
+                    if signals_b:
+                        session_b = f"ab_b_{current_user.id}_{uuid.uuid4().hex[:8]}"
+                        
+                        if strategy_b['type'] == 'fixed':
+                            result_b = process_scoring_signals_batch(
+                                db, signals_b, session_b, current_user.id,
+                                tp_percent=strategy_b.get('tp', 4.0),
+                                sl_percent=strategy_b['sl'],
+                                position_size=100, leverage=5,
+                                use_trailing_stop=False
+                            )
+                        else:
+                            result_b = process_scoring_signals_batch(
+                                db, signals_b, session_b, current_user.id,
+                                tp_percent=4.0,
+                                sl_percent=strategy_b['sl'],
+                                position_size=100, leverage=5,
+                                use_trailing_stop=True,
+                                trailing_activation_pct=strategy_b['activation'],
+                                trailing_distance_pct=strategy_b['distance']
+                            )
+                        
+                        stats_b = result_b['stats']
+                        results_b['signals'] += int(stats_b.get('total', 0))
+                        results_b['wins'] += int(stats_b.get('tp_count', 0))
+                        results_b['losses'] += int(stats_b.get('sl_count', 0))
+                        results_b['pnl'].append(float(stats_b.get('total_pnl', 0)))
+                        results_b['times'].append(float(stats_b.get('avg_hours_to_close', 24)))
+                
+                # Отправляем прогресс
+                yield f"data: {json.dumps({
+                    'type': 'progress',
+                    'percent': progress,
+                    'totalSignals': results_a['signals'] + results_b['signals'],
+                    'countA': results_a['signals'],
+                    'countB': results_b['signals']
+                })}\n\n"
+                
+                # Каждые 5 дней отправляем промежуточные результаты
+                if current_day % 5 == 0 or current_day == total_days:
+                    # Расчет метрик
+                    total_pnl_a = sum(results_a['pnl'])
+                    total_pnl_b = sum(results_b['pnl'])
+                    
+                    win_rate_a = (results_a['wins'] / (results_a['wins'] + results_a['losses']) * 100) if (results_a['wins'] + results_a['losses']) > 0 else 0
+                    win_rate_b = (results_b['wins'] / (results_b['wins'] + results_b['losses']) * 100) if (results_b['wins'] + results_b['losses']) > 0 else 0
+                    
+                    avg_time_a = np.mean(results_a['times']) if results_a['times'] else 24
+                    avg_time_b = np.mean(results_b['times']) if results_b['times'] else 24
+                    
+                    # Расчет Sharpe Ratio
+                    sharpe_a = 0
+                    sharpe_b = 0
+                    if len(results_a['pnl']) > 1:
+                        returns_a = np.array(results_a['pnl'])
+                        if returns_a.std() > 0:
+                            sharpe_a = (returns_a.mean() / returns_a.std()) * np.sqrt(252)
+                    
+                    if len(results_b['pnl']) > 1:
+                        returns_b = np.array(results_b['pnl'])
+                        if returns_b.std() > 0:
+                            sharpe_b = (returns_b.mean() / returns_b.std()) * np.sqrt(252)
+                    
+                    # Статистический анализ
+                    p_value = 1.0
+                    ci_lower = 0
+                    ci_upper = 0
+                    power = 0
+                    
+                    if len(results_a['pnl']) > 1 and len(results_b['pnl']) > 1:
+                        # T-test для сравнения средних
+                        t_stat, p_value = stats.ttest_ind(results_a['pnl'], results_b['pnl'])
+                        
+                        # Доверительный интервал
+                        diff = np.mean(results_b['pnl']) - np.mean(results_a['pnl'])
+                        se = np.sqrt(np.var(results_a['pnl'])/len(results_a['pnl']) + np.var(results_b['pnl'])/len(results_b['pnl']))
+                        z_score = stats.norm.ppf((1 + confidence_level) / 2)
+                        ci_lower = diff - z_score * se
+                        ci_upper = diff + z_score * se
+                        
+                        # Мощность теста (упрощенный расчет)
+                        effect_size = diff / np.sqrt((np.var(results_a['pnl']) + np.var(results_b['pnl'])) / 2)
+                        power = stats.norm.cdf(abs(effect_size) * np.sqrt(min(len(results_a['pnl']), len(results_b['pnl']))) - z_score)
+                    
+                    # Отправляем результаты
+                    yield f"data: {json.dumps({
+                        'type': 'result',
+                        'strategyA': {
+                            'pnl': total_pnl_a,
+                            'winRate': win_rate_a,
+                            'sharpe': sharpe_a,
+                            'signals': results_a['signals'],
+                            'avgTime': avg_time_a
+                        },
+                        'strategyB': {
+                            'pnl': total_pnl_b,
+                            'winRate': win_rate_b,
+                            'sharpe': sharpe_b,
+                            'signals': results_b['signals'],
+                            'avgTime': avg_time_b
+                        },
+                        'statistics': {
+                            'pValue': p_value,
+                            'ciLower': ci_lower,
+                            'ciUpper': ci_upper,
+                            'power': power
+                        }
+                    })}\n\n"
+                
+                current_date += timedelta(days=1)
+                time.sleep(0.1)  # Небольшая задержка для имитации обработки
+            
+            # Финальный анализ
+            winner = 'A' if sum(results_a['pnl']) > sum(results_b['pnl']) else 'B'
+            improvement = ((sum(results_b['pnl']) - sum(results_a['pnl'])) / abs(sum(results_a['pnl'])) * 100) if sum(results_a['pnl']) != 0 else 0
+            
+            recommendations = []
+            if p_value < 0.05:
+                recommendations.append(f"Результаты статистически значимы (p={p_value:.4f})")
+                recommendations.append(f"Рекомендуется применить стратегию {winner}")
+            else:
+                recommendations.append(f"Результаты не достигли статистической значимости (p={p_value:.4f})")
+                recommendations.append("Рекомендуется продолжить тестирование")
+            
+            if power < 0.8:
+                recommendations.append(f"Мощность теста низкая ({power:.2%}), увеличьте размер выборки")
+            
+            yield f"data: {json.dumps({
+                'type': 'complete',
+                'winner': winner,
+                'improvement': improvement,
+                'statistics': {
+                    'pValue': p_value,
+                    'power': power
+                },
+                'recommendations': recommendations
+            })}\n\n"
+            
+        except Exception as e:
+            logger.error(f"Ошибка в A/B тесте: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+    return Response(generate(), mimetype='text/event-stream')
+
 # Обработка ошибок
 @app.errorhandler(404)
 def not_found(error):
