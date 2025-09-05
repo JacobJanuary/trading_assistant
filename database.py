@@ -1936,38 +1936,36 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                 COUNT(CASE WHEN signal_action = 'BUY' THEN 1 END) as buy_signals,
                 COUNT(CASE WHEN signal_action = 'SELL' THEN 1 END) as sell_signals,
 
-                -- ИСПРАВЛЕНО: Считаем прибыльные trailing stops как TP
-                COUNT(CASE 
-                    WHEN close_reason = 'take_profit' THEN 1
-                    WHEN close_reason = 'trailing_stop' AND pnl_usd > 0 THEN 1
-                END) as tp_count,
-
-                -- ИСПРАВЛЕНО: Считаем убыточные trailing stops как SL
-                COUNT(CASE 
-                    WHEN close_reason = 'stop_loss' THEN 1
-                    WHEN close_reason = 'trailing_stop' AND pnl_usd <= 0 THEN 1
-                END) as sl_count,
-
-                -- Отдельный счетчик для всех trailing stops
+                -- ИСПРАВЛЕНО: Корректный подсчет без двойного учета
+                COUNT(CASE WHEN close_reason = 'take_profit' THEN 1 END) as tp_count,
+                COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_count,
                 COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as trailing_count,
 
                 COUNT(CASE WHEN close_reason = 'timeout' THEN 1 END) as timeout_count,
                 COUNT(CASE WHEN is_closed = FALSE THEN 1 END) as open_count,
                 COALESCE(SUM(pnl_usd), 0) as total_pnl,
 
-                -- Прибыль от TP и прибыльных trailing
+                -- Прибыль только от TP
                 COALESCE(SUM(CASE 
                     WHEN close_reason = 'take_profit' THEN pnl_usd
-                    WHEN close_reason = 'trailing_stop' AND pnl_usd > 0 THEN pnl_usd
                     ELSE 0
                 END), 0) as tp_profit,
 
-                -- Убытки от SL и убыточных trailing
+                -- Убытки только от SL
                 COALESCE(SUM(CASE 
                     WHEN close_reason = 'stop_loss' THEN ABS(pnl_usd)
-                    WHEN close_reason = 'trailing_stop' AND pnl_usd <= 0 THEN ABS(pnl_usd)
                     ELSE 0
                 END), 0) as sl_loss,
+
+                -- Отдельная статистика для trailing stops
+                COALESCE(SUM(CASE 
+                    WHEN close_reason = 'trailing_stop' THEN pnl_usd
+                    ELSE 0
+                END), 0) as trailing_pnl,
+                
+                -- Дополнительная статистика trailing
+                COUNT(CASE WHEN close_reason = 'trailing_stop' AND pnl_usd > 0 THEN 1 END) as trailing_wins,
+                COUNT(CASE WHEN close_reason = 'trailing_stop' AND pnl_usd <= 0 THEN 1 END) as trailing_losses,
 
                 SUM(max_potential_profit_usd) as total_max_potential,
                 AVG(hours_to_close) FILTER (WHERE close_reason != 'timeout') as avg_hours_to_close,

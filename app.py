@@ -895,22 +895,25 @@ def api_scoring_apply_filters():
             # Статистика с учетом trailing stops
             stats_data = result['stats']
 
-            # tp_count из БД уже включает прибыльные trailing stops
-            # Не нужно суммировать с trailing_count, чтобы избежать дублирования
+            # ИСПРАВЛЕНО: Теперь счетчики корректно разделены
             tp_count = int(stats_data.get('tp_count') or 0)
+            sl_count = int(stats_data.get('sl_count') or 0)
             trailing_count = int(stats_data.get('trailing_count') or 0)
 
             stats = {
                 'total': int(stats_data.get('total') or 0),
                 'buy_signals': int(stats_data.get('buy_signals') or 0),
                 'sell_signals': int(stats_data.get('sell_signals') or 0),
-                'tp_count': tp_count,  # Уже включает прибыльные trailing
-                'sl_count': int(stats_data.get('sl_count') or 0),
-                'trailing_count': trailing_count,
+                'tp_count': tp_count,  # Только настоящие TP
+                'sl_count': sl_count,  # Только настоящие SL
+                'trailing_count': trailing_count,  # Все trailing stops
+                'trailing_wins': int(stats_data.get('trailing_wins') or 0),  # Прибыльные trailing
+                'trailing_losses': int(stats_data.get('trailing_losses') or 0),  # Убыточные trailing
                 'timeout_count': int(stats_data.get('timeout_count') or 0),
                 'total_pnl': float(stats_data.get('total_pnl') or 0),
-                'realized_profit': float(stats_data.get('tp_profit') or 0),
-                'realized_loss': float(stats_data.get('sl_loss') or 0),
+                'realized_profit': float(stats_data.get('tp_profit') or 0),  # Прибыль от TP
+                'realized_loss': float(stats_data.get('sl_loss') or 0),  # Убытки от SL
+                'trailing_pnl': float(stats_data.get('trailing_pnl') or 0),  # P&L от trailing
                 'max_potential': float(stats_data.get('total_max_potential') or 0),
                 'avg_hours_to_close': float(stats_data.get('avg_hours_to_close') or 0),
                 'binance_signals': int(stats_data.get('binance_signals') or 0),
@@ -918,19 +921,25 @@ def api_scoring_apply_filters():
                 'mode': 'Trailing Stop' if use_trailing_stop else 'Fixed TP/SL'
             }
 
-            # Расчет метрик
-            total_closed = stats['tp_count'] + stats['sl_count']
-            win_rate = (stats['tp_count'] / total_closed * 100) if total_closed > 0 else 0
+            # Расчет метрик с учетом trailing stops
+            # Для win rate считаем все прибыльные позиции (TP + прибыльные trailing)
+            total_wins = stats['tp_count'] + stats['trailing_wins']
+            total_losses = stats['sl_count'] + stats['trailing_losses']
+            total_closed = total_wins + total_losses
+            win_rate = (total_wins / total_closed * 100) if total_closed > 0 else 0
 
+            # Эффективность с учетом всех прибыльных выходов
+            total_realized_profit = stats['realized_profit'] + max(0, stats['trailing_pnl'])
             tp_efficiency = 0
             if stats['max_potential'] > 0:
-                tp_efficiency = (stats['realized_profit'] / stats['max_potential']) * 100
+                tp_efficiency = (total_realized_profit / stats['max_potential']) * 100
 
             metrics = {
                 'win_rate': win_rate,
                 'tp_efficiency': tp_efficiency,
                 'net_pnl': stats['total_pnl'],
-                'mode': stats['mode']
+                'mode': stats['mode'],
+                'trailing_effectiveness': (stats['trailing_pnl'] / (abs(stats['trailing_pnl']) + 0.01)) * 100 if stats['trailing_count'] > 0 else 0
             }
 
             print(f"[API] Обработано: Total={stats['total']}, TP={stats['tp_count']}, "
@@ -2025,7 +2034,7 @@ def api_trailing_analyze_progress():
                                     db.execute_query(cache_insert, (
                                         cache_key, user_id,
                                         daily_stats['signal_count'],
-                                        daily_stats['trailing_count'],  # Сохраняем trailing как tp_count в кэше
+                                        daily_stats['tp_count'],  # ИСПРАВЛЕНО: Сохраняем tp_count, а не trailing_count
                                         daily_stats['sl_count'],
                                         daily_stats['timeout_count'],
                                         daily_stats['daily_pnl']
