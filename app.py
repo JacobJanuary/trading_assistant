@@ -2784,6 +2784,7 @@ def api_ab_test_run():
     import json
     import time
     import random
+    import numpy as np
     import scipy.stats as stats
     
     def generate():
