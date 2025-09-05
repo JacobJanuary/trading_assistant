@@ -819,28 +819,42 @@ def api_scoring_apply_filters():
         selected_date = data.get('date')
         score_week_min = data.get('score_week_min')
         score_month_min = data.get('score_month_min')
-        tp_percent = data.get('tp_percent', 4.0)
-        sl_percent = data.get('sl_percent', 3.0)
-        position_size = data.get('position_size', 100.0)
-        leverage = data.get('leverage', 5)
-
-        # Получаем настройки trailing из user_signal_filters
+        
+        # Получаем ВСЕ настройки пользователя из user_signal_filters
         settings_query = """
-            SELECT use_trailing_stop, trailing_distance_pct, trailing_activation_pct
+            SELECT take_profit_percent, stop_loss_percent, position_size_usd, leverage,
+                   use_trailing_stop, trailing_distance_pct, trailing_activation_pct
             FROM web.user_signal_filters
             WHERE user_id = %s
         """
         user_settings = db.execute_query(settings_query, (current_user.id,), fetch=True)
 
+        # Значения по умолчанию
+        tp_percent = 4.0
+        sl_percent = 3.0
+        position_size = 100.0
+        leverage = 5
         use_trailing_stop = False
         trailing_distance_pct = 2.0
         trailing_activation_pct = 1.0
 
         if user_settings:
             settings = user_settings[0]
+            # Загружаем сохраненные параметры TP/SL
+            tp_percent = float(settings.get('take_profit_percent', 4.0))
+            sl_percent = float(settings.get('stop_loss_percent', 3.0))
+            position_size = float(settings.get('position_size_usd', 100.0))
+            leverage = int(settings.get('leverage', 5))
+            # Загружаем параметры trailing stop
             use_trailing_stop = settings.get('use_trailing_stop', False)
             trailing_distance_pct = float(settings.get('trailing_distance_pct', 2.0))
             trailing_activation_pct = float(settings.get('trailing_activation_pct', 1.0))
+        
+        # Если в запросе переданы параметры, используем их (для ручного переопределения)
+        tp_percent = data.get('tp_percent', tp_percent)
+        sl_percent = data.get('sl_percent', sl_percent)
+        position_size = data.get('position_size', position_size)
+        leverage = data.get('leverage', leverage)
 
         print(f"[API] Обработка фильтров для даты {selected_date}")
         print(f"[API] Фильтры: score_week >= {score_week_min}, score_month >= {score_month_min}")
@@ -2034,7 +2048,7 @@ def api_trailing_analyze_progress():
                                     db.execute_query(cache_insert, (
                                         cache_key, user_id,
                                         daily_stats['signal_count'],
-                                        daily_stats['tp_count'],  # ИСПРАВЛЕНО: Сохраняем tp_count, а не trailing_count
+                                        daily_stats['trailing_count'],  # Сохраняем trailing_count для trailing stop анализа
                                         daily_stats['sl_count'],
                                         daily_stats['timeout_count'],
                                         daily_stats['daily_pnl']
