@@ -433,10 +433,12 @@
     // Применение фильтров
     function applyFilters() {
         const date = document.getElementById('dateFilter').value;
-        const tp = parseFloat(document.getElementById('tpPercent').value);
-        const sl = parseFloat(document.getElementById('slPercent').value);
         const positionSize = parseFloat(document.getElementById('positionSize').value);
         const leverage = parseInt(document.getElementById('leverage').value);
+        
+        // Используем параметры из сохраненной стратегии
+        const tp = {{ params.tp_percent|default(4.0) }};
+        const sl = {{ params.sl_percent|default(3.0) }};
 
         // Проверка минимальных значений фильтров
         if (currentScoreWeek < -100 || currentScoreMonth < -100) {
