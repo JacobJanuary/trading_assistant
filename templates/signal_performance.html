@@ -370,14 +370,15 @@
 
                 <!-- Trailing Stop распределение -->
                 <div>
-                    <h4 class="text-xs text-gray-600 mb-2">Trailing Stop выходы по профиту (%)</h4>
+                    <h4 class="text-xs text-gray-600 mb-2">Trailing Stop: захват от максимального движения</h4>
                     <div class="space-y-2">
+                        {% if efficiency.exit_distribution %}
                         {% set ranges = [
-                        {'label': '< 0%', 'count': efficiency.trailing_range_negative|default(0), 'color': 'red'},
-                        {'label': '0-1%', 'count': efficiency.trailing_range_0_1|default(0), 'color': 'yellow'},
-                        {'label': '1-2%', 'count': efficiency.trailing_range_1_2|default(0), 'color': 'blue'},
-                        {'label': '2-3%', 'count': efficiency.trailing_range_2_3|default(0), 'color': 'green'},
-                        {'label': '> 3%', 'count': efficiency.trailing_range_3_plus|default(0), 'color': 'emerald'}
+                        {'label': '80-100%', 'count': efficiency.exit_distribution['80-100%']|default(0), 'color': 'green'},
+                        {'label': '60-80%', 'count': efficiency.exit_distribution['60-80%']|default(0), 'color': 'blue'},
+                        {'label': '40-60%', 'count': efficiency.exit_distribution['40-60%']|default(0), 'color': 'yellow'},
+                        {'label': '20-40%', 'count': efficiency.exit_distribution['20-40%']|default(0), 'color': 'orange'},
+                        {'label': '0-20%', 'count': efficiency.exit_distribution['0-20%']|default(0), 'color': 'red'}
                         ] %}
 
                         {% for range in ranges %}
@@ -392,6 +393,9 @@
                             <span class="text-xs ml-2 w-8 text-right">{{ range.count }}</span>
                         </div>
                         {% endfor %}
+                        {% else %}
+                        <div class="text-xs text-gray-500 italic">Нет данных по trailing stop</div>
+                        {% endif %}
                     </div>
                 </div>
 

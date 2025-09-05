@@ -671,6 +671,82 @@ def signal_performance():
                 if efficiency_metrics['total_max_potential'] > 0:
                     efficiency_metrics['tp_efficiency'] = (efficiency_metrics['net_realized_pnl'] /
                                                            efficiency_metrics['total_max_potential']) * 100
+                
+                # Дополнительные запросы для расчета метрик trailing stop
+                trailing_query = """
+                    SELECT 
+                        -- Средний профит для trailing stop vs TP
+                        AVG(CASE WHEN close_reason = 'trailing_stop' AND realized_pnl_usd > 0 
+                            THEN realized_pnl_usd END) as trailing_avg_profit,
+                        AVG(CASE WHEN close_reason = 'take_profit' 
+                            THEN realized_pnl_usd END) as tp_avg_profit,
+                        
+                        -- Максимальное движение и захват для trailing
+                        AVG(CASE WHEN close_reason = 'trailing_stop' 
+                            THEN max_potential_profit_usd END) as trailing_max_movement,
+                        SUM(CASE WHEN close_reason = 'trailing_stop' 
+                            THEN realized_pnl_usd END) as trailing_captured,
+                        SUM(CASE WHEN close_reason = 'trailing_stop' 
+                            THEN max_potential_profit_usd - realized_pnl_usd END) as trailing_missed,
+                            
+                        -- Распределение точек выхода
+                        COUNT(CASE WHEN close_reason = 'trailing_stop' AND 
+                            realized_pnl_usd > max_potential_profit_usd * 0.8 THEN 1 END) as exit_80_100,
+                        COUNT(CASE WHEN close_reason = 'trailing_stop' AND 
+                            realized_pnl_usd > max_potential_profit_usd * 0.6 AND 
+                            realized_pnl_usd <= max_potential_profit_usd * 0.8 THEN 1 END) as exit_60_80,
+                        COUNT(CASE WHEN close_reason = 'trailing_stop' AND 
+                            realized_pnl_usd > max_potential_profit_usd * 0.4 AND 
+                            realized_pnl_usd <= max_potential_profit_usd * 0.6 THEN 1 END) as exit_40_60,
+                        COUNT(CASE WHEN close_reason = 'trailing_stop' AND 
+                            realized_pnl_usd > max_potential_profit_usd * 0.2 AND 
+                            realized_pnl_usd <= max_potential_profit_usd * 0.4 THEN 1 END) as exit_20_40,
+                        COUNT(CASE WHEN close_reason = 'trailing_stop' AND 
+                            realized_pnl_usd <= max_potential_profit_usd * 0.2 THEN 1 END) as exit_0_20
+                    FROM web.web_signals
+                    WHERE signal_timestamp >= NOW() - (INTERVAL '1 hour' * %s)
+                        AND signal_timestamp <= NOW() - (INTERVAL '1 hour' * %s)
+                """
+                
+                trailing_stats = db.execute_query(trailing_query, (hide_older, hide_younger), fetch=True)
+                
+                if trailing_stats and trailing_stats[0]:
+                    t_stats = trailing_stats[0]
+                    
+                    # Обновляем метрики
+                    efficiency_metrics['trailing_avg_profit'] = float(t_stats['trailing_avg_profit'] or 0)
+                    efficiency_metrics['tp_avg_profit'] = float(t_stats['tp_avg_profit'] or 0)
+                    efficiency_metrics['trailing_max_movement'] = float(t_stats['trailing_max_movement'] or 0)
+                    efficiency_metrics['trailing_captured'] = float(t_stats['trailing_captured'] or 0)
+                    efficiency_metrics['trailing_missed'] = float(t_stats['trailing_missed'] or 0)
+                    
+                    # Trailing efficiency - процент захвата от максимального движения
+                    if efficiency_metrics['trailing_max_movement'] > 0 and efficiency_metrics['closed_trailing'] > 0:
+                        total_trailing_max = efficiency_metrics['trailing_max_movement'] * efficiency_metrics['closed_trailing']
+                        if total_trailing_max > 0:
+                            efficiency_metrics['trailing_efficiency'] = (efficiency_metrics['trailing_captured'] / total_trailing_max) * 100
+                    
+                    # Trailing capture rate
+                    if (efficiency_metrics['trailing_captured'] + efficiency_metrics['trailing_missed']) > 0:
+                        efficiency_metrics['trailing_capture_rate'] = (
+                            efficiency_metrics['trailing_captured'] / 
+                            (efficiency_metrics['trailing_captured'] + efficiency_metrics['trailing_missed'])
+                        ) * 100
+                    
+                    # Распределение точек выхода
+                    efficiency_metrics['exit_distribution'] = {
+                        '80-100%': int(t_stats['exit_80_100'] or 0),
+                        '60-80%': int(t_stats['exit_60_80'] or 0),
+                        '40-60%': int(t_stats['exit_40_60'] or 0),
+                        '20-40%': int(t_stats['exit_20_40'] or 0),
+                        '0-20%': int(t_stats['exit_0_20'] or 0)
+                    }
+                
+                # Overall efficiency - общая эффективность стратегии
+                if efficiency_metrics['total_max_potential'] > 0:
+                    efficiency_metrics['overall_efficiency'] = (
+                        efficiency_metrics['total_pnl'] / efficiency_metrics['total_max_potential']
+                    ) * 100
 
         # Общая статистика без фильтров
         total_stats_query = """
