@@ -314,10 +314,23 @@
                         <p class="text-lg font-bold text-blue-700 mt-1">
                             {% set trailing_avg = efficiency.trailing_avg_profit|default(0) %}
                             {% set tp_avg = efficiency.tp_avg_profit|default(0) %}
-                            {% if trailing_avg > tp_avg %}
-                            <span class="text-green-600">+{{ "%.1f"|format(((trailing_avg - tp_avg) / tp_avg * 100) if tp_avg > 0 else 0) }}%</span>
+                            {% if trailing_avg > 0 and tp_avg > 0 %}
+                                {% set diff_pct = ((trailing_avg - tp_avg) / tp_avg * 100) %}
+                                {% if trailing_avg > tp_avg %}
+                                <span class="text-green-600">+{{ "%.1f"|format(diff_pct) }}%</span>
+                                {% else %}
+                                <span class="text-red-600">{{ "%.1f"|format(diff_pct) }}%</span>
+                                {% endif %}
+                            {% elif trailing_avg > 0 and tp_avg == 0 %}
+                                <span class="text-green-600">Trailing лучше</span>
+                            {% elif tp_avg > 0 and trailing_avg == 0 %}
+                                <span class="text-blue-600">Fixed TP лучше</span>
+                            {% elif trailing_avg > 0 %}
+                                <span class="text-blue-600">Trailing</span>
+                            {% elif tp_avg > 0 %}
+                                <span class="text-blue-600">Fixed TP</span>
                             {% else %}
-                            <span class="text-red-600">{{ "%.1f"|format(((trailing_avg - tp_avg) / tp_avg * 100) if tp_avg > 0 else 0) }}%</span>
+                                <span class="text-gray-500">N/A</span>
                             {% endif %}
                         </p>
                     </div>
