@@ -625,6 +625,7 @@ def signal_performance():
                         COUNT(CASE WHEN close_reason = 'take_profit' THEN 1 END) as closed_tp,
                         COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as closed_sl,
                         COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as closed_trailing,
+                        COUNT(CASE WHEN close_reason = 'timeout' THEN 1 END) as closed_timeout,
                         COUNT(CASE 
                             WHEN close_reason = 'trailing_stop' AND realized_pnl_usd > 0 
                             THEN 1 
@@ -633,9 +634,20 @@ def signal_performance():
                             WHEN close_reason = 'trailing_stop' AND realized_pnl_usd <= 0 
                             THEN 1 
                         END) as trailing_loss,
+                        -- Средние проценты P&L по типам выхода
+                        AVG(CASE WHEN close_reason = 'take_profit' 
+                            THEN take_profit_percent END) as avg_tp_percent,
+                        COALESCE(AVG(CASE WHEN close_reason = 'stop_loss' 
+                            THEN ABS(realized_pnl_usd / NULLIF(position_size_usd, 0) * 100.0 / NULLIF(leverage, 1)) END), 0) as avg_sl_percent,
+                        AVG(CASE WHEN close_reason = 'trailing_stop' AND realized_pnl_usd > 0
+                            THEN trailing_stop_percent END) as avg_trailing_percent,
+                        -- Суммы для расчета прибылей/убытков
+                        COALESCE(SUM(CASE WHEN close_reason = 'take_profit' THEN realized_pnl_usd END), 0) as tp_realized_profit,
+                        COALESCE(SUM(CASE WHEN close_reason = 'stop_loss' THEN realized_pnl_usd END), 0) as sl_realized_loss,
                         COALESCE(SUM(realized_pnl_usd), 0) as total_realized,
                         COALESCE(SUM(unrealized_pnl_usd), 0) as total_unrealized,
-                        COALESCE(SUM(max_potential_profit_usd), 0) as total_max_potential
+                        COALESCE(SUM(max_potential_profit_usd), 0) as total_max_potential,
+                        COALESCE(SUM(CASE WHEN close_reason = 'take_profit' THEN max_potential_profit_usd END), 0) as tp_max_potential
                     FROM web.web_signals
                     WHERE signal_timestamp >= NOW() - (INTERVAL '1 hour' * %s)
                         AND signal_timestamp <= NOW() - (INTERVAL '1 hour' * %s)
@@ -649,23 +661,47 @@ def signal_performance():
                 stats = eff_stats[0]
                 efficiency_metrics['total_signals'] = stats['total_signals']
                 efficiency_metrics['open_positions'] = stats['open_positions']
-                efficiency_metrics['closed_tp'] = stats['closed_tp']
-                efficiency_metrics['closed_sl'] = stats['closed_sl']
+                efficiency_metrics['closed_tp'] = stats['closed_tp'] or 0
+                efficiency_metrics['closed_sl'] = stats['closed_sl'] or 0
                 efficiency_metrics['closed_trailing'] = stats['closed_trailing'] or 0
+                efficiency_metrics['closed_timeout'] = stats['closed_timeout'] or 0
                 efficiency_metrics['trailing_profitable'] = stats['trailing_profitable'] or 0
                 efficiency_metrics['trailing_loss'] = stats['trailing_loss'] or 0
                 efficiency_metrics['net_realized_pnl'] = float(stats['total_realized'] or 0)
                 efficiency_metrics['unrealized_pnl'] = float(stats['total_unrealized'] or 0)
-                efficiency_metrics['total_pnl'] = efficiency_metrics['net_realized_pnl'] + efficiency_metrics[
-                    'unrealized_pnl']
+                efficiency_metrics['total_pnl'] = efficiency_metrics['net_realized_pnl'] + efficiency_metrics['unrealized_pnl']
                 efficiency_metrics['total_max_potential'] = float(stats['total_max_potential'] or 0)
+                efficiency_metrics['tp_realized_profit'] = float(stats['tp_realized_profit'] or 0)
+                efficiency_metrics['sl_realized_loss'] = float(stats['sl_realized_loss'] or 0)
+                efficiency_metrics['tp_max_potential'] = float(stats['tp_max_potential'] or 0)
+                efficiency_metrics['missed_profit'] = efficiency_metrics['tp_max_potential'] - efficiency_metrics['tp_realized_profit'] if efficiency_metrics['tp_max_potential'] > 0 else 0
+                
+                # Средние проценты
+                efficiency_metrics['avg_tp_percent'] = float(stats['avg_tp_percent'] or 0)
+                efficiency_metrics['avg_sl_percent'] = float(stats['avg_sl_percent'] or 0)
+                efficiency_metrics['avg_trailing_percent'] = float(stats['avg_trailing_percent'] or 0)
 
-                # Win rate
-                total_closed = efficiency_metrics['closed_tp'] + efficiency_metrics['closed_sl'] + efficiency_metrics[
-                    'closed_trailing']
+                # Win rate - правильный расчет с учетом всех прибыльных позиций
+                total_closed = (efficiency_metrics['closed_tp'] + 
+                               efficiency_metrics['closed_sl'] + 
+                               efficiency_metrics['closed_trailing'] + 
+                               efficiency_metrics['closed_timeout'])
+                
                 if total_closed > 0:
+                    # Считаем все прибыльные закрытия
                     wins = efficiency_metrics['closed_tp'] + efficiency_metrics['trailing_profitable']
+                    losses = efficiency_metrics['closed_sl'] + efficiency_metrics['trailing_loss']
+                    
+                    # Win rate
                     efficiency_metrics['win_rate'] = (wins / total_closed) * 100
+                    
+                    # Для отображения в шаблоне
+                    efficiency_metrics['total_wins'] = wins
+                    efficiency_metrics['total_losses'] = losses
+                else:
+                    efficiency_metrics['win_rate'] = 0
+                    efficiency_metrics['total_wins'] = 0
+                    efficiency_metrics['total_losses'] = 0
 
                 # TP efficiency
                 if efficiency_metrics['total_max_potential'] > 0:

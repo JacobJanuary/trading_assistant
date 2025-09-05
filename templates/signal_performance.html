@@ -436,12 +436,18 @@
                 <i class="fas fa-lightbulb mr-1 text-purple-600"></i>
                 <strong>Анализ Trailing Stop:</strong>
 
-                {% if efficiency.trailing_efficiency|default(0) > efficiency.tp_efficiency %}
-                <span class="text-green-700">✓ Trailing Stop показывает лучшую эффективность (+{{ "%.1f"|format(efficiency.trailing_efficiency - efficiency.tp_efficiency) }}%). Рекомендуется продолжить использование.</span>
-                {% elif efficiency.trailing_efficiency|default(0) < efficiency.tp_efficiency - 10 %}
-                <span class="text-orange-700">⚠ Fixed TP более эффективен. Рассмотрите корректировку параметров trailing (уменьшите distance или увеличьте activation).</span>
+                {% if efficiency.trailing_avg_profit|default(0) > 0 and efficiency.tp_avg_profit|default(0) > 0 %}
+                    {% if efficiency.trailing_avg_profit > efficiency.tp_avg_profit %}
+                    <span class="text-green-700">✓ Trailing Stop эффективнее: средний профит ${{ "%.2f"|format(efficiency.trailing_avg_profit) }} vs ${{ "%.2f"|format(efficiency.tp_avg_profit) }} Fixed TP (+{{ "%.1f"|format((efficiency.trailing_avg_profit - efficiency.tp_avg_profit) / efficiency.tp_avg_profit * 100) }}%)</span>
+                    {% else %}
+                    <span class="text-orange-700">⚠ Fixed TP эффективнее: средний профит ${{ "%.2f"|format(efficiency.tp_avg_profit) }} vs ${{ "%.2f"|format(efficiency.trailing_avg_profit) }} Trailing ({{ "%.1f"|format((efficiency.tp_avg_profit - efficiency.trailing_avg_profit) / efficiency.tp_avg_profit * 100) }}% лучше)</span>
+                    {% endif %}
+                {% elif efficiency.trailing_avg_profit|default(0) > 0 %}
+                    <span class="text-blue-700">📊 Средний профит Trailing Stop: ${{ "%.2f"|format(efficiency.trailing_avg_profit) }} (нет данных Fixed TP для сравнения)</span>
+                {% elif efficiency.tp_avg_profit|default(0) > 0 %}
+                    <span class="text-blue-700">📊 Средний профит Fixed TP: ${{ "%.2f"|format(efficiency.tp_avg_profit) }} (нет данных Trailing Stop для сравнения)</span>
                 {% else %}
-                <span class="text-blue-700">≈ Эффективность сопоставима. Выбор зависит от рыночных условий.</span>
+                    <span class="text-gray-600">Недостаточно данных для сравнения режимов</span>
                 {% endif %}
 
                 {% if efficiency.trailing_capture_rate|default(0) < 50 %}
@@ -499,9 +505,9 @@
                     </div>
                 </div>
                 <div class="text-xs text-gray-600 space-y-1">
-                    <div>Прибыльных: <span class="font-semibold text-green-700">{{ efficiency.closed_tp }}</span></div>
-                    <div>Убыточных: <span class="font-semibold text-red-700">{{ efficiency.closed_sl }}</span></div>
-                    <div>Ср. TP: <span class="font-semibold">{{ "%.2f"|format(efficiency.avg_tp_percent) }}%</span>
+                    <div>Прибыльных: <span class="font-semibold text-green-700">{{ efficiency.total_wins|default(0) }}</span></div>
+                    <div>Убыточных: <span class="font-semibold text-red-700">{{ efficiency.total_losses|default(0) }}</span></div>
+                    <div>Ср. профит: <span class="font-semibold">{{ "%.2f"|format(efficiency.avg_tp_percent|default(0) + efficiency.avg_trailing_percent|default(0)) }}%</span>
                     </div>
                 </div>
             </div>
