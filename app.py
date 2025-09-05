@@ -2760,8 +2760,32 @@ def api_strategy_compare():
         period = int(data.get('period', 30))
         score_week = int(data.get('score_week', 70))
         score_month = int(data.get('score_month', 70))
-        position_size = float(data.get('position_size', 100))
-        leverage = int(data.get('leverage', 5))
+        
+        # Получаем сохраненные настройки пользователя
+        settings_query = """
+            SELECT take_profit_percent, stop_loss_percent, position_size_usd, leverage,
+                   use_trailing_stop, trailing_distance_pct, trailing_activation_pct
+            FROM web.user_signal_filters
+            WHERE user_id = %s
+        """
+        user_settings = db.execute_query(settings_query, (current_user.id,), fetch=True)
+        
+        if user_settings:
+            settings = user_settings[0]
+            tp_percent = float(settings.get('take_profit_percent', 4.0))
+            sl_percent = float(settings.get('stop_loss_percent', 3.0))
+            position_size = float(data.get('position_size', settings.get('position_size_usd', 100)))
+            leverage = int(data.get('leverage', settings.get('leverage', 5)))
+            trailing_distance_pct = float(settings.get('trailing_distance_pct', 2.0))
+            trailing_activation_pct = float(settings.get('trailing_activation_pct', 1.0))
+        else:
+            # Значения по умолчанию если настройки не найдены
+            tp_percent = 4.0
+            sl_percent = 3.0
+            position_size = float(data.get('position_size', 100))
+            leverage = int(data.get('leverage', 5))
+            trailing_distance_pct = 2.0
+            trailing_activation_pct = 1.0
         
         # Определяем период анализа
         end_date = datetime.now().date() - timedelta(days=2)
@@ -2822,7 +2846,7 @@ def api_strategy_compare():
                 session_fixed = f"cmp_fixed_{current_user.id}_{uuid.uuid4().hex[:8]}"
                 result_fixed = process_scoring_signals_batch(
                     db, signals, session_fixed, current_user.id,
-                    tp_percent=4.0, sl_percent=3.0,
+                    tp_percent=tp_percent, sl_percent=sl_percent,
                     position_size=position_size, leverage=leverage,
                     use_trailing_stop=False
                 )
@@ -2831,11 +2855,11 @@ def api_strategy_compare():
                 session_trailing = f"cmp_trail_{current_user.id}_{uuid.uuid4().hex[:8]}"
                 result_trailing = process_scoring_signals_batch(
                     db, signals, session_trailing, current_user.id,
-                    tp_percent=4.0, sl_percent=3.0,
+                    tp_percent=tp_percent, sl_percent=sl_percent,
                     position_size=position_size, leverage=leverage,
                     use_trailing_stop=True,
-                    trailing_activation_pct=1.5,
-                    trailing_distance_pct=1.0
+                    trailing_activation_pct=trailing_activation_pct,
+                    trailing_distance_pct=trailing_distance_pct
                 )
                 
                 # Собираем статистику Fixed
@@ -2946,20 +2970,36 @@ def api_ab_test_run():
     import numpy as np
     import scipy.stats as stats
     
+    # Получаем данные до создания генератора
+    data = request.get_json()
+    
+    # Параметры теста
+    period = int(data.get('period', 30))
+    split = int(data.get('split', 50))
+    sample_size = int(data.get('sampleSize', 100))
+    confidence_level = float(data.get('confidenceLevel', 0.95))
+    
+    # Параметры стратегий
+    strategy_a = data.get('strategyA')
+    strategy_b = data.get('strategyB')
+    
+    # Получаем настройки пользователя
+    user_id = current_user.id
+    settings_query = """
+        SELECT position_size_usd, leverage
+        FROM web.user_signal_filters
+        WHERE user_id = %s
+    """
+    user_settings = db.execute_query(settings_query, (user_id,), fetch=True)
+    if user_settings:
+        position_size = float(user_settings[0].get('position_size_usd', 100))
+        leverage = int(user_settings[0].get('leverage', 5))
+    else:
+        position_size = 100
+        leverage = 5
+    
     def generate():
         try:
-            data = request.get_json()
-            
-            # Параметры теста
-            period = int(data.get('period', 30))
-            split = int(data.get('split', 50))
-            sample_size = int(data.get('sampleSize', 100))
-            confidence_level = float(data.get('confidenceLevel', 0.95))
-            
-            # Параметры стратегий
-            strategy_a = data.get('strategyA')
-            strategy_b = data.get('strategyB')
-            
             yield f"data: {json.dumps({'type': 'start', 'message': 'Запуск A/B теста'})}\n\n"
             
             # Период тестирования
@@ -2980,8 +3020,15 @@ def api_ab_test_run():
                 
                 date_str = current_date.strftime('%Y-%m-%d')
                 
-                # Получаем сигналы
-                signals = get_scoring_signals(db, date_str, 70, 70)
+                # Получаем сигналы с правильными параметрами фильтрации
+                # Используем минимальные параметры для A/B теста чтобы получить больше сигналов
+                score_week_min = 65
+                score_month_min = 64
+                signals = get_scoring_signals(db, date_str, score_week_min, score_month_min)
+                
+                # Логируем для отладки
+                signals_count = len(signals) if signals else 0
+                yield f"data: {json.dumps({'type': 'debug', 'message': f'День {date_str}: найдено {signals_count} сигналов'})}\n\n"
                 
                 if signals:
                     # Случайное разделение сигналов для A/B теста
@@ -2992,22 +3039,25 @@ def api_ab_test_run():
                     
                     # Тестируем стратегию A
                     if signals_a:
-                        session_a = f"ab_a_{current_user.id}_{uuid.uuid4().hex[:8]}"
+                        session_a = f"ab_a_{user_id}_{uuid.uuid4().hex[:8]}"
                         
-                        if strategy_a['type'] == 'fixed':
+                        # Добавляем отладочную информацию
+                        yield f"data: {json.dumps({'type': 'debug', 'message': f'Обработка {len(signals_a)} сигналов для стратегии A'})}\n\n"
+                        
+                        if strategy_a.get('type') == 'fixed':
                             result_a = process_scoring_signals_batch(
-                                db, signals_a, session_a, current_user.id,
-                                tp_percent=strategy_a['tp'],
-                                sl_percent=strategy_a['sl'],
-                                position_size=100, leverage=5,
+                                db, signals_a, session_a, user_id,
+                                tp_percent=float(strategy_a.get('tp', 4.0)),
+                                sl_percent=float(strategy_a.get('sl', 3.0)),
+                                position_size=position_size, leverage=leverage,
                                 use_trailing_stop=False
                             )
                         else:
                             result_a = process_scoring_signals_batch(
-                                db, signals_a, session_a, current_user.id,
+                                db, signals_a, session_a, user_id,
                                 tp_percent=4.0,
-                                sl_percent=strategy_a['sl'],
-                                position_size=100, leverage=5,
+                                sl_percent=float(strategy_a.get('sl', 3.0)),
+                                position_size=position_size, leverage=leverage,
                                 use_trailing_stop=True,
                                 trailing_activation_pct=strategy_a.get('activation', 1.5),
                                 trailing_distance_pct=strategy_a.get('distance', 1.0)
@@ -3022,25 +3072,25 @@ def api_ab_test_run():
                     
                     # Тестируем стратегию B
                     if signals_b:
-                        session_b = f"ab_b_{current_user.id}_{uuid.uuid4().hex[:8]}"
+                        session_b = f"ab_b_{user_id}_{uuid.uuid4().hex[:8]}"
                         
-                        if strategy_b['type'] == 'fixed':
+                        if strategy_b.get('type') == 'fixed':
                             result_b = process_scoring_signals_batch(
-                                db, signals_b, session_b, current_user.id,
-                                tp_percent=strategy_b.get('tp', 4.0),
-                                sl_percent=strategy_b['sl'],
-                                position_size=100, leverage=5,
+                                db, signals_b, session_b, user_id,
+                                tp_percent=float(strategy_b.get('tp', 4.0)),
+                                sl_percent=float(strategy_b.get('sl', 3.0)),
+                                position_size=position_size, leverage=leverage,
                                 use_trailing_stop=False
                             )
                         else:
                             result_b = process_scoring_signals_batch(
-                                db, signals_b, session_b, current_user.id,
+                                db, signals_b, session_b, user_id,
                                 tp_percent=4.0,
-                                sl_percent=strategy_b['sl'],
-                                position_size=100, leverage=5,
+                                sl_percent=float(strategy_b.get('sl', 3.0)),
+                                position_size=position_size, leverage=leverage,
                                 use_trailing_stop=True,
-                                trailing_activation_pct=strategy_b['activation'],
-                                trailing_distance_pct=strategy_b['distance']
+                                trailing_activation_pct=float(strategy_b.get('activation', 1.5)),
+                                trailing_distance_pct=float(strategy_b.get('distance', 1.0))
                             )
                         
                         stats_b = result_b['stats']
@@ -3050,14 +3100,18 @@ def api_ab_test_run():
                         results_b['pnl'].append(float(stats_b.get('total_pnl', 0)))
                         results_b['times'].append(float(stats_b.get('avg_hours_to_close', 24)))
                 
-                # Отправляем прогресс
+                # Отправляем прогресс после каждого дня
                 yield f"data: {json.dumps({
                     'type': 'progress',
                     'percent': progress,
                     'totalSignals': results_a['signals'] + results_b['signals'],
                     'countA': results_a['signals'],
-                    'countB': results_b['signals']
+                    'countB': results_b['signals'],
+                    'date': date_str
                 })}\n\n"
+                
+                # Добавляем heartbeat для поддержания соединения
+                yield f": heartbeat\n\n"
                 
                 # Каждые 5 дней отправляем промежуточные результаты
                 if current_day % 5 == 0 or current_day == total_days:
@@ -3130,8 +3184,8 @@ def api_ab_test_run():
                         }
                     })}\n\n"
                 
+                # Переходим к следующему дню
                 current_date += timedelta(days=1)
-                time.sleep(0.1)  # Небольшая задержка для имитации обработки
             
             # Финальный анализ
             winner = 'A' if sum(results_a['pnl']) > sum(results_b['pnl']) else 'B'
