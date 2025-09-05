@@ -97,20 +97,8 @@
             Параметры торговли
         </h2>
 
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <!-- Параметры расчета -->
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">TP %</label>
-                <input type="number" id="tpPercent" value="{{ params.tp_percent }}"
-                       min="1" max="20" step="0.5"
-                       class="w-full px-3 py-2 border border-gray-300 rounded-md">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">SL %</label>
-                <input type="number" id="slPercent" value="{{ params.sl_percent }}"
-                       min="0.5" max="10" step="0.5"
-                       class="w-full px-3 py-2 border border-gray-300 rounded-md">
-            </div>
+        <div class="grid grid-cols-2 md:grid-cols-2 gap-4 mb-4">
+            <!-- Параметры расчета из сохраненной стратегии -->
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">Позиция ($)</label>
                 <input type="number" id="positionSize" value="{{ params.position_size }}"
@@ -122,6 +110,29 @@
                 <input type="number" id="leverage" value="{{ params.leverage }}"
                        min="1" max="20" step="1"
                        class="w-full px-3 py-2 border border-gray-300 rounded-md">
+            </div>
+        </div>
+        
+        <!-- Параметры стратегии из сохраненных настроек -->
+        <div class="bg-gray-50 p-3 rounded-lg mb-4">
+            <div class="text-xs text-gray-600 mb-2">Параметры стратегии (из сохраненных настроек):</div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div>
+                    <span class="text-gray-600">Режим:</span>
+                    <span id="strategyMode" class="font-medium text-gray-800">{{ params.mode|default('Fixed') }}</span>
+                </div>
+                <div id="tpParam" style="display: {{ 'none' if params.mode == 'Trailing' else 'block' }};">
+                    <span class="text-gray-600">TP:</span>
+                    <span class="font-medium text-green-600">{{ params.tp_percent|default(2.0) }}%</span>
+                </div>
+                <div id="slParam">
+                    <span class="text-gray-600">SL:</span>
+                    <span class="font-medium text-red-600">{{ params.sl_percent|default(1.0) }}%</span>
+                </div>
+                <div id="trailingParams" style="display: {{ 'block' if params.mode == 'Trailing' else 'none' }};">
+                    <span class="text-gray-600">Trailing:</span>
+                    <span class="font-medium text-blue-600">{{ params.trailing_distance|default(2.0) }}% / {{ params.trailing_activation|default(1.0) }}%</span>
+                </div>
             </div>
         </div>
 
@@ -219,6 +230,25 @@
             <div class="bg-yellow-50 p-3 rounded-lg">
                 <div class="text-xs text-gray-600">Макс. потенциал</div>
                 <div class="text-lg font-bold text-yellow-600" id="statMaxPotential">$0.00</div>
+            </div>
+        </div>
+        <!-- Trailing Stop метрики -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+            <div class="bg-teal-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600">Trailing Stop</div>
+                <div class="text-lg font-bold text-teal-600" id="statTrailing">0</div>
+            </div>
+            <div class="bg-cyan-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600">Trailing прибыльных</div>
+                <div class="text-lg font-bold text-cyan-600" id="statTrailingWin">0</div>
+            </div>
+            <div class="bg-sky-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600">Trailing убыточных</div>
+                <div class="text-lg font-bold text-sky-600" id="statTrailingLoss">0</div>
+            </div>
+            <div class="bg-blue-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600">Trailing эффективность</div>
+                <div class="text-lg font-bold text-blue-600" id="statTrailingEff">0.0%</div>
             </div>
         </div>
     </div>
@@ -489,6 +519,12 @@
         document.getElementById('statTP').textContent = stats.tp_count || 0;
         document.getElementById('statSL').textContent = stats.sl_count || 0;
         document.getElementById('statTimeout').textContent = stats.timeout_count || 0;
+        
+        // Trailing Stop метрики
+        document.getElementById('statTrailing').textContent = stats.trailing_count || 0;
+        document.getElementById('statTrailingWin').textContent = stats.trailing_wins || 0;
+        document.getElementById('statTrailingLoss').textContent = stats.trailing_losses || 0;
+        document.getElementById('statTrailingEff').textContent = ((stats.trailing_efficiency || 0) * 100).toFixed(1) + '%';
 
         // P&L
         const pnlElement = document.getElementById('statPnL');

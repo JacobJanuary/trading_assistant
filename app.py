@@ -408,6 +408,8 @@ def signal_performance():
                 sh.indicator_score,
                 sh.pattern_score,
                 sh.combination_score,
+                sh.score_week,
+                sh.score_month,
                 tp.exchange_id,
                 ex.exchange_name
             FROM fas.scoring_history sh
@@ -540,6 +542,8 @@ def signal_performance():
                             'indicator_score': float(signal.get('indicator_score', 0)),
                             'pattern_score': float(signal.get('pattern_score', 0)),
                             'combination_score': float(signal.get('combination_score', 0)),
+                            'score_week': float(signal.get('score_week', 0)),
+                            'score_month': float(signal.get('score_month', 0)),
                             'is_closed': result.get('is_closed', False),
                             'close_reason': result.get('close_reason'),
                             'realized_pnl': result.get('realized_pnl', 0),
@@ -611,7 +615,9 @@ def signal_performance():
                         'close_reason': signal['close_reason'],
                         'pnl_usd': display_pnl,
                         'pnl_percent': price_change_percent,
-                        'max_potential_profit_usd': max_profit
+                        'max_potential_profit_usd': max_profit,
+                        'score_week': float(signal.get('score_week', 0)),
+                        'score_month': float(signal.get('score_month', 0))
                     }
 
                     signals_data.append(signal_data)
@@ -856,15 +862,39 @@ def scoring_analysis():
         score_week_min = request.args.get('score_week', type=float, default=0)
         score_month_min = request.args.get('score_month', type=float, default=0)
 
-        # Параметры расчета
-        tp_percent = request.args.get('tp', type=float, default=4.0)
-        sl_percent = request.args.get('sl', type=float, default=3.0)
-        position_size = request.args.get('position_size', type=float, default=100.0)
-        leverage = request.args.get('leverage', type=int, default=5)
-
         # Получаем сохраненные фильтры пользователя (упрощенные)
         from database import get_user_scoring_filters
         saved_filters = get_user_scoring_filters(db, current_user.id)
+        
+        # Получаем настройки режима торговли и параметры из user_signal_filters
+        settings_query = """
+            SELECT use_trailing_stop, trailing_distance_pct, trailing_activation_pct,
+                   take_profit_percent, stop_loss_percent, position_size_usd, leverage
+            FROM web.user_signal_filters
+            WHERE user_id = %s
+        """
+        user_settings = db.execute_query(settings_query, (current_user.id,), fetch=True)
+        
+        # Используем сохраненные параметры или значения по умолчанию
+        if user_settings:
+            settings = user_settings[0]
+            tp_percent = float(settings.get('take_profit_percent', 4.0))
+            sl_percent = float(settings.get('stop_loss_percent', 3.0))
+            position_size = float(settings.get('position_size_usd', 100.0))
+            leverage = int(settings.get('leverage', 5))
+            use_trailing_stop = settings.get('use_trailing_stop', False)
+            trailing_distance = float(settings.get('trailing_distance_pct', 2.0))
+            trailing_activation = float(settings.get('trailing_activation_pct', 1.0))
+            mode = 'Trailing' if use_trailing_stop else 'Fixed'
+        else:
+            # Значения по умолчанию
+            tp_percent = 4.0
+            sl_percent = 3.0
+            position_size = 100.0
+            leverage = 5
+            trailing_distance = 2.0
+            trailing_activation = 1.0
+            mode = 'Fixed'
 
         # Инициализация данных по умолчанию
         signals_data = []
@@ -898,10 +928,13 @@ def scoring_analysis():
             stats=stats,
             metrics=metrics,
             params={
+                'mode': mode,
                 'tp_percent': tp_percent,
                 'sl_percent': sl_percent,
                 'position_size': position_size,
-                'leverage': leverage
+                'leverage': leverage,
+                'trailing_distance': trailing_distance,
+                'trailing_activation': trailing_activation
             }
         )
 
