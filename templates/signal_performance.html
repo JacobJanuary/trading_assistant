@@ -286,7 +286,7 @@
                         <h3 class="text-sm font-medium text-gray-700">Trailing Stop Эффективность</h3>
                         <p class="text-2xl font-bold text-purple-700 mt-1">
                             {% if efficiency.closed_trailing > 0 %}
-                            {{ "%.1f"|format((efficiency.trailing_profitable / efficiency.closed_trailing) * 100) }}%
+                            {{ "%.1f"|format((efficiency.trailing_wins / efficiency.closed_trailing) * 100) }}%
                             {% else %}
                             N/A
                             {% endif %}
@@ -299,10 +299,10 @@
                 <div class="text-xs text-gray-600 space-y-1">
                     <div>Всего Trailing: <span class="font-semibold">{{ efficiency.closed_trailing|default(0) }}</span>
                     </div>
-                    <div>Прибыльных: <span class="font-semibold text-green-700">{{ efficiency.trailing_profitable|default(0) }}</span>
+                    <div>Прибыльных: <span class="font-semibold text-green-700">{{ efficiency.trailing_wins|default(0) }}</span>
                     </div>
                     <div>Убыточных: <span
-                            class="font-semibold text-red-700">{{ efficiency.trailing_loss|default(0) }}</span></div>
+                            class="font-semibold text-red-700">{{ efficiency.trailing_losses|default(0) }}</span></div>
                 </div>
             </div>
 
