@@ -1637,6 +1637,8 @@ def api_efficiency_analyze_30days_progress():
                                 'signal_count': 0,
                                 'tp_count': 0,
                                 'sl_count': 0,
+                                'trailing_wins': 0,
+                                'trailing_losses': 0,
                                 'timeout_count': 0,
                                 'daily_pnl': 0.0
                             }
@@ -1657,11 +1659,15 @@ def api_efficiency_analyze_30days_progress():
                             
                                 stats = result['stats']
                                 daily_stats['signal_count'] = int(stats.get('total', 0))
-                                # tp_count уже включает прибыльные trailing stops из database.py
                                 daily_stats['tp_count'] = int(stats.get('tp_count', 0))
                                 daily_stats['sl_count'] = int(stats.get('sl_count', 0))
                                 daily_stats['timeout_count'] = int(stats.get('timeout_count', 0))
                                 daily_stats['daily_pnl'] = float(stats.get('total_pnl', 0))
+                                
+                                # Для trailing stop стратегии учитываем trailing_wins и trailing_losses
+                                if use_trailing_stop:
+                                    daily_stats['trailing_wins'] = int(stats.get('trailing_wins', 0))
+                                    daily_stats['trailing_losses'] = int(stats.get('trailing_losses', 0))
                                 
                                 # Сохраняем в кэш
                                 cache_insert = """
@@ -1692,8 +1698,17 @@ def api_efficiency_analyze_30days_progress():
                         if daily_stats:
                             combination_result['total_signals'] += daily_stats['signal_count']
                             combination_result['total_pnl'] += daily_stats['daily_pnl']
-                            combination_result['total_wins'] += daily_stats.get('tp_count', 0)
-                            combination_result['total_losses'] += daily_stats.get('sl_count', 0)
+                            
+                            # Правильно считаем wins и losses с учетом trailing
+                            if use_trailing_stop:
+                                total_wins = daily_stats.get('tp_count', 0) + daily_stats.get('trailing_wins', 0)
+                                total_losses = daily_stats.get('sl_count', 0) + daily_stats.get('trailing_losses', 0)
+                            else:
+                                total_wins = daily_stats.get('tp_count', 0)
+                                total_losses = daily_stats.get('sl_count', 0)
+                            
+                            combination_result['total_wins'] += total_wins
+                            combination_result['total_losses'] += total_losses
                         
                         combination_result['daily_breakdown'].append(daily_stats)
                         current_date += timedelta(days=1)
@@ -1893,6 +1908,8 @@ def api_tpsl_analyze_progress():
                                 'signal_count': 0,
                                 'tp_count': 0,
                                 'sl_count': 0,
+                                'trailing_wins': 0,
+                                'trailing_losses': 0,
                                 'timeout_count': 0,
                                 'daily_pnl': 0.0
                             }
@@ -2142,6 +2159,8 @@ def api_trailing_analyze_progress():
                                     'signal_count': cached_result[0]['signal_count'],
                                     'tp_count': cached_result[0]['tp_count'],
                                     'trailing_count': cached_result[0].get('tp_count', 0),  # В кэше trailing записан как tp_count
+                                    'trailing_wins': 0,  # Кэш не содержит trailing_wins, пересчитаем
+                                    'trailing_losses': 0,  # Кэш не содержит trailing_losses, пересчитаем
                                     'sl_count': cached_result[0]['sl_count'],
                                     'timeout_count': cached_result[0]['timeout_count'],
                                     'daily_pnl': float(cached_result[0]['daily_pnl'])
@@ -2155,6 +2174,8 @@ def api_trailing_analyze_progress():
                                     'signal_count': 0,
                                     'tp_count': 0,
                                     'trailing_count': 0,
+                                    'trailing_wins': 0,
+                                    'trailing_losses': 0,
                                     'sl_count': 0,
                                     'timeout_count': 0,
                                     'daily_pnl': 0.0
@@ -2179,6 +2200,8 @@ def api_trailing_analyze_progress():
                                 daily_stats['signal_count'] = int(stats.get('total', 0))
                                 daily_stats['tp_count'] = int(stats.get('tp_count', 0))
                                 daily_stats['trailing_count'] = int(stats.get('trailing_count', 0))
+                                daily_stats['trailing_wins'] = int(stats.get('trailing_wins', 0))
+                                daily_stats['trailing_losses'] = int(stats.get('trailing_losses', 0))
                                 daily_stats['sl_count'] = int(stats.get('sl_count', 0))
                                 daily_stats['timeout_count'] = int(stats.get('timeout_count', 0))
                                 daily_stats['daily_pnl'] = float(stats.get('total_pnl', 0))
@@ -2211,10 +2234,16 @@ def api_trailing_analyze_progress():
                             # Обновляем статистику
                             combination_result['total_signals'] += daily_stats['signal_count']
                             combination_result['total_pnl'] += daily_stats['daily_pnl']
-                            # tp_count уже включает прибыльные trailing stops, не дублируем
-                            combination_result['total_wins'] += daily_stats.get('tp_count', 0)
+                            
+                            # Правильно считаем wins и losses для trailing stop
+                            tp_wins = daily_stats.get('tp_count', 0)
+                            trailing_wins = daily_stats.get('trailing_wins', 0)
+                            sl_losses = daily_stats.get('sl_count', 0)
+                            trailing_losses = daily_stats.get('trailing_losses', 0)
+                            
+                            combination_result['total_wins'] += tp_wins + trailing_wins
                             combination_result['trailing_count'] += daily_stats.get('trailing_count', 0)
-                            combination_result['total_losses'] += daily_stats.get('sl_count', 0)
+                            combination_result['total_losses'] += sl_losses + trailing_losses
                             combination_result['daily_breakdown'].append(daily_stats)
                             
                             current_date += timedelta(days=1)
@@ -2337,6 +2366,8 @@ def api_efficiency_analyze_30days():
                         'signal_count': 0,
                         'tp_count': 0,
                         'sl_count': 0,
+                        'trailing_wins': 0,
+                        'trailing_losses': 0,
                         'timeout_count': 0,
                         'daily_pnl': 0.0
                     }
@@ -2360,17 +2391,28 @@ def api_efficiency_analyze_30days():
                         # Получаем статистику из результата
                         stats = result['stats']
                         daily_stats['signal_count'] = int(stats.get('total', 0))
-                        # tp_count уже включает прибыльные trailing stops из database.py
                         daily_stats['tp_count'] = int(stats.get('tp_count', 0))
                         daily_stats['sl_count'] = int(stats.get('sl_count', 0))
                         daily_stats['timeout_count'] = int(stats.get('timeout_count', 0))
                         daily_stats['daily_pnl'] = float(stats.get('total_pnl', 0))
                         
+                        # Для trailing stop стратегии учитываем trailing_wins и trailing_losses
+                        if use_trailing_stop:
+                            trailing_wins = int(stats.get('trailing_wins', 0))
+                            trailing_losses = int(stats.get('trailing_losses', 0))
+                            daily_stats['trailing_wins'] = trailing_wins
+                            daily_stats['trailing_losses'] = trailing_losses
+                            total_wins = daily_stats['tp_count'] + trailing_wins
+                            total_losses = daily_stats['sl_count'] + trailing_losses
+                        else:
+                            total_wins = daily_stats['tp_count']
+                            total_losses = daily_stats['sl_count']
+                        
                         # Обновляем общую статистику
                         combination_result['total_signals'] += daily_stats['signal_count']
                         combination_result['total_pnl'] += daily_stats['daily_pnl']
-                        combination_result['total_wins'] += daily_stats['tp_count']
-                        combination_result['total_losses'] += daily_stats['sl_count']
+                        combination_result['total_wins'] += total_wins
+                        combination_result['total_losses'] += total_losses
                         
                         # Очищаем временные данные из БД
                         cleanup_query = """
