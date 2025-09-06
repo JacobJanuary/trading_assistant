@@ -1487,32 +1487,43 @@ def api_efficiency_analyze_30days_progress():
     def generate():
         nonlocal session_id, force_recalc  # Указываем, что используем внешние переменные
         try:
-            # Проверяем, есть ли сохраненные промежуточные результаты
-            cached_results = analysis_results_cache.get('efficiency', {}).get(user_id, {})
+            # Проверяем, есть ли сохраненные промежуточные результаты в БД
             start_from_combination = 0
+            results = []
             
-            # Если есть кэшированные результаты и не требуется принудительный пересчет
-            if cached_results and not force_recalc:
-                # Проверяем, что параметры совпадают
-                cached_params = cached_results.get('parameters', {})
-                if (cached_params.get('score_week_min') == score_week_min_param and
-                    cached_params.get('score_week_max') == score_week_max_param and
-                    cached_params.get('score_month_min') == score_month_min_param and
-                    cached_params.get('score_month_max') == score_month_max_param and
-                    cached_params.get('step') == step_param):
-                    # Продолжаем с последней обработанной комбинации
-                    start_from_combination = cached_results.get('last_processed_combination', 0)
-                    results = cached_results.get('results', [])
-                    yield f"data: {json.dumps({'type': 'info', 'message': f'Продолжаем анализ с комбинации {start_from_combination + 1}'})}\n\n"
-                else:
-                    # Параметры изменились, начинаем заново
-                    del analysis_results_cache['efficiency'][user_id]
-                    results = []
+            if not force_recalc:
+                # Проверяем прогресс в БД
+                progress_query = """
+                    SELECT parameters, last_processed_combination, results, completed
+                    FROM web.analysis_progress
+                    WHERE user_id = %s AND analysis_type = 'efficiency'
+                    AND updated_at > NOW() - INTERVAL '24 hours'
+                """
+                progress_data = db.execute_query(progress_query, (user_id,), fetch=True)
+                
+                if progress_data:
+                    saved_progress = progress_data[0]
+                    saved_params = saved_progress['parameters']
+                    
+                    # Проверяем, что параметры совпадают
+                    if (saved_params.get('score_week_min') == score_week_min_param and
+                        saved_params.get('score_week_max') == score_week_max_param and
+                        saved_params.get('score_month_min') == score_month_min_param and
+                        saved_params.get('score_month_max') == score_month_max_param and
+                        saved_params.get('step') == step_param):
+                        
+                        # Продолжаем с последней обработанной комбинации
+                        start_from_combination = saved_progress['last_processed_combination'] or 0
+                        results = saved_progress.get('results', []) or []
+                        
+                        if not saved_progress['completed']:
+                            yield f"data: {json.dumps({'type': 'info', 'message': f'Восстанавливаем прогресс с комбинации {start_from_combination + 1}'})}\n\n"
+                    else:
+                        # Параметры изменились, удаляем старый прогресс
+                        db.execute_query("DELETE FROM web.analysis_progress WHERE user_id = %s AND analysis_type = 'efficiency'", (user_id,))
             else:
-                # Новый анализ или принудительный пересчет
-                if user_id in analysis_results_cache.get('efficiency', {}):
-                    del analysis_results_cache['efficiency'][user_id]
-                results = []
+                # Принудительный пересчет - удаляем старый прогресс
+                db.execute_query("DELETE FROM web.analysis_progress WHERE user_id = %s AND analysis_type = 'efficiency'", (user_id,))
                 
                 # При новом запуске очищаем весь кэш пользователя для пересчета
                 if force_recalc:
@@ -1571,22 +1582,39 @@ def api_efficiency_analyze_30days_progress():
             total_combinations = len(week_steps) * len(month_steps)
             current_combination = 0
             
-            # Инициализируем кэш для сохранения промежуточных результатов
-            if 'efficiency' not in analysis_results_cache:
-                analysis_results_cache['efficiency'] = {}
-            
-            if user_id not in analysis_results_cache['efficiency']:
-                analysis_results_cache['efficiency'][user_id] = {
-                    'parameters': {
-                        'score_week_min': score_week_min_param,
-                        'score_week_max': score_week_max_param,
-                        'score_month_min': score_month_min_param,
-                        'score_month_max': score_month_max_param,
-                        'step': step_param
-                    },
-                    'results': results,
-                    'last_processed_combination': 0
+            # Создаем или обновляем запись прогресса в БД
+            if start_from_combination == 0:  # Новый анализ
+                progress_params = {
+                    'score_week_min': score_week_min_param,
+                    'score_week_max': score_week_max_param,
+                    'score_month_min': score_month_min_param,
+                    'score_month_max': score_month_max_param,
+                    'step': step_param,
+                    'use_trailing_stop': use_trailing_stop
                 }
+                
+                # Создаем новую запись прогресса
+                upsert_query = """
+                    INSERT INTO web.analysis_progress 
+                    (user_id, analysis_type, parameters, total_combinations, results, last_processed_combination)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (user_id, analysis_type) 
+                    DO UPDATE SET 
+                        parameters = EXCLUDED.parameters,
+                        total_combinations = EXCLUDED.total_combinations,
+                        results = EXCLUDED.results,
+                        last_processed_combination = EXCLUDED.last_processed_combination,
+                        completed = FALSE,
+                        updated_at = NOW()
+                """
+                db.execute_query(upsert_query, (
+                    user_id, 
+                    'efficiency',
+                    json.dumps(progress_params),
+                    total_combinations,
+                    json.dumps(results),
+                    0
+                ))
             
             # Отправляем начальное сообщение
             if start_from_combination > 0:
@@ -1779,9 +1807,19 @@ def api_efficiency_analyze_30days_progress():
                         
                         results.append(combination_result)
                         
-                        # Сохраняем промежуточные результаты после каждой комбинации
-                        analysis_results_cache['efficiency'][user_id]['results'] = results
-                        analysis_results_cache['efficiency'][user_id]['last_processed_combination'] = current_combination
+                        # Сохраняем промежуточные результаты в БД после каждой комбинации
+                        update_progress_query = """
+                            UPDATE web.analysis_progress 
+                            SET results = %s, 
+                                last_processed_combination = %s,
+                                updated_at = NOW()
+                            WHERE user_id = %s AND analysis_type = 'efficiency'
+                        """
+                        db.execute_query(update_progress_query, (
+                            json.dumps(results),
+                            current_combination,
+                            user_id
+                        ))
                         
                         # Отправляем промежуточный результат только для малого количества комбинаций
                         if total_combinations <= 50:
@@ -1791,7 +1829,25 @@ def api_efficiency_analyze_30days_progress():
             # Сортируем результаты по Win Rate
             results.sort(key=lambda x: x['win_rate'], reverse=True)
             
-            # Сохраняем финальные результаты в глобальный кэш
+            # Сохраняем финальные результаты в БД и помечаем как завершенные
+            final_update_query = """
+                UPDATE web.analysis_progress 
+                SET results = %s, 
+                    last_processed_combination = %s,
+                    completed = TRUE,
+                    updated_at = NOW()
+                WHERE user_id = %s AND analysis_type = 'efficiency'
+            """
+            db.execute_query(final_update_query, (
+                json.dumps(results),
+                total_combinations,
+                user_id
+            ))
+            
+            # Также сохраняем в памяти для быстрого доступа в текущей сессии
+            if 'efficiency' not in analysis_results_cache:
+                analysis_results_cache['efficiency'] = {}
+                
             analysis_results_cache['efficiency'][user_id] = {
                 'timestamp': datetime.now().isoformat(),
                 'results': results,
@@ -1807,7 +1863,6 @@ def api_efficiency_analyze_30days_progress():
                     'position_size': position_size,
                     'leverage': leverage
                 },
-                'last_processed_combination': total_combinations,
                 'completed': True
             }
             
