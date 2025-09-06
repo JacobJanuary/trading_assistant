@@ -3123,7 +3123,8 @@ def api_ab_test_run():
                         
                         # Детальная отладка статистики
                         if current_day == 1 or current_day % 10 == 0:
-                            yield f"data: {json.dumps({'type': 'debug', 'message': f'День {current_day}: Stats B содержит trailing_wins={stats_b.get(\"trailing_wins\", 0)}, trailing_losses={stats_b.get(\"trailing_losses\", 0)}'})}\n\n"
+                            debug_msg = f'День {current_day}: Stats B содержит trailing_wins={stats_b.get("trailing_wins", 0)}, trailing_losses={stats_b.get("trailing_losses", 0)}'
+                            yield f"data: {json.dumps({'type': 'debug', 'message': debug_msg})}\n\n"
                         # Для Fixed стратегии считаем только tp_count
                         if strategy_b.get('type') == 'fixed':
                             results_b['wins'] += int(stats_b.get('tp_count', 0))
