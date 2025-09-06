@@ -436,8 +436,8 @@ def signal_performance():
             'closed_tp': 0,
             'closed_sl': 0,
             'closed_trailing': 0,
-            'trailing_profitable': 0,
-            'trailing_loss': 0,
+            'trailing_wins': 0,
+            'trailing_losses': 0,
             'trailing_avg_profit': 0,
             'tp_avg_profit': 0,
             'trailing_efficiency': 0,
@@ -635,11 +635,11 @@ def signal_performance():
                         COUNT(CASE 
                             WHEN close_reason = 'trailing_stop' AND realized_pnl_usd > 0 
                             THEN 1 
-                        END) as trailing_profitable,
+                        END) as trailing_wins,
                         COUNT(CASE 
                             WHEN close_reason = 'trailing_stop' AND realized_pnl_usd <= 0 
                             THEN 1 
-                        END) as trailing_loss,
+                        END) as trailing_losses,
                         -- Средние проценты P&L по типам выхода
                         AVG(CASE WHEN close_reason = 'take_profit' 
                             THEN take_profit_percent END) as avg_tp_percent,
@@ -671,8 +671,8 @@ def signal_performance():
                 efficiency_metrics['closed_sl'] = stats['closed_sl'] or 0
                 efficiency_metrics['closed_trailing'] = stats['closed_trailing'] or 0
                 efficiency_metrics['closed_timeout'] = stats['closed_timeout'] or 0
-                efficiency_metrics['trailing_profitable'] = stats['trailing_profitable'] or 0
-                efficiency_metrics['trailing_loss'] = stats['trailing_loss'] or 0
+                efficiency_metrics['trailing_wins'] = stats['trailing_wins'] or 0
+                efficiency_metrics['trailing_losses'] = stats['trailing_losses'] or 0
                 efficiency_metrics['net_realized_pnl'] = float(stats['total_realized'] or 0)
                 efficiency_metrics['unrealized_pnl'] = float(stats['total_unrealized'] or 0)
                 efficiency_metrics['total_pnl'] = efficiency_metrics['net_realized_pnl'] + efficiency_metrics['unrealized_pnl']
@@ -695,8 +695,8 @@ def signal_performance():
                 
                 if total_closed > 0:
                     # Считаем все прибыльные закрытия
-                    wins = efficiency_metrics['closed_tp'] + efficiency_metrics['trailing_profitable']
-                    losses = efficiency_metrics['closed_sl'] + efficiency_metrics['trailing_loss']
+                    wins = efficiency_metrics['closed_tp'] + efficiency_metrics['trailing_wins']
+                    losses = efficiency_metrics['closed_sl'] + efficiency_metrics['trailing_losses']
                     
                     # Win rate
                     efficiency_metrics['win_rate'] = (wins / total_closed) * 100
@@ -3078,11 +3078,11 @@ def api_ab_test_run():
                             results_a['wins'] += int(stats_a.get('tp_count', 0))
                             results_a['losses'] += int(stats_a.get('sl_count', 0))
                         else:
-                            # Для Trailing стратегии учитываем и tp_count и trailing_profitable
+                            # Для Trailing стратегии учитываем и tp_count и trailing_wins (исправлено имя поля)
                             tp_wins = int(stats_a.get('tp_count', 0))
-                            trailing_wins = int(stats_a.get('trailing_profitable', 0))
+                            trailing_wins = int(stats_a.get('trailing_wins', 0))  # Изменено с trailing_profitable
                             sl_losses = int(stats_a.get('sl_count', 0))
-                            trailing_losses = int(stats_a.get('trailing_loss', 0))
+                            trailing_losses = int(stats_a.get('trailing_losses', 0))  # Изменено с trailing_loss
                             results_a['wins'] += tp_wins + trailing_wins
                             results_a['losses'] += sl_losses + trailing_losses
                             # Отладка
@@ -3120,16 +3120,20 @@ def api_ab_test_run():
                         
                         stats_b = result_b['stats']
                         results_b['signals'] += int(stats_b.get('total', 0))
+                        
+                        # Детальная отладка статистики
+                        if current_day == 1 or current_day % 10 == 0:
+                            yield f"data: {json.dumps({'type': 'debug', 'message': f'День {current_day}: Stats B содержит trailing_wins={stats_b.get(\"trailing_wins\", 0)}, trailing_losses={stats_b.get(\"trailing_losses\", 0)}'})}\n\n"
                         # Для Fixed стратегии считаем только tp_count
                         if strategy_b.get('type') == 'fixed':
                             results_b['wins'] += int(stats_b.get('tp_count', 0))
                             results_b['losses'] += int(stats_b.get('sl_count', 0))
                         else:
-                            # Для Trailing стратегии учитываем и tp_count и trailing_profitable
+                            # Для Trailing стратегии учитываем и tp_count и trailing_wins (исправлено имя поля)
                             tp_wins = int(stats_b.get('tp_count', 0))
-                            trailing_wins = int(stats_b.get('trailing_profitable', 0))
+                            trailing_wins = int(stats_b.get('trailing_wins', 0))  # Изменено с trailing_profitable
                             sl_losses = int(stats_b.get('sl_count', 0))
-                            trailing_losses = int(stats_b.get('trailing_loss', 0))
+                            trailing_losses = int(stats_b.get('trailing_losses', 0))  # Изменено с trailing_loss
                             results_b['wins'] += tp_wins + trailing_wins
                             results_b['losses'] += sl_losses + trailing_losses
                             # Отладка
