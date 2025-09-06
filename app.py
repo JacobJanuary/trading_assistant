@@ -1608,8 +1608,9 @@ def api_efficiency_analyze_30days_progress():
                         cache_key = f"{date_str}_{score_week_min}_{score_month_min}_{use_trailing_stop}"
                         cached_result = None
                         
-                        # Используем кэш только если не требуется принудительный пересчет
-                        if not force_recalc:
+                        # Используем кэш только если не требуется принудительный пересчет и не используется trailing stop
+                        # (кэш не содержит trailing_wins/trailing_losses)
+                        if not force_recalc and not use_trailing_stop:
                             cache_query = """
                                 SELECT signal_count, tp_count, sl_count, timeout_count, daily_pnl
                                 FROM web.efficiency_cache
@@ -1625,6 +1626,8 @@ def api_efficiency_analyze_30days_progress():
                                 'signal_count': cached_result[0]['signal_count'],
                                 'tp_count': cached_result[0]['tp_count'],
                                 'sl_count': cached_result[0]['sl_count'],
+                                'trailing_wins': 0,  # Кэш не содержит эти поля, нужно пересчитать
+                                'trailing_losses': 0,
                                 'timeout_count': cached_result[0]['timeout_count'],
                                 'daily_pnl': float(cached_result[0]['daily_pnl'])
                             }
@@ -1669,23 +1672,24 @@ def api_efficiency_analyze_30days_progress():
                                     daily_stats['trailing_wins'] = int(stats.get('trailing_wins', 0))
                                     daily_stats['trailing_losses'] = int(stats.get('trailing_losses', 0))
                                 
-                                # Сохраняем в кэш
-                                cache_insert = """
-                                    INSERT INTO web.efficiency_cache 
-                                    (cache_key, user_id, signal_count, tp_count, sl_count, timeout_count, daily_pnl)
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                """
-                                try:
-                                    db.execute_query(cache_insert, (
-                                        cache_key, user_id,
-                                        daily_stats['signal_count'],
-                                        daily_stats['tp_count'],
-                                        daily_stats['sl_count'],
-                                        daily_stats['timeout_count'],
-                                        daily_stats['daily_pnl']
-                                    ))
-                                except:
-                                    pass  # Игнорируем ошибки кэша
+                                # Сохраняем в кэш только для Fixed режима
+                                if not use_trailing_stop:
+                                    cache_insert = """
+                                        INSERT INTO web.efficiency_cache 
+                                        (cache_key, user_id, signal_count, tp_count, sl_count, timeout_count, daily_pnl)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                    """
+                                    try:
+                                        db.execute_query(cache_insert, (
+                                            cache_key, user_id,
+                                            daily_stats['signal_count'],
+                                            daily_stats['tp_count'],
+                                            daily_stats['sl_count'],
+                                            daily_stats['timeout_count'],
+                                            daily_stats['daily_pnl']
+                                        ))
+                                    except:
+                                        pass  # Игнорируем ошибки кэша
                                 
                                 # Очищаем временные данные
                                 cleanup_query = """
