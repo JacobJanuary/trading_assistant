@@ -3048,8 +3048,9 @@ def api_ab_test_run():
                     if signals_a:
                         session_a = f"ab_a_{user_id}_{uuid.uuid4().hex[:8]}"
                         
-                        # Добавляем отладочную информацию
-                        yield f"data: {json.dumps({'type': 'debug', 'message': f'Обработка {len(signals_a)} сигналов для стратегии A'})}\n\n"
+                        # Добавляем отладочную информацию для стратегии A
+                        debug_msg = f'Обработка {len(signals_a)} сигналов для стратегии A ({strategy_a.get("type", "unknown")})'
+                        yield f"data: {json.dumps({'type': 'debug', 'message': debug_msg})}\n\n"
                         
                         if strategy_a.get('type') == 'fixed':
                             result_a = process_scoring_signals_batch(
@@ -3072,14 +3073,31 @@ def api_ab_test_run():
                         
                         stats_a = result_a['stats']
                         results_a['signals'] += int(stats_a.get('total', 0))
-                        results_a['wins'] += int(stats_a.get('tp_count', 0))
-                        results_a['losses'] += int(stats_a.get('sl_count', 0))
+                        # Для Fixed стратегии считаем только tp_count
+                        if strategy_a.get('type') == 'fixed':
+                            results_a['wins'] += int(stats_a.get('tp_count', 0))
+                            results_a['losses'] += int(stats_a.get('sl_count', 0))
+                        else:
+                            # Для Trailing стратегии учитываем и tp_count и trailing_profitable
+                            tp_wins = int(stats_a.get('tp_count', 0))
+                            trailing_wins = int(stats_a.get('trailing_profitable', 0))
+                            sl_losses = int(stats_a.get('sl_count', 0))
+                            trailing_losses = int(stats_a.get('trailing_loss', 0))
+                            results_a['wins'] += tp_wins + trailing_wins
+                            results_a['losses'] += sl_losses + trailing_losses
+                            # Отладка
+                            if tp_wins > 0 or trailing_wins > 0:
+                                yield f"data: {json.dumps({'type': 'debug', 'message': f'A: TP={tp_wins}, Trail Win={trailing_wins}, SL={sl_losses}, Trail Loss={trailing_losses}'})}\n\n"
                         results_a['pnl'].append(float(stats_a.get('total_pnl', 0)))
                         results_a['times'].append(float(stats_a.get('avg_hours_to_close', 24)))
                     
                     # Тестируем стратегию B
                     if signals_b:
                         session_b = f"ab_b_{user_id}_{uuid.uuid4().hex[:8]}"
+                        
+                        # Добавляем отладочную информацию для стратегии B
+                        debug_msg = f'Обработка {len(signals_b)} сигналов для стратегии B ({strategy_b.get("type", "unknown")})'
+                        yield f"data: {json.dumps({'type': 'debug', 'message': debug_msg})}\n\n"
                         
                         if strategy_b.get('type') == 'fixed':
                             result_b = process_scoring_signals_batch(
@@ -3102,8 +3120,21 @@ def api_ab_test_run():
                         
                         stats_b = result_b['stats']
                         results_b['signals'] += int(stats_b.get('total', 0))
-                        results_b['wins'] += int(stats_b.get('tp_count', 0))
-                        results_b['losses'] += int(stats_b.get('sl_count', 0))
+                        # Для Fixed стратегии считаем только tp_count
+                        if strategy_b.get('type') == 'fixed':
+                            results_b['wins'] += int(stats_b.get('tp_count', 0))
+                            results_b['losses'] += int(stats_b.get('sl_count', 0))
+                        else:
+                            # Для Trailing стратегии учитываем и tp_count и trailing_profitable
+                            tp_wins = int(stats_b.get('tp_count', 0))
+                            trailing_wins = int(stats_b.get('trailing_profitable', 0))
+                            sl_losses = int(stats_b.get('sl_count', 0))
+                            trailing_losses = int(stats_b.get('trailing_loss', 0))
+                            results_b['wins'] += tp_wins + trailing_wins
+                            results_b['losses'] += sl_losses + trailing_losses
+                            # Отладка
+                            if tp_wins > 0 or trailing_wins > 0:
+                                yield f"data: {json.dumps({'type': 'debug', 'message': f'B: TP={tp_wins}, Trail Win={trailing_wins}, SL={sl_losses}, Trail Loss={trailing_losses}'})}\n\n"
                         results_b['pnl'].append(float(stats_b.get('total_pnl', 0)))
                         results_b['times'].append(float(stats_b.get('avg_hours_to_close', 24)))
                 
