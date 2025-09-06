@@ -1652,9 +1652,11 @@ def api_efficiency_analyze_30days_progress():
                         'daily_breakdown': []
                     }
                     
+                    # Вычисляем прогресс для текущей комбинации
+                    progress_percent = int((current_combination - 0.5) / total_combinations * 100)
+                    
                     # Отправляем прогресс каждые 3 комбинации или при завершении
                     if current_combination % 3 == 1 or current_combination == total_combinations:
-                        progress_percent = int((current_combination - 0.5) / total_combinations * 100)
                         yield f"data: {json.dumps({'type': 'progress', 'percent': progress_percent, 'message': f'Обработка {current_combination}/{total_combinations}', 'current_combination': current_combination, 'total_combinations': total_combinations})}\n\n"
                         yield f": heartbeat\n\n"
                         last_yield = time.time()
