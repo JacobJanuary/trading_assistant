@@ -1594,7 +1594,8 @@ def api_efficiency_analyze_30days_progress():
                 # Отправляем уже обработанные результаты
                 if results:
                     for result in results[:5]:  # Отправляем первые 5 для отображения
-                        yield f"data: {json.dumps({'type': 'intermediate', 'combination': f'Week≥{result[\"score_week\"]}%, Month≥{result[\"score_month\"]}%', 'pnl': round(result['total_pnl'], 2), 'signals': result['total_signals'], 'win_rate': round(result['win_rate'], 1)})}\n\n"
+                        combination_str = f"Week≥{result['score_week']}%, Month≥{result['score_month']}%"
+                        yield f"data: {json.dumps({'type': 'intermediate', 'combination': combination_str, 'pnl': round(result['total_pnl'], 2), 'signals': result['total_signals'], 'win_rate': round(result['win_rate'], 1)})}\n\n"
             else:
                 yield f"data: {json.dumps({'type': 'start', 'message': 'Инициализация анализа за 30 дней...', 'total_combinations': total_combinations})}\n\n"
             yield f": heartbeat\n\n"  # Немедленный heartbeat после старта
