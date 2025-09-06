@@ -443,8 +443,16 @@
                 
                 switch(data.type) {
                     case 'start':
-                        updateProgress(0, data.message);
-                        document.getElementById('progressDetails').textContent = `Всего комбинаций для анализа: ${data.total_combinations}`;
+                        if (data.resume) {
+                            // Продолжаем анализ с сохраненного места
+                            const resumePercent = Math.round((data.start_from / data.total_combinations) * 100);
+                            updateProgress(resumePercent, data.message);
+                            document.getElementById('progressDetails').innerHTML = 
+                                `<span class="text-green-600">Продолжаем анализ</span> с комбинации ${data.start_from + 1} из ${data.total_combinations}`;
+                        } else {
+                            updateProgress(0, data.message);
+                            document.getElementById('progressDetails').textContent = `Всего комбинаций для анализа: ${data.total_combinations}`;
+                        }
                         break;
                     
                 case 'progress':
@@ -456,6 +464,11 @@
                 case 'progress_detail':
                     // Детальный прогресс внутри комбинации
                     updateProgress(data.percent, data.message);
+                    break;
+                    
+                case 'info':
+                    // Информационное сообщение
+                    showNotification(data.message, 'info');
                     break;
                     
                 case 'intermediate':

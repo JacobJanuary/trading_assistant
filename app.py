@@ -1487,13 +1487,32 @@ def api_efficiency_analyze_30days_progress():
     def generate():
         nonlocal session_id, force_recalc  # Указываем, что используем внешние переменные
         try:
-            # Если это новая сессия (новый запуск анализа, а не переподключение)
-            is_new_session = not session_id or session_id.startswith('eff_')
+            # Проверяем, есть ли сохраненные промежуточные результаты
+            cached_results = analysis_results_cache.get('efficiency', {}).get(user_id, {})
+            start_from_combination = 0
             
-            if is_new_session:
-                # Очищаем предыдущие результаты анализа эффективности для этого пользователя
-                if user_id in analysis_results_cache['efficiency']:
+            # Если есть кэшированные результаты и не требуется принудительный пересчет
+            if cached_results and not force_recalc:
+                # Проверяем, что параметры совпадают
+                cached_params = cached_results.get('parameters', {})
+                if (cached_params.get('score_week_min') == score_week_min_param and
+                    cached_params.get('score_week_max') == score_week_max_param and
+                    cached_params.get('score_month_min') == score_month_min_param and
+                    cached_params.get('score_month_max') == score_month_max_param and
+                    cached_params.get('step') == step_param):
+                    # Продолжаем с последней обработанной комбинации
+                    start_from_combination = cached_results.get('last_processed_combination', 0)
+                    results = cached_results.get('results', [])
+                    yield f"data: {json.dumps({'type': 'info', 'message': f'Продолжаем анализ с комбинации {start_from_combination + 1}'})}\n\n"
+                else:
+                    # Параметры изменились, начинаем заново
                     del analysis_results_cache['efficiency'][user_id]
+                    results = []
+            else:
+                # Новый анализ или принудительный пересчет
+                if user_id in analysis_results_cache.get('efficiency', {}):
+                    del analysis_results_cache['efficiency'][user_id]
+                results = []
                 
                 # При новом запуске очищаем весь кэш пользователя для пересчета
                 if force_recalc:
@@ -1546,21 +1565,49 @@ def api_efficiency_analyze_30days_progress():
             end_date = datetime.now().date() - timedelta(days=2)
             start_date = end_date - timedelta(days=29)
             
-            results = []
             # Вычисляем количество комбинаций на основе параметров
             week_steps = list(range(score_week_min_param, score_week_max_param + 1, step_param))
             month_steps = list(range(score_month_min_param, score_month_max_param + 1, step_param))
             total_combinations = len(week_steps) * len(month_steps)
             current_combination = 0
             
+            # Инициализируем кэш для сохранения промежуточных результатов
+            if 'efficiency' not in analysis_results_cache:
+                analysis_results_cache['efficiency'] = {}
+            
+            if user_id not in analysis_results_cache['efficiency']:
+                analysis_results_cache['efficiency'][user_id] = {
+                    'parameters': {
+                        'score_week_min': score_week_min_param,
+                        'score_week_max': score_week_max_param,
+                        'score_month_min': score_month_min_param,
+                        'score_month_max': score_month_max_param,
+                        'step': step_param
+                    },
+                    'results': results,
+                    'last_processed_combination': 0
+                }
+            
             # Отправляем начальное сообщение
-            yield f"data: {json.dumps({'type': 'start', 'message': 'Инициализация анализа за 30 дней...', 'total_combinations': total_combinations})}\n\n"
+            if start_from_combination > 0:
+                yield f"data: {json.dumps({'type': 'start', 'message': f'Продолжаем анализ с комбинации {start_from_combination + 1} из {total_combinations}...', 'total_combinations': total_combinations, 'resume': True, 'start_from': start_from_combination})}\n\n"
+                # Отправляем уже обработанные результаты
+                if results:
+                    for result in results[:5]:  # Отправляем первые 5 для отображения
+                        yield f"data: {json.dumps({'type': 'intermediate', 'combination': f'Week≥{result[\"score_week\"]}%, Month≥{result[\"score_month\"]}%', 'pnl': round(result['total_pnl'], 2), 'signals': result['total_signals'], 'win_rate': round(result['win_rate'], 1)})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'start', 'message': 'Инициализация анализа за 30 дней...', 'total_combinations': total_combinations})}\n\n"
             yield f": heartbeat\n\n"  # Немедленный heartbeat после старта
             
             # Перебираем все комбинации на основе пользовательских настроек
             for score_week_min in week_steps:
                 for score_month_min in month_steps:
                     current_combination += 1
+                    
+                    # Пропускаем уже обработанные комбинации
+                    if current_combination <= start_from_combination:
+                        continue
+                        
                     processed_combinations += 1
                     
                     combination_result = {
@@ -1576,8 +1623,8 @@ def api_efficiency_analyze_30days_progress():
                         'daily_breakdown': []
                     }
                     
-                    # Отправляем прогресс только каждые 5 комбинаций для уменьшения нагрузки
-                    if processed_combinations % 5 == 1 or current_combination == total_combinations:
+                    # Отправляем прогресс каждые 3 комбинации или при завершении
+                    if current_combination % 3 == 1 or current_combination == total_combinations:
                         progress_percent = int((current_combination - 0.5) / total_combinations * 100)
                         yield f"data: {json.dumps({'type': 'progress', 'percent': progress_percent, 'message': f'Обработка {current_combination}/{total_combinations}', 'current_combination': current_combination, 'total_combinations': total_combinations})}\n\n"
                         yield f": heartbeat\n\n"
@@ -1731,6 +1778,10 @@ def api_efficiency_analyze_30days_progress():
                         
                         results.append(combination_result)
                         
+                        # Сохраняем промежуточные результаты после каждой комбинации
+                        analysis_results_cache['efficiency'][user_id]['results'] = results
+                        analysis_results_cache['efficiency'][user_id]['last_processed_combination'] = current_combination
+                        
                         # Отправляем промежуточный результат только для малого количества комбинаций
                         if total_combinations <= 50:
                             yield f"data: {json.dumps({'type': 'intermediate', 'combination': f'Week≥{score_week_min}%, Month≥{score_month_min}%', 'pnl': round(combination_result['total_pnl'], 2), 'signals': combination_result['total_signals'], 'win_rate': round(combination_result['win_rate'], 1)})}\n\n"
@@ -1739,7 +1790,7 @@ def api_efficiency_analyze_30days_progress():
             # Сортируем результаты по Win Rate
             results.sort(key=lambda x: x['win_rate'], reverse=True)
             
-            # Сохраняем результаты в глобальный кэш
+            # Сохраняем финальные результаты в глобальный кэш
             analysis_results_cache['efficiency'][user_id] = {
                 'timestamp': datetime.now().isoformat(),
                 'results': results,
@@ -1754,7 +1805,9 @@ def api_efficiency_analyze_30days_progress():
                     'sl_percent': sl_percent,
                     'position_size': position_size,
                     'leverage': leverage
-                }
+                },
+                'last_processed_combination': total_combinations,
+                'completed': True
             }
             
             # Отправляем финальные результаты
