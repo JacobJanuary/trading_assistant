@@ -429,10 +429,11 @@
                             resetAnalysisButton();
                         }
                     }
-                }, 5000);
+                }, 15000);  // Увеличиваем таймаут до 15 секунд
             }
         
-        eventSource.onmessage = function(event) {
+        // Обработка heartbeat комментариев
+        eventSource.addEventListener('message', function(event) {
             lastActivity = Date.now();
             reconnectAttempts = 0; // Сбрасываем счетчик при успешном получении сообщения
             
@@ -504,7 +505,7 @@
             } catch (error) {
                 console.error('Error parsing SSE message:', error, event.data);
             }
-        };
+        });
         
         eventSource.onerror = function(error) {
             console.error('SSE Error:', error);

@@ -1593,7 +1593,7 @@ def api_efficiency_analyze_30days_progress():
                         
                         # Отправляем heartbeat только если давно не отправляли данные
                         current_time = time.time()
-                        if current_time - last_yield > 3:
+                        if current_time - last_yield > 1:  # Уменьшаем интервал до 1 секунды
                             yield f": keepalive\n\n"
                             last_yield = current_time
                         
@@ -1691,11 +1691,12 @@ def api_efficiency_analyze_30days_progress():
                                     except:
                                         pass  # Игнорируем ошибки кэша
                                 
-                                # Очищаем временные данные
+                                # Очищаем временные данные из правильной таблицы
                                 cleanup_query = """
-                                    DELETE FROM web.scoring_analysis_temp
+                                    DELETE FROM web.scoring_analysis_results
                                     WHERE session_id = %s AND user_id = %s
                                 """
+                                # Очищаем после обработки дня
                                 db.execute_query(cleanup_query, (session_id, user_id))
                         
                         # Обновляем общую статистику
@@ -1716,6 +1717,11 @@ def api_efficiency_analyze_30days_progress():
                         
                         combination_result['daily_breakdown'].append(daily_stats)
                         current_date += timedelta(days=1)
+                        
+                        # Отправляем heartbeat после каждого дня для поддержания соединения
+                        if days_processed % 5 == 0:  # Каждые 5 дней
+                            yield f": heartbeat day {days_processed}\n\n"
+                            last_yield = time.time()
                     
                     # Рассчитываем win rate
                     if combination_result['total_signals'] > 0:
@@ -1956,11 +1962,12 @@ def api_tpsl_analyze_progress():
                                 except:
                                     pass
                                 
-                                # Очищаем временные данные
+                                # Очищаем временные данные из правильной таблицы
                                 cleanup_query = """
-                                    DELETE FROM web.scoring_analysis_temp
+                                    DELETE FROM web.scoring_analysis_results
                                     WHERE session_id = %s AND user_id = %s
                                 """
+                                # Очищаем после обработки дня
                                 db.execute_query(cleanup_query, (session_id, user_id))
                         
                         # Обновляем статистику
@@ -2228,11 +2235,12 @@ def api_trailing_analyze_progress():
                                 except:
                                     pass
                                 
-                                # Очищаем временные данные
+                                # Очищаем временные данные из правильной таблицы
                                 cleanup_query = """
-                                    DELETE FROM web.scoring_analysis_temp
+                                    DELETE FROM web.scoring_analysis_results
                                     WHERE session_id = %s AND user_id = %s
                                 """
+                                # Очищаем после обработки дня
                                 db.execute_query(cleanup_query, (session_id, user_id))
                             
                             # Обновляем статистику
