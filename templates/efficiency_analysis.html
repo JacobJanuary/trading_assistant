@@ -267,8 +267,8 @@
                         <tr>
                             <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Дата</th>
                             <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Сигналов</th>
-                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">TP</th>
-                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">SL</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Прибыльных</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Убыточных</th>
                             <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Timeout</th>
                             <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">P&L за день</th>
                         </tr>
@@ -641,12 +641,16 @@
         // Заполняем таблицу по дням
         const tbody = document.getElementById('dailyDetailsBody');
         tbody.innerHTML = result.daily_breakdown.map(day => {
+            // Для Trailing Stop стратегии объединяем TP и trailing wins
+            const totalWins = (day.tp_count || 0) + (day.trailing_wins || 0);
+            const totalLosses = (day.sl_count || 0) + (day.trailing_losses || 0);
+            
             return `
                 <tr class="hover:bg-gray-50">
                     <td class="px-4 py-2 text-sm text-gray-900">${day.date}</td>
                     <td class="px-4 py-2 text-sm text-gray-900">${day.signal_count}</td>
-                    <td class="px-4 py-2 text-sm text-green-600">${day.tp_count}</td>
-                    <td class="px-4 py-2 text-sm text-red-600">${day.sl_count}</td>
+                    <td class="px-4 py-2 text-sm text-green-600">${totalWins}</td>
+                    <td class="px-4 py-2 text-sm text-red-600">${totalLosses}</td>
                     <td class="px-4 py-2 text-sm text-gray-500">${day.timeout_count}</td>
                     <td class="px-4 py-2 text-sm font-semibold ${getPnLClass(day.daily_pnl)}">
                         ${formatPnL(day.daily_pnl)}
