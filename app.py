@@ -512,7 +512,9 @@ def signal_performance():
                         'trading_pair_id': signal['trading_pair_id'],
                         'signal_action': signal['signal_action'],
                         'signal_timestamp': make_aware(signal['signal_timestamp']),
-                        'exchange_name': signal.get('exchange_name', 'Unknown')
+                        'exchange_name': signal.get('exchange_name', 'Unknown'),
+                        'score_week': signal.get('score_week', 0),
+                        'score_month': signal.get('score_month', 0)
                     }
 
                     # Обрабатываем сигнал с учетом настроек пользователя

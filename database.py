@@ -529,6 +529,8 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
         signal_id = signal['signal_id']
         trading_pair_id = signal['trading_pair_id']
         pair_symbol = signal['pair_symbol']
+        score_week = signal.get('score_week', 0)
+        score_month = signal.get('score_month', 0)
         signal_action = signal['signal_action']
         signal_timestamp = signal['signal_timestamp']
         exchange_name = signal.get('exchange_name', 'Unknown')
@@ -601,9 +603,10 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
                     signal_id, pair_symbol, signal_action, signal_timestamp,
                     entry_price, position_size_usd, leverage,
                     trailing_stop_percent, take_profit_percent,
-                    is_closed, last_known_price, use_trailing_stop
+                    is_closed, last_known_price, use_trailing_stop,
+                    score_week, score_month
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, %s, %s, %s
                 )
                 ON CONFLICT (signal_id) DO UPDATE SET
                     last_updated_at = NOW()
@@ -612,7 +615,8 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
                 signal_id, pair_symbol, signal_action, signal_timestamp,
                 entry_price, position_size, leverage,
                 trailing_distance_pct if use_trailing_stop else sl_percent,
-                tp_percent, entry_price, use_trailing_stop
+                tp_percent, entry_price, use_trailing_stop,
+                score_week, score_month
             ))
             return {'success': True, 'is_closed': False, 'close_reason': None, 'max_profit': 0}
 
@@ -758,9 +762,10 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
                 is_closed, closing_price, closed_at, close_reason,
                 realized_pnl_usd, unrealized_pnl_usd,
                 max_potential_profit_usd, last_known_price,
-                use_trailing_stop, trailing_activated
+                use_trailing_stop, trailing_activated,
+                score_week, score_month
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             ON CONFLICT (signal_id) DO UPDATE SET
                 pair_symbol = EXCLUDED.pair_symbol,
@@ -780,6 +785,8 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
                 last_known_price = EXCLUDED.last_known_price,
                 use_trailing_stop = EXCLUDED.use_trailing_stop,
                 trailing_activated = EXCLUDED.trailing_activated,
+                score_week = EXCLUDED.score_week,
+                score_month = EXCLUDED.score_month,
                 last_updated_at = NOW()
         """
 
@@ -795,7 +802,8 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
             is_closed, close_price, close_time, close_reason,
             realized_pnl if is_closed else 0,
             unrealized_pnl if not is_closed else 0,
-            max_profit, last_price, use_trailing_stop, trailing_activated
+            max_profit, last_price, use_trailing_stop, trailing_activated,
+            score_week, score_month
         ))
 
         return {
@@ -1213,9 +1221,10 @@ def process_signal_with_trailing(db, signal, user_settings):
                 trailing_stop_percent, take_profit_percent,
                 is_closed, closing_price, closed_at, close_reason,
                 realized_pnl_usd, unrealized_pnl_usd,
-                max_potential_profit_usd, last_known_price
+                max_potential_profit_usd, last_known_price,
+                score_week, score_month
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
         """
 
@@ -1227,7 +1236,8 @@ def process_signal_with_trailing(db, signal, user_settings):
             is_closed, close_price, close_time, close_reason,
             realized_pnl if is_closed else 0,
             unrealized_pnl if not is_closed else 0,
-            max_profit, last_price
+            max_profit, last_price,
+            signal.get('score_week', 0), signal.get('score_month', 0)
         ))
 
         return {
