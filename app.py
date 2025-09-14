@@ -415,8 +415,8 @@ def signal_performance():
             FROM fas.scoring_history sh
             JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
             JOIN public.exchanges ex ON ex.id = tp.exchange_id
-            WHERE sh.score_week > 65 
-                AND sh.score_month > 63
+            WHERE sh.score_week > 67 
+                AND sh.score_month > 64
                 AND sh.timestamp >= NOW() - INTERVAL '48 hours'
                 AND tp.contract_type_id = 1
                 AND tp.exchange_id IN (1, 2)
