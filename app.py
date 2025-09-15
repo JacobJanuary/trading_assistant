@@ -1562,6 +1562,9 @@ def efficiency_analysis():
 @login_required  
 def tpsl_analysis():
     """Страница анализа эффективности TP/SL"""
+    return render_template('tpsl_analysis.html',
+                          username=current_user.username,
+                          is_admin=current_user.is_admin)
 
 
 @app.route('/trailing_analysis')
