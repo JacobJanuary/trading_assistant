@@ -431,7 +431,26 @@ def signal_performance():
         score_month_min = request.args.get('score_month', type=int, default=53)
 
         # ========== НОВЫЙ ЗАПРОС НАПРЯМУЮ ИЗ FAS.SCORING_HISTORY ==========
-f%s
+        # Получаем сигналы с фильтрацией по скорингу
+        signals_query = """
+            SELECT
+                sh.id as signal_id,
+                sh.pair_symbol,
+                sh.trading_pair_id,
+                sh.recommended_action as signal_action,
+                sh.timestamp as signal_timestamp,
+                sh.total_score,
+                sh.indicator_score,
+                sh.pattern_score,
+                sh.combination_score,
+                sh.score_week,
+                sh.score_month,
+                tp.exchange_id,
+                ex.exchange_name
+            FROM fas.scoring_history sh
+            JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
+            JOIN public.exchanges ex ON ex.id = tp.exchange_id
+            WHERE sh.score_week > %s
                 AND sh.score_month > %s
                 AND sh.timestamp >= NOW() - INTERVAL '48 hours'
                 AND tp.contract_type_id = 1
