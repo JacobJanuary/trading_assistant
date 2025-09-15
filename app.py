@@ -25,7 +25,22 @@ logger = logging.getLogger(__name__)
 
 # Создание Flask приложения
 app = Flask(__name__)
-app.secret_key = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
+
+# Настройка SECRET_KEY с проверкой
+secret_key = os.getenv('SECRET_KEY')
+if not secret_key:
+    print("WARNING: SECRET_KEY не задан, используется значение по умолчанию!")
+    secret_key = 'dev-secret-key-change-in-production'
+app.secret_key = secret_key
+
+# Настройки сессий для сервера
+app.config.update(
+    SESSION_COOKIE_SECURE=False,  # Для разработки - False, для продакшена - True
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    PERMANENT_SESSION_LIFETIME=3600,  # 1 час
+    SESSION_TYPE='filesystem' if os.getenv('SESSION_TYPE') == 'filesystem' else None
+)
 
 # Настройка Flask-Login
 login_manager = LoginManager()
@@ -33,6 +48,14 @@ login_manager.init_app(app)
 login_manager.login_view = 'login'
 login_manager.login_message = 'Пожалуйста, войдите в систему для доступа к этой странице.'
 login_manager.login_message_category = 'info'
+login_manager.session_protection = 'strong'  # Защита от фиксации сессии
+
+# Настройка логирования для отладки аутентификации
+if os.getenv('DEBUG_AUTH', 'false').lower() == 'true':
+    import logging
+    logging.basicConfig(level=logging.DEBUG)
+    login_manager.logger = logging.getLogger('flask_login')
+    login_manager.logger.setLevel(logging.DEBUG)
 
 # Инициализация базы данных
 # Поддерживаем оба способа: через DATABASE_URL или через отдельные параметры
@@ -362,10 +385,18 @@ def api_dashboard_data():
 
 
 @app.route('/signal_performance')
-@login_required
+#@login_required
 def signal_performance():
     """Страница отслеживания эффективности торговых сигналов"""
+    print(f"[AUTH_DEBUG] signal_performance called by user: {current_user.id if current_user.is_authenticated else 'Not authenticated'}")
+    print(f"[AUTH_DEBUG] current_user.is_authenticated: {current_user.is_authenticated}")
+
+    if not current_user.is_authenticated:
+        print("[AUTH_DEBUG] User not authenticated, redirecting to login")
+        return redirect(url_for('login'))
+
     try:
+        print("[AUTH_DEBUG] Starting signal_performance processing...")
         # Получаем настройки пользователя
         filters_query = """
             SELECT * FROM web.user_signal_filters 
@@ -402,7 +433,7 @@ def signal_performance():
         # ========== НОВЫЙ ЗАПРОС НАПРЯМУЮ ИЗ FAS.SCORING_HISTORY ==========
         # Получаем сигналы с фильтрацией по скорингу
         signals_query = """
-            SELECT 
+            SELECT
                 sh.id as signal_id,
                 sh.pair_symbol,
                 sh.trading_pair_id,
@@ -419,7 +450,7 @@ def signal_performance():
             FROM fas.scoring_history sh
             JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
             JOIN public.exchanges ex ON ex.id = tp.exchange_id
-            WHERE sh.score_week > %s 
+            WHERE sh.score_week > %s
                 AND sh.score_month > %s
                 AND sh.timestamp >= NOW() - INTERVAL '48 hours'
                 AND tp.contract_type_id = 1
@@ -610,10 +641,9 @@ def signal_performance():
                     age_hours = (datetime.now(timezone.utc) - signal['signal_timestamp']).total_seconds() / 3600
 
                     signal_data = {
-                        'signal_id': signal['signal_id'],
                         'pair_symbol': signal['pair_symbol'],
                         'signal_action': signal['signal_action'],
-                        'signal_timestamp': signal['signal_timestamp'],
+                        'timestamp': signal['signal_timestamp'],  
                         'age_hours': round(age_hours, 1),
                         'entry_price': entry_price,
                         'current_price': current_price,
@@ -623,7 +653,11 @@ def signal_performance():
                         'pnl_percent': price_change_percent,
                         'max_potential_profit_usd': max_profit,
                         'score_week': float(signal.get('score_week', 0)),
-                        'score_month': float(signal.get('score_month', 0))
+                        'score_month': float(signal.get('score_month', 0)),
+                        'status': 'open' if not signal['is_closed'] else 
+                                 ('tp' if signal['close_reason'] == 'take_profit' else 
+                                  ('sl' if signal['close_reason'] == 'stop_loss' else 
+                                   ('trailing' if signal['close_reason'] == 'trailing_stop' else 'closed')))
                     }
 
                     signals_data.append(signal_data)
@@ -670,28 +704,38 @@ def signal_performance():
             eff_stats = db.execute_query(efficiency_query, (hide_older, hide_younger), fetch=True)
 
             if eff_stats:
-                stats = eff_stats[0]
-                efficiency_metrics['total_signals'] = stats['total_signals']
-                efficiency_metrics['open_positions'] = stats['open_positions']
-                efficiency_metrics['closed_tp'] = stats['closed_tp'] or 0
-                efficiency_metrics['closed_sl'] = stats['closed_sl'] or 0
-                efficiency_metrics['closed_trailing'] = stats['closed_trailing'] or 0
-                efficiency_metrics['closed_timeout'] = stats['closed_timeout'] or 0
-                efficiency_metrics['trailing_wins'] = stats['trailing_wins'] or 0
-                efficiency_metrics['trailing_losses'] = stats['trailing_losses'] or 0
-                efficiency_metrics['net_realized_pnl'] = float(stats['total_realized'] or 0)
-                efficiency_metrics['unrealized_pnl'] = float(stats['total_unrealized'] or 0)
+                raw_stats = eff_stats[0]
+                
+                # Создаем объект stats с правильными именами полей для шаблона
+                stats = {
+                    'total': raw_stats['total_signals'],
+                    'open': raw_stats['open_positions'],
+                    'closed_tp': raw_stats['closed_tp'] or 0,
+                    'closed_sl': raw_stats['closed_sl'] or 0,
+                    'win_rate': 0  # Будет рассчитано ниже
+                }
+                
+                efficiency_metrics['total_signals'] = raw_stats['total_signals']
+                efficiency_metrics['open_positions'] = raw_stats['open_positions']
+                efficiency_metrics['closed_tp'] = raw_stats['closed_tp'] or 0
+                efficiency_metrics['closed_sl'] = raw_stats['closed_sl'] or 0
+                efficiency_metrics['closed_trailing'] = raw_stats['closed_trailing'] or 0
+                efficiency_metrics['closed_timeout'] = raw_stats['closed_timeout'] or 0
+                efficiency_metrics['trailing_wins'] = raw_stats['trailing_wins'] or 0
+                efficiency_metrics['trailing_losses'] = raw_stats['trailing_losses'] or 0
+                efficiency_metrics['net_realized_pnl'] = float(raw_stats['total_realized'] or 0)
+                efficiency_metrics['unrealized_pnl'] = float(raw_stats['total_unrealized'] or 0)
                 efficiency_metrics['total_pnl'] = efficiency_metrics['net_realized_pnl'] + efficiency_metrics['unrealized_pnl']
-                efficiency_metrics['total_max_potential'] = float(stats['total_max_potential'] or 0)
-                efficiency_metrics['tp_realized_profit'] = float(stats['tp_realized_profit'] or 0)
-                efficiency_metrics['sl_realized_loss'] = float(stats['sl_realized_loss'] or 0)
-                efficiency_metrics['tp_max_potential'] = float(stats['tp_max_potential'] or 0)
+                efficiency_metrics['total_max_potential'] = float(raw_stats['total_max_potential'] or 0)
+                efficiency_metrics['tp_realized_profit'] = float(raw_stats['tp_realized_profit'] or 0)
+                efficiency_metrics['sl_realized_loss'] = float(raw_stats['sl_realized_loss'] or 0)
+                efficiency_metrics['tp_max_potential'] = float(raw_stats['tp_max_potential'] or 0)
                 efficiency_metrics['missed_profit'] = efficiency_metrics['tp_max_potential'] - efficiency_metrics['tp_realized_profit'] if efficiency_metrics['tp_max_potential'] > 0 else 0
                 
                 # Средние проценты
-                efficiency_metrics['avg_tp_percent'] = float(stats['avg_tp_percent'] or 0)
-                efficiency_metrics['avg_sl_percent'] = float(stats['avg_sl_percent'] or 0)
-                efficiency_metrics['avg_trailing_percent'] = float(stats['avg_trailing_percent'] or 0)
+                efficiency_metrics['avg_tp_percent'] = float(raw_stats['avg_tp_percent'] or 0)
+                efficiency_metrics['avg_sl_percent'] = float(raw_stats['avg_sl_percent'] or 0)
+                efficiency_metrics['avg_trailing_percent'] = float(raw_stats['avg_trailing_percent'] or 0)
 
                 # Win rate - правильный расчет с учетом всех прибыльных позиций
                 total_closed = (efficiency_metrics['closed_tp'] + 
@@ -706,12 +750,14 @@ def signal_performance():
                     
                     # Win rate
                     efficiency_metrics['win_rate'] = (wins / total_closed) * 100
+                    stats['win_rate'] = efficiency_metrics['win_rate']  # Обновляем stats
                     
                     # Для отображения в шаблоне
                     efficiency_metrics['total_wins'] = wins
                     efficiency_metrics['total_losses'] = losses
                 else:
                     efficiency_metrics['win_rate'] = 0
+                    stats['win_rate'] = 0
                     efficiency_metrics['total_wins'] = 0
                     efficiency_metrics['total_losses'] = 0
 
@@ -850,9 +896,27 @@ def signal_performance():
         return redirect(url_for('dashboard'))
 
 
-@app.route('/scoring_analysis')
-@login_required
-def scoring_analysis():
+@app.route('/auth_status')
+def auth_status():
+    """Маршрут для проверки статуса аутентификации"""
+    return jsonify({
+        'authenticated': current_user.is_authenticated,
+        'user_id': current_user.id if current_user.is_authenticated else None,
+        'user_email': current_user.username if current_user.is_authenticated else None,
+        'session': dict(session),
+        'secret_key_set': bool(os.getenv('SECRET_KEY'))
+    })
+
+@app.route('/debug_session')
+def debug_session():
+    """Маршрут для отладки сессии"""
+    return jsonify({
+        'session_keys': list(session.keys()),
+        'session_data': dict(session),
+        'cookies': dict(request.cookies),
+        'user_agent': request.headers.get('User-Agent'),
+        'remote_addr': request.remote_addr
+    })
     """Страница анализа скоринга - УПРОЩЕННАЯ ВЕРСИЯ"""
     try:
         # Получаем диапазон дат
@@ -1498,9 +1562,6 @@ def efficiency_analysis():
 @login_required  
 def tpsl_analysis():
     """Страница анализа эффективности TP/SL"""
-    return render_template('tpsl_analysis.html',
-                          username=current_user.username,
-                          is_admin=current_user.is_admin)
 
 
 @app.route('/trailing_analysis')
@@ -3538,6 +3599,68 @@ def internal_error(error):
     """Обработка ошибки 500"""
     logger.error(f"Внутренняя ошибка сервера: {error}")
     return render_template('500.html'), 500
+
+@app.route('/api/reinitialize_signals', methods=['POST'])
+@login_required
+def api_reinitialize_signals():
+    """API для переинициализации сигналов с новыми параметрами"""
+    try:
+        data = request.get_json()
+        take_profit = float(data.get('take_profit', 4.0))
+        stop_loss = float(data.get('stop_loss', 3.0))
+        hours = int(data.get('hours', 48))
+
+        # Получаем настройки пользователя
+        filters_query = """
+            SELECT * FROM web.user_signal_filters
+            WHERE user_id = %s
+        """
+        user_filters = db.execute_query(filters_query, (current_user.id,), fetch=True)
+
+        if user_filters:
+            filters = user_filters[0]
+        else:
+            filters = {
+                'hide_younger_than_hours': 6,
+                'hide_older_than_hours': 48,
+                'stop_loss_percent': 3.00,
+                'take_profit_percent': 4.00,
+                'position_size_usd': 100.00,
+                'leverage': 5,
+                'use_trailing_stop': False,
+                'trailing_distance_pct': 2.0,
+                'trailing_activation_pct': 1.0
+            }
+
+        # Обновляем настройки пользователя
+        update_query = """
+            INSERT INTO web.user_signal_filters
+            (user_id, take_profit_percent, stop_loss_percent, updated_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (user_id)
+            DO UPDATE SET
+                take_profit_percent = EXCLUDED.take_profit_percent,
+                stop_loss_percent = EXCLUDED.stop_loss_percent,
+                updated_at = NOW()
+        """
+        db.execute_query(update_query, (current_user.id, take_profit, stop_loss))
+
+        # Логируем действие
+        print(f"[REINITIALIZE] Пользователь {current_user.id} обновил настройки: TP={take_profit}%, SL={stop_loss}%")
+
+        return jsonify({
+            'status': 'success',
+            'message': f'Настройки обновлены: TP={take_profit}%, SL={stop_loss}%',
+            'take_profit': take_profit,
+            'stop_loss': stop_loss
+        })
+
+    except Exception as e:
+        logger.error(f"Ошибка переинициализации сигналов: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 # Запуск приложения
 if __name__ == '__main__':
