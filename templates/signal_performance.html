@@ -423,31 +423,31 @@
                 <tbody class="bg-white divide-y divide-gray-200">
                     {% for signal in signals %}
                     <tr class="hover:bg-gray-50">
-                        <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ signal.pair_symbol }}</td>
+                        <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ signal['pair_symbol'] }}</td>
                         <td class="px-4 py-3 text-sm">
                             <span class="px-2 py-1 text-xs rounded-full
-                                {% if signal.signal_action in ['SELL', 'SHORT'] %}bg-red-100 text-red-800
+                                {% if signal['signal_action'] in ['SELL', 'SHORT'] %}bg-red-100 text-red-800
                                 {% else %}bg-green-100 text-green-800{% endif %}">
-                                {{ signal.signal_action }}
+                                {{ signal['signal_action'] }}
                             </span>
                         </td>
-                        <td class="px-4 py-3 text-sm text-gray-900">${{ "%.4f"|format(signal.entry_price) }}</td>
-                        <td class="px-4 py-3 text-sm text-gray-900">${{ "%.4f"|format(signal.current_price) }}</td>
+                        <td class="px-4 py-3 text-sm text-gray-900">${{ "%.4f"|format(signal['entry_price']) }}</td>
+                        <td class="px-4 py-3 text-sm text-gray-900">${{ "%.4f"|format(signal['current_price']) }}</td>
                         <td class="px-4 py-3 text-sm">
-                            <span class="{% if signal.pnl >= 0 %}text-green-600{% else %}text-red-600{% endif %} font-medium">
-                                {% if signal.pnl >= 0 %}+{% endif %}${{ "%.2f"|format(signal.pnl) }}
+                            <span class="{% if signal['pnl'] >= 0 %}text-green-600{% else %}text-red-600{% endif %} font-medium">
+                                {% if signal['pnl'] >= 0 %}+{% endif %}${{ "%.2f"|format(signal['pnl']) }}
                             </span>
                         </td>
                         <td class="px-4 py-3 text-sm">
                             <span class="px-2 py-1 text-xs rounded-full
-                                {% if signal.status == 'open' %}bg-blue-100 text-blue-800
-                                {% elif signal.status == 'tp' %}bg-green-100 text-green-800
-                                {% elif signal.status == 'sl' %}bg-red-100 text-red-800
+                                {% if signal['status'] == 'open' %}bg-blue-100 text-blue-800
+                                {% elif signal['status'] == 'tp' %}bg-green-100 text-green-800
+                                {% elif signal['status'] == 'sl' %}bg-red-100 text-red-800
                                 {% else %}bg-gray-100 text-gray-800{% endif %}">
-                                {{ signal.status|upper }}
+                                {{ signal['status']|upper }}
                             </span>
                         </td>
-                        <td class="px-4 py-3 text-sm text-gray-500">{{ signal.timestamp.strftime('%H:%M:%S') if signal.timestamp else 'N/A' }}</td>
+                        <td class="px-4 py-3 text-sm text-gray-500">{{ signal['timestamp'].strftime('%H:%M:%S') if signal['timestamp'] else 'N/A' }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
