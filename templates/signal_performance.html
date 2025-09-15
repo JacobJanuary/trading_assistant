@@ -774,20 +774,6 @@
     }
 </script>
 {% endblock %}
-                                <span class="text-blue-600">Fixed TP лучше</span>
-                            {% elif trailing_avg > 0 %}
-                                <span class="text-blue-600">Trailing</span>
-                            {% elif tp_avg > 0 %}
-                                <span class="text-blue-600">Fixed TP</span>
-                            {% else %}
-                                <span class="text-gray-500">N/A</span>
-                            {% endif %}
-                        </p>
-                    </div>
-                    <div class="text-blue-600">
-                        <i class="fas fa-balance-scale text-2xl"></i>
-                    </div>
-                </div>
                 <div class="text-xs text-gray-600 space-y-1">
                     <div>Ср. Trailing: <span class="font-semibold">${{ "%.2f"|format(trailing_avg) }}</span></div>
                     <div>Ср. Fixed TP: <span class="font-semibold">${{ "%.2f"|format(tp_avg) }}</span></div>
