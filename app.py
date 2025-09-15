@@ -394,6 +394,10 @@ def signal_performance():
         display_leverage = request.args.get('leverage', type=int, default=filters['leverage'])
         display_position_size = request.args.get('position_size', type=float,
                                                  default=float(filters['position_size_usd']))
+        
+        # Получаем параметры Score Week и Score Month из URL
+        score_week_min = request.args.get('score_week', type=int, default=80)
+        score_month_min = request.args.get('score_month', type=int, default=50)
 
         # ========== НОВЫЙ ЗАПРОС НАПРЯМУЮ ИЗ FAS.SCORING_HISTORY ==========
         # Получаем сигналы с фильтрацией по скорингу
@@ -415,15 +419,15 @@ def signal_performance():
             FROM fas.scoring_history sh
             JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
             JOIN public.exchanges ex ON ex.id = tp.exchange_id
-            WHERE sh.score_week > 81 
-                AND sh.score_month > 53
+            WHERE sh.score_week > %s 
+                AND sh.score_month > %s
                 AND sh.timestamp >= NOW() - INTERVAL '48 hours'
                 AND tp.contract_type_id = 1
                 AND tp.exchange_id IN (1, 2)
             ORDER BY sh.timestamp DESC
         """
 
-        raw_signals = db.execute_query(signals_query, fetch=True)
+        raw_signals = db.execute_query(signals_query, (score_week_min, score_month_min), fetch=True)
 
         print(f"[SIGNAL_PERFORMANCE] Найдено {len(raw_signals) if raw_signals else 0} сигналов из scoring_history")
 
@@ -831,7 +835,9 @@ def signal_performance():
                 'saved_position_size': float(filters['position_size_usd']),
                 'use_trailing_stop': filters.get('use_trailing_stop', False),
                 'trailing_distance_pct': float(filters.get('trailing_distance_pct', 2.0)),
-                'trailing_activation_pct': float(filters.get('trailing_activation_pct', 1.0))
+                'trailing_activation_pct': float(filters.get('trailing_activation_pct', 1.0)),
+                'score_week_min': score_week_min,
+                'score_month_min': score_month_min
             },
             last_update=datetime.now()
         )
