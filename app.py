@@ -25,7 +25,22 @@ logger = logging.getLogger(__name__)
 
 # Создание Flask приложения
 app = Flask(__name__)
-app.secret_key = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
+
+# Настройка SECRET_KEY с проверкой
+secret_key = os.getenv('SECRET_KEY')
+if not secret_key:
+    print("WARNING: SECRET_KEY не задан, используется значение по умолчанию!")
+    secret_key = 'dev-secret-key-change-in-production'
+app.secret_key = secret_key
+
+# Настройки сессий для сервера
+app.config.update(
+    SESSION_COOKIE_SECURE=False,  # Для разработки - False, для продакшена - True
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    PERMANENT_SESSION_LIFETIME=3600,  # 1 час
+    SESSION_TYPE='filesystem' if os.getenv('SESSION_TYPE') == 'filesystem' else None
+)
 
 # Настройка Flask-Login
 login_manager = LoginManager()
@@ -33,6 +48,14 @@ login_manager.init_app(app)
 login_manager.login_view = 'login'
 login_manager.login_message = 'Пожалуйста, войдите в систему для доступа к этой странице.'
 login_manager.login_message_category = 'info'
+login_manager.session_protection = 'strong'  # Защита от фиксации сессии
+
+# Настройка логирования для отладки аутентификации
+if os.getenv('DEBUG_AUTH', 'false').lower() == 'true':
+    import logging
+    logging.basicConfig(level=logging.DEBUG)
+    login_manager.logger = logging.getLogger('flask_login')
+    login_manager.logger.setLevel(logging.DEBUG)
 
 # Инициализация базы данных
 # Поддерживаем оба способа: через DATABASE_URL или через отдельные параметры
@@ -362,10 +385,18 @@ def api_dashboard_data():
 
 
 @app.route('/signal_performance')
-@login_required
+#@login_required
 def signal_performance():
     """Страница отслеживания эффективности торговых сигналов"""
+    print(f"[AUTH_DEBUG] signal_performance called by user: {current_user.id if current_user.is_authenticated else 'Not authenticated'}")
+    print(f"[AUTH_DEBUG] current_user.is_authenticated: {current_user.is_authenticated}")
+
+    if not current_user.is_authenticated:
+        print("[AUTH_DEBUG] User not authenticated, redirecting to login")
+        return redirect(url_for('login'))
+
     try:
+        print("[AUTH_DEBUG] Starting signal_performance processing...")
         # Получаем настройки пользователя
         filters_query = """
             SELECT * FROM web.user_signal_filters 
@@ -400,26 +431,7 @@ def signal_performance():
         score_month_min = request.args.get('score_month', type=int, default=53)
 
         # ========== НОВЫЙ ЗАПРОС НАПРЯМУЮ ИЗ FAS.SCORING_HISTORY ==========
-        # Получаем сигналы с фильтрацией по скорингу
-        signals_query = """
-            SELECT 
-                sh.id as signal_id,
-                sh.pair_symbol,
-                sh.trading_pair_id,
-                sh.recommended_action as signal_action,
-                sh.timestamp as signal_timestamp,
-                sh.total_score,
-                sh.indicator_score,
-                sh.pattern_score,
-                sh.combination_score,
-                sh.score_week,
-                sh.score_month,
-                tp.exchange_id,
-                ex.exchange_name
-            FROM fas.scoring_history sh
-            JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
-            JOIN public.exchanges ex ON ex.id = tp.exchange_id
-            WHERE sh.score_week > %s 
+f%s
                 AND sh.score_month > %s
                 AND sh.timestamp >= NOW() - INTERVAL '48 hours'
                 AND tp.contract_type_id = 1
@@ -850,9 +862,27 @@ def signal_performance():
         return redirect(url_for('dashboard'))
 
 
-@app.route('/scoring_analysis')
-@login_required
-def scoring_analysis():
+@app.route('/auth_status')
+def auth_status():
+    """Маршрут для проверки статуса аутентификации"""
+    return jsonify({
+        'authenticated': current_user.is_authenticated,
+        'user_id': current_user.id if current_user.is_authenticated else None,
+        'user_email': current_user.username if current_user.is_authenticated else None,
+        'session': dict(session),
+        'secret_key_set': bool(os.getenv('SECRET_KEY'))
+    })
+
+@app.route('/debug_session')
+def debug_session():
+    """Маршрут для отладки сессии"""
+    return jsonify({
+        'session_keys': list(session.keys()),
+        'session_data': dict(session),
+        'cookies': dict(request.cookies),
+        'user_agent': request.headers.get('User-Agent'),
+        'remote_addr': request.remote_addr
+    })
     """Страница анализа скоринга - УПРОЩЕННАЯ ВЕРСИЯ"""
     try:
         # Получаем диапазон дат
