@@ -556,13 +556,13 @@ def signal_performance():
                     result = process_signal_complete(
                         db,
                         signal_data,
-                        tp_percent=float(filters['take_profit_percent']),
-                        sl_percent=float(filters['stop_loss_percent']),
+                        tp_percent=float(filters.get('take_profit_percent') or 4.0),
+                        sl_percent=float(filters.get('stop_loss_percent') or 3.0),
                         position_size=display_position_size,
                         leverage=display_leverage,
                         use_trailing_stop=filters.get('use_trailing_stop', False),
-                        trailing_distance_pct=float(filters.get('trailing_distance_pct', 2.0)),
-                        trailing_activation_pct=float(filters.get('trailing_activation_pct', 1.0))
+                        trailing_distance_pct=float(filters.get('trailing_distance_pct') or 2.0),
+                        trailing_activation_pct=float(filters.get('trailing_activation_pct') or 1.0)
                     )
 
                     if result['success']:
@@ -612,14 +612,14 @@ def signal_performance():
             # Обрабатываем сигналы для отображения
             if display_signals:
                 for signal in display_signals:
-                    entry_price = float(signal['entry_price'])
+                    entry_price = float(signal['entry_price']) if signal['entry_price'] else 0
 
                     # Определяем текущую цену
                     if signal['is_closed']:
                         current_price = float(signal['closing_price']) if signal['closing_price'] else None
                     else:
-                        current_price = current_prices.get(signal['pair_symbol'],
-                                                           float(signal['last_known_price'] or 0))
+                        last_known = float(signal['last_known_price']) if signal['last_known_price'] else 0
+                        current_price = current_prices.get(signal['pair_symbol'], last_known)
 
                     # Рассчитываем процент изменения
                     if current_price and entry_price:
@@ -634,7 +634,7 @@ def signal_performance():
                     display_pnl = display_position_size * (price_change_percent / 100) * display_leverage
 
                     # Максимальный профит
-                    max_profit = float(signal['max_potential_profit_usd'] or 0)
+                    max_profit = float(signal['max_potential_profit_usd']) if signal['max_potential_profit_usd'] else 0
 
                     # Возраст сигнала
                     from datetime import datetime, timezone
@@ -873,15 +873,15 @@ def signal_performance():
             filters={
                 'hide_younger_than_hours': hide_younger,
                 'hide_older_than_hours': hide_older,
-                'stop_loss_percent': float(filters['stop_loss_percent']),
-                'take_profit_percent': float(filters['take_profit_percent']),
+                'stop_loss_percent': float(filters.get('stop_loss_percent') or 3.0),
+                'take_profit_percent': float(filters.get('take_profit_percent') or 4.0),
                 'position_size_usd': display_position_size,
                 'leverage': display_leverage,
-                'saved_leverage': filters['leverage'],
-                'saved_position_size': float(filters['position_size_usd']),
+                'saved_leverage': filters.get('leverage') or 5,
+                'saved_position_size': float(filters.get('position_size_usd') or 100.0),
                 'use_trailing_stop': filters.get('use_trailing_stop', False),
-                'trailing_distance_pct': float(filters.get('trailing_distance_pct', 2.0)),
-                'trailing_activation_pct': float(filters.get('trailing_activation_pct', 1.0)),
+                'trailing_distance_pct': float(filters.get('trailing_distance_pct') or 2.0),
+                'trailing_activation_pct': float(filters.get('trailing_activation_pct') or 1.0),
                 'score_week_min': score_week_min,
                 'score_month_min': score_month_min
             },
@@ -1113,8 +1113,8 @@ def api_scoring_apply_filters():
                     'combination_score': float(signal['combination_score'] or 0),
                     'score_week': float(signal.get('score_week', 0)) if signal.get('score_week') else None,
                     'score_month': float(signal.get('score_month', 0)) if signal.get('score_month') else None,
-                    'entry_price': float(signal['entry_price']),
-                    'current_price': float(signal['close_price']),
+                    'entry_price': float(signal['entry_price']) if signal['entry_price'] else 0,
+                    'current_price': float(signal['close_price']) if signal['close_price'] else 0,
                     'is_closed': signal['is_closed'],
                     'close_reason': signal['close_reason'],
                     'hours_to_close': float(signal['hours_to_close'] or 0),
