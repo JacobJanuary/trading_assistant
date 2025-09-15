@@ -13,77 +13,87 @@
             Фильтры и настройки
         </h2>
 
-        <!-- Разделяем фильтры по типам -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- Разделяем фильтры по типам - улучшенная компактная сетка -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-6">
 
-            <!-- ВИЗУАЛЬНЫЕ ФИЛЬТРЫ (применяются мгновенно) -->
-            <div class="border-l-4 border-blue-500 pl-4">
-                <h3 class="font-semibold text-gray-700 mb-3">Фильтры отображения</h3>
+            <!-- 1. ФИЛЬТРЫ ОТОБРАЖЕНИЯ -->
+            <div class="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-lg border border-blue-200">
+                <div class="flex items-center mb-4">
+                    <div class="bg-blue-500 p-2 rounded-lg mr-3">
+                        <i class="fas fa-eye text-white text-sm"></i>
+                    </div>
+                    <h3 class="font-bold text-gray-800 text-sm">Фильтры отображения</h3>
+                </div>
 
                 <div class="space-y-3">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
-                            Скрыть младше (часов)
+                        <label class="block text-xs font-medium text-gray-600 mb-1">
+                            Младше (часов)
                         </label>
                         <input type="number" id="hideYounger"
                                value="{{ filters.hide_younger_than_hours }}"
                                min="0" max="48" step="1"
-                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
-                            Скрыть старше (часов)
+                        <label class="block text-xs font-medium text-gray-600 mb-1">
+                            Старше (часов)
                         </label>
                         <input type="number" id="hideOlder"
                                value="{{ filters.hide_older_than_hours }}"
                                min="1" max="168" step="1"
-                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                     </div>
 
                     <button onclick="applyTimeFilters()"
-                            class="w-full bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-md text-sm">
+                            class="w-full bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
                         <i class="fas fa-clock mr-1"></i>
                         Применить
                     </button>
                 </div>
             </div>
 
-            <!-- ПАРАМЕТРЫ РАСЧЕТА (требуют переинициализации) -->
-            <div class="border-l-4 border-red-500 pl-4">
-                <h3 class="font-semibold text-gray-700 mb-3">Параметры торговли</h3>
+            <!-- 2. ПАРАМЕТРЫ ТОРГОВЛИ -->
+            <div class="bg-gradient-to-br from-red-50 to-pink-50 p-4 rounded-lg border border-red-200">
+                <div class="flex items-center mb-4">
+                    <div class="bg-red-500 p-2 rounded-lg mr-3">
+                        <i class="fas fa-chart-line text-white text-sm"></i>
+                    </div>
+                    <h3 class="font-bold text-gray-800 text-sm">Параметры торговли</h3>
+                </div>
 
                 <div class="space-y-3">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">
                             Stop Loss (%)
                         </label>
                         <input type="number" id="stopLoss"
                                value="{{ filters.stop_loss_percent }}"
                                min="0.5" max="10" step="0.5"
                                onchange="showReinitWarning()"
-                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-red-500 focus:border-transparent">
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">
                             Take Profit (%)
                         </label>
                         <input type="number" id="takeProfit"
                                value="{{ filters.take_profit_percent }}"
                                min="1" max="20" step="0.5"
                                onchange="showReinitWarning()"
-                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-red-500 focus:border-transparent">
                     </div>
 
-                    <div id="reinitWarning" class="hidden bg-red-50 p-2 rounded text-sm text-red-700">
+                    <div id="reinitWarning" class="hidden bg-red-100 p-2 rounded text-xs text-red-700 border border-red-200">
                         <i class="fas fa-exclamation-triangle mr-1"></i>
                         Требуется переинициализация!
                     </div>
 
                     {% if current_user.is_admin %}
                     <button onclick="reinitializeWithParams()"
-                            class="w-full bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-md text-sm">
+                            class="w-full bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
                         <i class="fas fa-sync-alt mr-1"></i>
                         Переинициализировать
                     </button>
@@ -91,64 +101,227 @@
                 </div>
             </div>
 
-            <!-- СКОРИНГОВЫЕ ФИЛЬТРЫ -->
-            <div class="border-l-4 border-yellow-500 pl-4">
-                <h3 class="font-semibold text-gray-700 mb-3">Фильтры скоринга</h3>
+            <!-- 3. СКОРИНГОВЫЕ ФИЛЬТРЫ -->
+            <div class="bg-gradient-to-br from-yellow-50 to-orange-50 p-4 rounded-lg border border-yellow-200">
+                <div class="flex items-center mb-4">
+                    <div class="bg-yellow-500 p-2 rounded-lg mr-3">
+                        <i class="fas fa-star text-white text-sm"></i>
+                    </div>
+                    <h3 class="font-bold text-gray-800 text-sm">Фильтры скоринга</h3>
+                </div>
 
                 <div class="space-y-3">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">
                             Score Week (min)
                         </label>
                         <input type="number" id="scoreWeek"
                                value="{{ filters.score_week_min }}"
                                min="0" max="100" step="1"
-                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-yellow-500 focus:border-transparent">
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">
                             Score Month (min)
                         </label>
                         <input type="number" id="scoreMonth"
                                value="{{ filters.score_month_min }}"
                                min="0" max="100" step="1"
-                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-yellow-500 focus:border-transparent">
                     </div>
 
                     <button onclick="applyScoringFilters()"
-                            class="w-full bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded-md text-sm">
+                            class="w-full bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
                         <i class="fas fa-filter mr-1"></i>
                         Применить скоринг
                     </button>
                 </div>
             </div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
+
+            <!-- 4. РЕЖИМ УПРАВЛЕНИЯ ПОЗИЦИЕЙ -->
+            <div class="bg-gradient-to-br from-purple-50 to-indigo-50 p-4 rounded-lg border border-purple-200">
+                <div class="flex items-center mb-4">
+                    <div class="bg-purple-500 p-2 rounded-lg mr-3">
+                        <i class="fas fa-cogs text-white text-sm"></i>
+                    </div>
+                    <h3 class="font-bold text-gray-800 text-sm">Режим управления</h3>
+                </div>
+
+                <div class="space-y-3">
+                    <!-- Переключатель режимов -->
+                    <div class="flex items-center justify-center space-x-3 mb-3">
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="stopMode" value="fixed"
+                                   id="fixedMode" checked
+                                   onchange="toggleStopMode()"
+                                   class="mr-1 text-purple-600 focus:ring-purple-500">
+                            <span class="text-xs font-medium text-gray-700">Fixed</span>
+                        </label>
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="stopMode" value="trailing"
+                                   id="trailingMode"
+                                   onchange="toggleStopMode()"
+                                   class="mr-1 text-purple-600 focus:ring-purple-500">
+                            <span class="text-xs font-medium text-gray-700">Trailing</span>
+                        </label>
+                    </div>
+
+                    <!-- Параметры Trailing Stop -->
+                    <div id="trailingParams" class="space-y-2">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">
+                                Distance (%)
+                            </label>
+                            <input type="number" id="trailingDistance"
+                                   value="2.0"
+                                   min="0.5" max="10" step="0.5"
+                                   class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">
+                                Activation (%)
+                            </label>
+                            <input type="number" id="trailingActivation"
+                                   value="1.0"
+                                   min="0.5" max="5" step="0.5"
+                                   class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+                        </div>
+
+                        <div class="bg-purple-100 p-2 rounded text-xs text-gray-700 border border-purple-200">
+                            <i class="fas fa-info-circle mr-1 text-purple-600"></i>
+                            <strong>Trailing:</strong> Активация при <span id="activationInfo">1%</span>, расстояние <span id="distanceInfo">2%</span>
+                        </div>
+                    </div>
+
+                    <button onclick="applyTradingMode()"
+                            class="w-full bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                        <i class="fas fa-chart-line mr-1"></i>
+                        <span id="applyButtonText">Применить Fixed TP/SL</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ВТОРАЯ СТРОКА - ДОПОЛНИТЕЛЬНЫЕ ПАРАМЕТРЫ -->
+        <div class="mt-6 grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+
+            <!-- Параметры расчета -->
+            <div class="bg-gradient-to-br from-green-50 to-emerald-50 p-4 rounded-lg border border-green-200">
+                <div class="flex items-center mb-4">
+                    <div class="bg-green-500 p-2 rounded-lg mr-3">
+                        <i class="fas fa-calculator text-white text-sm"></i>
+                    </div>
+                    <h3 class="font-bold text-gray-800 text-sm">Параметры расчета</h3>
+                </div>
+
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">
                             Leverage (x)
                         </label>
                         <input type="number" id="leverage"
                                value="{{ filters.leverage }}"
                                min="1" max="20" step="1"
-                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-transparent">
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">
                             Размер позиции ($)
                         </label>
                         <input type="number" id="positionSize"
                                value="{{ filters.position_size_usd }}"
                                min="10" max="1000" step="10"
-                               class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-transparent">
                     </div>
 
                     <!-- Две кнопки с разным функционалом -->
                     <div class="flex space-x-2">
                         <button onclick="applyCalculationParams()"
-                                class="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-md text-sm">
-                            <i class="fas fa-calculator mr-1"></i>
+                                class="flex-1 bg-green-600 hover:bg-green-700 text-white px-2 py-2 rounded-md text-sm font-medium transition-colors">
+                            <i class="fas fa-play mr-1"></i>
                             Применить
                         </button>
+
+                        <button onclick="saveCalculationParams()"
+                                class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-2 rounded-md text-sm font-medium transition-colors">
+                            <i class="fas fa-save mr-1"></i>
+                            Сохранить
+                        </button>
+                    </div>
+
+                    <!-- Индикатор несохраненных изменений -->
+                    <div id="unsavedIndicator" class="hidden text-xs text-orange-600 bg-orange-50 p-2 rounded border border-orange-200">
+                        <i class="fas fa-exclamation-circle mr-1"></i>
+                        Изменения не сохранены
+                    </div>
+                </div>
+            </div>
+
+            <!-- Информационный блок -->
+            <div class="bg-gradient-to-br from-gray-50 to-slate-50 p-4 rounded-lg border border-gray-200">
+                <div class="flex items-center mb-4">
+                    <div class="bg-gray-500 p-2 rounded-lg mr-3">
+                        <i class="fas fa-info-circle text-white text-sm"></i>
+                    </div>
+                    <h3 class="font-bold text-gray-800 text-sm">Информация</h3>
+                </div>
+
+                <div class="space-y-3 text-xs text-gray-600">
+                    <div class="bg-blue-50 p-3 rounded border-l-4 border-blue-400">
+                        <i class="fas fa-clock text-blue-600 mr-1"></i>
+                        <strong>Фильтры времени:</strong> Применяются мгновенно
+                    </div>
+
+                    <div class="bg-yellow-50 p-3 rounded border-l-4 border-yellow-400">
+                        <i class="fas fa-star text-yellow-600 mr-1"></i>
+                        <strong>Скоринговые фильтры:</strong> Фильтруют сигналы по баллам
+                    </div>
+
+                    <div class="bg-red-50 p-3 rounded border-l-4 border-red-400">
+                        <i class="fas fa-exclamation-triangle text-red-600 mr-1"></i>
+                        <strong>Параметры торговли:</strong> Требуют перерасчета сигналов
+                    </div>
+
+                    <div class="bg-purple-50 p-3 rounded border-l-4 border-purple-400">
+                        <i class="fas fa-cogs text-purple-600 mr-1"></i>
+                        <strong>Режим управления:</strong> Выберите Fixed или Trailing
+                    </div>
+                </div>
+            </div>
+
+            <!-- Кнопки быстрого доступа -->
+            <div class="bg-gradient-to-br from-indigo-50 to-blue-50 p-4 rounded-lg border border-indigo-200">
+                <div class="flex items-center mb-4">
+                    <div class="bg-indigo-500 p-2 rounded-lg mr-3">
+                        <i class="fas fa-bolt text-white text-sm"></i>
+                    </div>
+                    <h3 class="font-bold text-gray-800 text-sm">Быстрые действия</h3>
+                </div>
+
+                <div class="space-y-2">
+                    <button onclick="resetToDefaults()"
+                            class="w-full bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                        <i class="fas fa-undo mr-1"></i>
+                        Сбросить к умолчанию
+                    </button>
+
+                    <button onclick="exportSettings()"
+                            class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                        <i class="fas fa-download mr-1"></i>
+                        Экспорт настроек
+                    </button>
+
+                    <button onclick="showHelp()"
+                            class="w-full bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                        <i class="fas fa-question-circle mr-1"></i>
+                        Помощь
+                    </button>
+                </div>
+            </div>
+        </div>                        </button>
 
                         <button onclick="saveCalculationParams()"
                                 class="flex-1 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-md text-sm">
@@ -1149,14 +1322,9 @@ function formatValue(value, format) {
         case 'percent':
             return `${value.toFixed(1)}%`;
         case 'currency':
-            return `$${value.toFixed(2)}`;
-        case 'number':
-        default:
-            return value.toString();
     }
-}
 
-// Обновляем каждые 30 секунд
-setInterval(updateTrailingStats, 30000);
+    // Обновляем каждые 30 секунд
+    setInterval(updateTrailingStats, 30000);
 </script>
 {% endblock %}

@@ -396,8 +396,8 @@ def signal_performance():
                                                  default=float(filters['position_size_usd']))
         
         # Получаем параметры Score Week и Score Month из URL
-        score_week_min = request.args.get('score_week', type=int, default=80)
-        score_month_min = request.args.get('score_month', type=int, default=50)
+        score_week_min = request.args.get('score_week', type=int, default=81)
+        score_month_min = request.args.get('score_month', type=int, default=53)
 
         # ========== НОВЫЙ ЗАПРОС НАПРЯМУЮ ИЗ FAS.SCORING_HISTORY ==========
         # Получаем сигналы с фильтрацией по скорингу
