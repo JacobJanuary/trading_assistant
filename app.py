@@ -641,10 +641,9 @@ def signal_performance():
                     age_hours = (datetime.now(timezone.utc) - signal['signal_timestamp']).total_seconds() / 3600
 
                     signal_data = {
-                        'signal_id': signal['signal_id'],
                         'pair_symbol': signal['pair_symbol'],
                         'signal_action': signal['signal_action'],
-                        'signal_timestamp': signal['signal_timestamp'],
+                        'timestamp': signal['signal_timestamp'],  
                         'age_hours': round(age_hours, 1),
                         'entry_price': entry_price,
                         'current_price': current_price,
@@ -654,7 +653,11 @@ def signal_performance():
                         'pnl_percent': price_change_percent,
                         'max_potential_profit_usd': max_profit,
                         'score_week': float(signal.get('score_week', 0)),
-                        'score_month': float(signal.get('score_month', 0))
+                        'score_month': float(signal.get('score_month', 0)),
+                        'status': 'open' if not signal['is_closed'] else 
+                                 ('tp' if signal['close_reason'] == 'take_profit' else 
+                                  ('sl' if signal['close_reason'] == 'stop_loss' else 
+                                   ('trailing' if signal['close_reason'] == 'trailing_stop' else 'closed')))
                     }
 
                     signals_data.append(signal_data)
