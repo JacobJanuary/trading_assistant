@@ -704,28 +704,38 @@ def signal_performance():
             eff_stats = db.execute_query(efficiency_query, (hide_older, hide_younger), fetch=True)
 
             if eff_stats:
-                stats = eff_stats[0]
-                efficiency_metrics['total_signals'] = stats['total_signals']
-                efficiency_metrics['open_positions'] = stats['open_positions']
-                efficiency_metrics['closed_tp'] = stats['closed_tp'] or 0
-                efficiency_metrics['closed_sl'] = stats['closed_sl'] or 0
-                efficiency_metrics['closed_trailing'] = stats['closed_trailing'] or 0
-                efficiency_metrics['closed_timeout'] = stats['closed_timeout'] or 0
-                efficiency_metrics['trailing_wins'] = stats['trailing_wins'] or 0
-                efficiency_metrics['trailing_losses'] = stats['trailing_losses'] or 0
-                efficiency_metrics['net_realized_pnl'] = float(stats['total_realized'] or 0)
-                efficiency_metrics['unrealized_pnl'] = float(stats['total_unrealized'] or 0)
+                raw_stats = eff_stats[0]
+                
+                # Создаем объект stats с правильными именами полей для шаблона
+                stats = {
+                    'total': raw_stats['total_signals'],
+                    'open': raw_stats['open_positions'],
+                    'closed_tp': raw_stats['closed_tp'] or 0,
+                    'closed_sl': raw_stats['closed_sl'] or 0,
+                    'win_rate': 0  # Будет рассчитано ниже
+                }
+                
+                efficiency_metrics['total_signals'] = raw_stats['total_signals']
+                efficiency_metrics['open_positions'] = raw_stats['open_positions']
+                efficiency_metrics['closed_tp'] = raw_stats['closed_tp'] or 0
+                efficiency_metrics['closed_sl'] = raw_stats['closed_sl'] or 0
+                efficiency_metrics['closed_trailing'] = raw_stats['closed_trailing'] or 0
+                efficiency_metrics['closed_timeout'] = raw_stats['closed_timeout'] or 0
+                efficiency_metrics['trailing_wins'] = raw_stats['trailing_wins'] or 0
+                efficiency_metrics['trailing_losses'] = raw_stats['trailing_losses'] or 0
+                efficiency_metrics['net_realized_pnl'] = float(raw_stats['total_realized'] or 0)
+                efficiency_metrics['unrealized_pnl'] = float(raw_stats['total_unrealized'] or 0)
                 efficiency_metrics['total_pnl'] = efficiency_metrics['net_realized_pnl'] + efficiency_metrics['unrealized_pnl']
-                efficiency_metrics['total_max_potential'] = float(stats['total_max_potential'] or 0)
-                efficiency_metrics['tp_realized_profit'] = float(stats['tp_realized_profit'] or 0)
-                efficiency_metrics['sl_realized_loss'] = float(stats['sl_realized_loss'] or 0)
-                efficiency_metrics['tp_max_potential'] = float(stats['tp_max_potential'] or 0)
+                efficiency_metrics['total_max_potential'] = float(raw_stats['total_max_potential'] or 0)
+                efficiency_metrics['tp_realized_profit'] = float(raw_stats['tp_realized_profit'] or 0)
+                efficiency_metrics['sl_realized_loss'] = float(raw_stats['sl_realized_loss'] or 0)
+                efficiency_metrics['tp_max_potential'] = float(raw_stats['tp_max_potential'] or 0)
                 efficiency_metrics['missed_profit'] = efficiency_metrics['tp_max_potential'] - efficiency_metrics['tp_realized_profit'] if efficiency_metrics['tp_max_potential'] > 0 else 0
                 
                 # Средние проценты
-                efficiency_metrics['avg_tp_percent'] = float(stats['avg_tp_percent'] or 0)
-                efficiency_metrics['avg_sl_percent'] = float(stats['avg_sl_percent'] or 0)
-                efficiency_metrics['avg_trailing_percent'] = float(stats['avg_trailing_percent'] or 0)
+                efficiency_metrics['avg_tp_percent'] = float(raw_stats['avg_tp_percent'] or 0)
+                efficiency_metrics['avg_sl_percent'] = float(raw_stats['avg_sl_percent'] or 0)
+                efficiency_metrics['avg_trailing_percent'] = float(raw_stats['avg_trailing_percent'] or 0)
 
                 # Win rate - правильный расчет с учетом всех прибыльных позиций
                 total_closed = (efficiency_metrics['closed_tp'] + 
@@ -740,12 +750,14 @@ def signal_performance():
                     
                     # Win rate
                     efficiency_metrics['win_rate'] = (wins / total_closed) * 100
+                    stats['win_rate'] = efficiency_metrics['win_rate']  # Обновляем stats
                     
                     # Для отображения в шаблоне
                     efficiency_metrics['total_wins'] = wins
                     efficiency_metrics['total_losses'] = losses
                 else:
                     efficiency_metrics['win_rate'] = 0
+                    stats['win_rate'] = 0
                     efficiency_metrics['total_wins'] = 0
                     efficiency_metrics['total_losses'] = 0
 
@@ -1507,9 +1519,6 @@ def efficiency_analysis():
 @login_required  
 def tpsl_analysis():
     """Страница анализа эффективности TP/SL"""
-    return render_template('tpsl_analysis.html',
-                          username=current_user.username,
-                          is_admin=current_user.is_admin)
 
 
 @app.route('/trailing_analysis')
@@ -3547,6 +3556,68 @@ def internal_error(error):
     """Обработка ошибки 500"""
     logger.error(f"Внутренняя ошибка сервера: {error}")
     return render_template('500.html'), 500
+
+@app.route('/api/reinitialize_signals', methods=['POST'])
+@login_required
+def api_reinitialize_signals():
+    """API для переинициализации сигналов с новыми параметрами"""
+    try:
+        data = request.get_json()
+        take_profit = float(data.get('take_profit', 4.0))
+        stop_loss = float(data.get('stop_loss', 3.0))
+        hours = int(data.get('hours', 48))
+
+        # Получаем настройки пользователя
+        filters_query = """
+            SELECT * FROM web.user_signal_filters
+            WHERE user_id = %s
+        """
+        user_filters = db.execute_query(filters_query, (current_user.id,), fetch=True)
+
+        if user_filters:
+            filters = user_filters[0]
+        else:
+            filters = {
+                'hide_younger_than_hours': 6,
+                'hide_older_than_hours': 48,
+                'stop_loss_percent': 3.00,
+                'take_profit_percent': 4.00,
+                'position_size_usd': 100.00,
+                'leverage': 5,
+                'use_trailing_stop': False,
+                'trailing_distance_pct': 2.0,
+                'trailing_activation_pct': 1.0
+            }
+
+        # Обновляем настройки пользователя
+        update_query = """
+            INSERT INTO web.user_signal_filters
+            (user_id, take_profit_percent, stop_loss_percent, updated_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (user_id)
+            DO UPDATE SET
+                take_profit_percent = EXCLUDED.take_profit_percent,
+                stop_loss_percent = EXCLUDED.stop_loss_percent,
+                updated_at = NOW()
+        """
+        db.execute_query(update_query, (current_user.id, take_profit, stop_loss))
+
+        # Логируем действие
+        print(f"[REINITIALIZE] Пользователь {current_user.id} обновил настройки: TP={take_profit}%, SL={stop_loss}%")
+
+        return jsonify({
+            'status': 'success',
+            'message': f'Настройки обновлены: TP={take_profit}%, SL={stop_loss}%',
+            'take_profit': take_profit,
+            'stop_loss': stop_loss
+        })
+
+    except Exception as e:
+        logger.error(f"Ошибка переинициализации сигналов: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 # Запуск приложения
 if __name__ == '__main__':

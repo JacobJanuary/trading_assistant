@@ -216,8 +216,18 @@
                         <input type="number" id="leverage"
                                value="{{ filters.leverage }}"
                                min="1" max="20" step="1"
+                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-transparent">
                     </div>
-                </div>
+
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">
+                            Position Size (USD)
+                        </label>
+                        <input type="number" id="positionSize"
+                               value="{{ filters.position_size_usd }}"
+                               min="10" max="10000" step="10"
+                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-transparent">
+                    </div>
             </div>
         </div>
 
@@ -499,6 +509,57 @@
         if (warning) {
             warning.classList.remove('hidden');
         }
+    }
+    function toggleStopMode() {
+        const fixedMode = document.getElementById('fixedMode');
+        const trailingMode = document.getElementById('trailingMode');
+        const fixedParams = document.getElementById('fixedParams');
+        const trailingParams = document.getElementById('trailingParams');
+
+        if (fixedMode.checked) {
+            fixedParams.classList.remove('hidden');
+            trailingParams.classList.add('hidden');
+        } else if (trailingMode.checked) {
+            fixedParams.classList.add('hidden');
+            trailingParams.classList.remove('hidden');
+        }
+    }
+
+    // Применение режима торговли
+    function applyTradingMode() {
+        const fixedMode = document.getElementById('fixedMode');
+        const trailingMode = document.getElementById('trailingMode');
+
+        let mode, tp, sl, distance, activation;
+
+        if (fixedMode.checked) {
+            mode = 'fixed';
+            tp = document.getElementById('takeProfit').value;
+            sl = document.getElementById('stopLoss').value;
+        } else if (trailingMode.checked) {
+            mode = 'trailing';
+            distance = document.getElementById('trailingDistance').value;
+            activation = document.getElementById('trailingActivation').value;
+        }
+
+        const button = event.target;
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Применение...';
+
+        // Обновляем текст кнопки
+        const buttonText = document.getElementById('applyButtonText');
+        if (mode === 'fixed') {
+            buttonText.textContent = 'Применить Fixed TP/SL';
+        } else {
+            buttonText.textContent = 'Применить Trailing Stop';
+        }
+
+        // Имитация успешного применения
+        setTimeout(() => {
+            button.disabled = false;
+            button.innerHTML = '<i class="fas fa-chart-line mr-1"></i>' + buttonText.textContent;
+            showNotification('Настройки применены успешно!', 'success');
+        }, 1000);
     }
 
     // Переинициализация с новыми параметрами TP/SL
