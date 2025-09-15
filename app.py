@@ -407,7 +407,8 @@ def signal_performance():
         if user_filters:
             filters = user_filters[0]
         else:
-            filters = {
+            # Если записи нет, создаем её со значениями по умолчанию
+            default_filters = {
                 'hide_younger_than_hours': 6,
                 'hide_older_than_hours': 48,
                 'stop_loss_percent': 3.00,
@@ -416,8 +417,36 @@ def signal_performance():
                 'leverage': 5,
                 'use_trailing_stop': False,
                 'trailing_distance_pct': 2.0,
-                'trailing_activation_pct': 1.0
+                'trailing_activation_pct': 1.0,
+                'score_week_min': 0,
+                'score_month_min': 0
             }
+            
+            # Создаем запись в БД для пользователя
+            insert_query = """
+                INSERT INTO web.user_signal_filters (
+                    user_id, hide_younger_than_hours, hide_older_than_hours,
+                    stop_loss_percent, take_profit_percent, position_size_usd,
+                    leverage, use_trailing_stop, trailing_distance_pct,
+                    trailing_activation_pct, score_week_min, score_month_min
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            db.execute_query(insert_query, (
+                current_user.id,
+                default_filters['hide_younger_than_hours'],
+                default_filters['hide_older_than_hours'],
+                default_filters['stop_loss_percent'],
+                default_filters['take_profit_percent'],
+                default_filters['position_size_usd'],
+                default_filters['leverage'],
+                default_filters['use_trailing_stop'],
+                default_filters['trailing_distance_pct'],
+                default_filters['trailing_activation_pct'],
+                default_filters['score_week_min'],
+                default_filters['score_month_min']
+            ))
+            
+            filters = default_filters
 
         # Получаем параметры из URL для динамического пересчета
         hide_younger = request.args.get('hide_younger', type=int, default=filters['hide_younger_than_hours'])
@@ -426,9 +455,11 @@ def signal_performance():
         display_position_size = request.args.get('position_size', type=float,
                                                  default=float(filters['position_size_usd']))
         
-        # Получаем параметры Score Week и Score Month из URL
-        score_week_min = request.args.get('score_week', type=int, default=90)
-        score_month_min = request.args.get('score_month', type=int, default=65)
+        # Получаем параметры Score Week и Score Month из URL или БД
+        score_week_min = request.args.get('score_week', type=int, 
+                                         default=filters.get('score_week_min', 0))
+        score_month_min = request.args.get('score_month', type=int, 
+                                          default=filters.get('score_month_min', 0))
 
         # ========== НОВЫЙ ЗАПРОС НАПРЯМУЮ ИЗ FAS.SCORING_HISTORY ==========
         # Получаем сигналы с фильтрацией по скорингу
@@ -1364,23 +1395,28 @@ def api_save_filters():
         hide_older = max(1, min(168, data.get('hide_older_than_hours', 48)))
         position_size = max(10, min(1000, data.get('position_size_usd', 100)))
         leverage = max(1, min(20, data.get('leverage', 5)))
+        score_week_min = max(0, min(100, data.get('score_week_min', 0)))
+        score_month_min = max(0, min(100, data.get('score_month_min', 0)))
 
         # НЕ сохраняем TP/SL здесь - они меняются только через инициализацию
         upsert_query = """
             INSERT INTO web.user_signal_filters (
                 user_id, hide_younger_than_hours, hide_older_than_hours,
-                position_size_usd, leverage
-            ) VALUES (%s, %s, %s, %s, %s)
+                position_size_usd, leverage, score_week_min, score_month_min
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id) DO UPDATE SET
                 hide_younger_than_hours = EXCLUDED.hide_younger_than_hours,
                 hide_older_than_hours = EXCLUDED.hide_older_than_hours,
                 position_size_usd = EXCLUDED.position_size_usd,
                 leverage = EXCLUDED.leverage,
+                score_week_min = EXCLUDED.score_week_min,
+                score_month_min = EXCLUDED.score_month_min,
                 updated_at = NOW()
         """
 
         db.execute_query(upsert_query, (
-            current_user.id, hide_younger, hide_older, position_size, leverage
+            current_user.id, hide_younger, hide_older, position_size, leverage,
+            score_week_min, score_month_min
         ))
 
         return jsonify({
@@ -3623,7 +3659,8 @@ def api_reinitialize_signals():
         if user_filters:
             filters = user_filters[0]
         else:
-            filters = {
+            # Если записи нет, создаем её со значениями по умолчанию
+            default_filters = {
                 'hide_younger_than_hours': 6,
                 'hide_older_than_hours': 48,
                 'stop_loss_percent': 3.00,
@@ -3632,8 +3669,36 @@ def api_reinitialize_signals():
                 'leverage': 5,
                 'use_trailing_stop': False,
                 'trailing_distance_pct': 2.0,
-                'trailing_activation_pct': 1.0
+                'trailing_activation_pct': 1.0,
+                'score_week_min': 0,
+                'score_month_min': 0
             }
+            
+            # Создаем запись в БД для пользователя
+            insert_query = """
+                INSERT INTO web.user_signal_filters (
+                    user_id, hide_younger_than_hours, hide_older_than_hours,
+                    stop_loss_percent, take_profit_percent, position_size_usd,
+                    leverage, use_trailing_stop, trailing_distance_pct,
+                    trailing_activation_pct, score_week_min, score_month_min
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            db.execute_query(insert_query, (
+                current_user.id,
+                default_filters['hide_younger_than_hours'],
+                default_filters['hide_older_than_hours'],
+                default_filters['stop_loss_percent'],
+                default_filters['take_profit_percent'],
+                default_filters['position_size_usd'],
+                default_filters['leverage'],
+                default_filters['use_trailing_stop'],
+                default_filters['trailing_distance_pct'],
+                default_filters['trailing_activation_pct'],
+                default_filters['score_week_min'],
+                default_filters['score_month_min']
+            ))
+            
+            filters = default_filters
 
         # Обновляем настройки пользователя
         update_query = """
