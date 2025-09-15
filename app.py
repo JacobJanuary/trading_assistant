@@ -396,8 +396,8 @@ def signal_performance():
                                                  default=float(filters['position_size_usd']))
         
         # Получаем параметры Score Week и Score Month из URL
-        score_week_min = request.args.get('score_week', type=int, default=81)
-        score_month_min = request.args.get('score_month', type=int, default=53)
+        score_week_min = request.args.get('score_week', type=int, default=90)
+        score_month_min = request.args.get('score_month', type=int, default=65)
 
         # ========== НОВЫЙ ЗАПРОС НАПРЯМУЮ ИЗ FAS.SCORING_HISTORY ==========
         # Получаем сигналы с фильтрацией по скорингу
@@ -1210,24 +1210,61 @@ def api_initialize_signals():
 
     try:
         data = request.get_json() or {}
-
-        # Получаем параметры или используем текущие из БД
-        tp_percent = data.get('take_profit', 4.0)
-        sl_percent = data.get('stop_loss', 3.0)
         hours_back = data.get('hours', 48)
-
-        # Сохраняем новые параметры если они изменились
-        if 'take_profit' in data or 'stop_loss' in data:
+        use_trailing_stop = data.get('use_trailing_stop', False)
+        
+        # Обрабатываем параметры в зависимости от режима
+        if use_trailing_stop:
+            # Режим Trailing Stop
+            trailing_distance = data.get('trailing_distance', 2.0)
+            trailing_activation = data.get('trailing_activation', 1.0)
+            sl_percent = data.get('stop_loss', 3.0)
+            tp_percent = 10.0  # Высокий TP для trailing (как виртуальный максимум)
+            
+            # Сохраняем параметры trailing
             update_params_query = """
                 INSERT INTO web.user_signal_filters (
-                    user_id, stop_loss_percent, take_profit_percent
-                ) VALUES (%s, %s, %s)
+                    user_id, use_trailing_stop, 
+                    trailing_distance_pct, trailing_activation_pct,
+                    stop_loss_percent, take_profit_percent
+                ) VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (user_id) DO UPDATE SET
+                    use_trailing_stop = EXCLUDED.use_trailing_stop,
+                    trailing_distance_pct = EXCLUDED.trailing_distance_pct,
+                    trailing_activation_pct = EXCLUDED.trailing_activation_pct,
                     stop_loss_percent = EXCLUDED.stop_loss_percent,
                     take_profit_percent = EXCLUDED.take_profit_percent,
                     updated_at = NOW()
             """
-            db.execute_query(update_params_query, (current_user.id, sl_percent, tp_percent))
+            db.execute_query(update_params_query, (
+                current_user.id, True, trailing_distance, trailing_activation, sl_percent, tp_percent
+            ))
+            
+            mode_text = f"Trailing Stop (активация: {trailing_activation}%, дистанция: {trailing_distance}%, SL: {sl_percent}%)"
+        else:
+            # Режим Fixed TP/SL
+            tp_percent = data.get('take_profit', 4.0)
+            sl_percent = data.get('stop_loss', 3.0)
+            
+            # Сохраняем параметры fixed
+            update_params_query = """
+                INSERT INTO web.user_signal_filters (
+                    user_id, use_trailing_stop,
+                    stop_loss_percent, take_profit_percent
+                ) VALUES (%s, %s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    use_trailing_stop = EXCLUDED.use_trailing_stop,
+                    stop_loss_percent = EXCLUDED.stop_loss_percent,
+                    take_profit_percent = EXCLUDED.take_profit_percent,
+                    trailing_distance_pct = NULL,
+                    trailing_activation_pct = NULL,
+                    updated_at = NOW()
+            """
+            db.execute_query(update_params_query, (
+                current_user.id, False, sl_percent, tp_percent
+            ))
+            
+            mode_text = f"Fixed TP/SL (TP: {tp_percent}%, SL: {sl_percent}%)"
 
         # Выполняем инициализацию
         result = initialize_signals_with_params(
@@ -1240,7 +1277,8 @@ def api_initialize_signals():
         return jsonify({
             'status': 'success',
             'stats': result,
-            'message': f"Инициализировано {result['initialized']} сигналов. "
+            'message': f"Система переинициализирована в режиме {mode_text}. "
+                       f"Инициализировано {result['initialized']} сигналов. "
                        f"TP: {result['closed_tp']}, SL: {result['closed_sl']}, "
                        f"Открыто: {result['open']}"
         })
@@ -1420,6 +1458,7 @@ def api_get_user_trading_mode():
                 'use_trailing_stop': data['use_trailing_stop'] or False,
                 'trailing_distance_pct': float(data['trailing_distance_pct'] or 2.0),
                 'trailing_activation_pct': float(data['trailing_activation_pct'] or 1.0),
+                'stop_loss': float(data['stop_loss_percent'] or 3.0),  # Для совместимости с JS
                 'stop_loss_percent': float(data['stop_loss_percent'] or 3.0),
                 'insurance_sl': float(data['stop_loss_percent'] or 3.0),
                 'take_profit_percent': float(data['take_profit_percent'] or 4.0),
@@ -1429,8 +1468,12 @@ def api_get_user_trading_mode():
         else:
             return jsonify({
                 'use_trailing_stop': False,
-                'take_profit_percent': 4.0,
+                'trailing_distance_pct': 2.0,
+                'trailing_activation_pct': 1.0,
+                'stop_loss': 3.0,
                 'stop_loss_percent': 3.0,
+                'insurance_sl': 3.0,
+                'take_profit_percent': 4.0,
                 'position_size': 100.0,
                 'leverage': 5
             })

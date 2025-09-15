@@ -54,50 +54,99 @@
                 </div>
             </div>
 
-            <!-- 2. ПАРАМЕТРЫ ТОРГОВЛИ -->
-            <div class="bg-gradient-to-br from-red-50 to-pink-50 p-4 rounded-lg border border-red-200">
+            <!-- 2. ПАРАМЕТРЫ ТОРГОВЛИ И РЕЖИМ УПРАВЛЕНИЯ -->
+            <div class="bg-gradient-to-br from-purple-50 to-indigo-50 p-4 rounded-lg border border-purple-200">
                 <div class="flex items-center mb-4">
-                    <div class="bg-red-500 p-2 rounded-lg mr-3">
-                        <i class="fas fa-chart-line text-white text-sm"></i>
+                    <div class="bg-purple-500 p-2 rounded-lg mr-3">
+                        <i class="fas fa-cogs text-white text-sm"></i>
                     </div>
                     <h3 class="font-bold text-gray-800 text-sm">Параметры торговли</h3>
                 </div>
 
                 <div class="space-y-3">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">
-                            Stop Loss (%)
+                    <!-- Переключатель режимов -->
+                    <div class="flex items-center justify-center space-x-3 mb-3">
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="stopMode" value="fixed"
+                                   id="fixedMode" checked
+                                   onchange="toggleStopMode()"
+                                   class="mr-1 text-purple-600 focus:ring-purple-500">
+                            <span class="text-xs font-medium text-gray-700">Fixed TP/SL</span>
                         </label>
-                        <input type="number" id="stopLoss"
-                               value="{{ filters.stop_loss_percent }}"
-                               min="0.5" max="10" step="0.5"
-                               onchange="showReinitWarning()"
-                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-red-500 focus:border-transparent">
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="stopMode" value="trailing"
+                                   id="trailingMode"
+                                   onchange="toggleStopMode()"
+                                   class="mr-1 text-purple-600 focus:ring-purple-500">
+                            <span class="text-xs font-medium text-gray-700">Trailing Stop</span>
+                        </label>
                     </div>
 
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">
-                            Take Profit (%)
-                        </label>
-                        <input type="number" id="takeProfit"
-                               value="{{ filters.take_profit_percent }}"
-                               min="1" max="20" step="0.5"
-                               onchange="showReinitWarning()"
-                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-red-500 focus:border-transparent">
+                    <!-- Параметры Fixed TP/SL -->
+                    <div id="fixedParams" class="space-y-2">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">
+                                Take Profit (%)
+                            </label>
+                            <input type="number" id="takeProfit"
+                                   value="{{ filters.take_profit_percent }}"
+                                   min="1" max="20" step="0.5"
+                                   onchange="showReinitWarning()"
+                                   class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">
+                                Stop Loss (%)
+                            </label>
+                            <input type="number" id="stopLoss"
+                                   value="{{ filters.stop_loss_percent }}"
+                                   min="0.5" max="10" step="0.5"
+                                   onchange="showReinitWarning()"
+                                   class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+                        </div>
                     </div>
 
-                    <div id="reinitWarning" class="hidden bg-red-100 p-2 rounded text-xs text-red-700 border border-red-200">
+                    <!-- Параметры Trailing Stop -->
+                    <div id="trailingParams" class="space-y-2 hidden">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">
+                                Distance (%)
+                            </label>
+                            <input type="number" id="trailingDistance"
+                                   value="2.0"
+                                   min="0.5" max="10" step="0.5"
+                                   class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">
+                                Activation (%)
+                            </label>
+                            <input type="number" id="trailingActivation"
+                                   value="1.0"
+                                   min="0.5" max="5" step="0.5"
+                                   class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">
+                                Stop Loss (%)
+                            </label>
+                            <input type="number" id="trailingStopLoss"
+                                   value="3.0"
+                                   min="1" max="10" step="0.5"
+                                   class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+                        </div>
+                    </div>
+
+                    <div id="reinitWarning" class="hidden bg-purple-100 p-2 rounded text-xs text-purple-700 border border-purple-200">
                         <i class="fas fa-exclamation-triangle mr-1"></i>
                         Требуется переинициализация!
                     </div>
 
-                    {% if current_user.is_admin %}
-                    <button onclick="reinitializeWithParams()"
-                            class="w-full bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                        <i class="fas fa-sync-alt mr-1"></i>
-                        Переинициализировать
+                    <button onclick="applyTradingMode()"
+                            class="w-full bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                        <i class="fas fa-chart-line mr-1"></i>
+                        <span id="applyButtonText">Применить Fixed TP/SL</span>
                     </button>
-                    {% endif %}
                 </div>
             </div>
 
@@ -139,75 +188,7 @@
                 </div>
             </div>
 
-            <!-- 4. РЕЖИМ УПРАВЛЕНИЯ ПОЗИЦИЕЙ -->
-            <div class="bg-gradient-to-br from-purple-50 to-indigo-50 p-4 rounded-lg border border-purple-200">
-                <div class="flex items-center mb-4">
-                    <div class="bg-purple-500 p-2 rounded-lg mr-3">
-                        <i class="fas fa-cogs text-white text-sm"></i>
-                    </div>
-                    <h3 class="font-bold text-gray-800 text-sm">Режим управления</h3>
-                </div>
-
-                <div class="space-y-3">
-                    <!-- Переключатель режимов -->
-                    <div class="flex items-center justify-center space-x-3 mb-3">
-                        <label class="flex items-center cursor-pointer">
-                            <input type="radio" name="stopMode" value="fixed"
-                                   id="fixedMode" checked
-                                   onchange="toggleStopMode()"
-                                   class="mr-1 text-purple-600 focus:ring-purple-500">
-                            <span class="text-xs font-medium text-gray-700">Fixed</span>
-                        </label>
-                        <label class="flex items-center cursor-pointer">
-                            <input type="radio" name="stopMode" value="trailing"
-                                   id="trailingMode"
-                                   onchange="toggleStopMode()"
-                                   class="mr-1 text-purple-600 focus:ring-purple-500">
-                            <span class="text-xs font-medium text-gray-700">Trailing</span>
-                        </label>
-                    </div>
-
-                    <!-- Параметры Trailing Stop -->
-                    <div id="trailingParams" class="space-y-2">
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 mb-1">
-                                Distance (%)
-                            </label>
-                            <input type="number" id="trailingDistance"
-                                   value="2.0"
-                                   min="0.5" max="10" step="0.5"
-                                   class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-                        </div>
-
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 mb-1">
-                                Activation (%)
-                            </label>
-                            <input type="number" id="trailingActivation"
-                                   value="1.0"
-                                   min="0.5" max="5" step="0.5"
-                                   class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-                        </div>
-
-                        <div class="bg-purple-100 p-2 rounded text-xs text-gray-700 border border-purple-200">
-                            <i class="fas fa-info-circle mr-1 text-purple-600"></i>
-                            <strong>Trailing:</strong> Активация при <span id="activationInfo">1%</span>, расстояние <span id="distanceInfo">2%</span>
-                        </div>
-                    </div>
-
-                    <button onclick="applyTradingMode()"
-                            class="w-full bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                        <i class="fas fa-chart-line mr-1"></i>
-                        <span id="applyButtonText">Применить Fixed TP/SL</span>
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- ВТОРАЯ СТРОКА - ДОПОЛНИТЕЛЬНЫЕ ПАРАМЕТРЫ -->
-        <div class="mt-6 grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-
-            <!-- Параметры расчета -->
+            <!-- 4. ПАРАМЕТРЫ РАСЧЕТА -->
             <div class="bg-gradient-to-br from-green-50 to-emerald-50 p-4 rounded-lg border border-green-200">
                 <div class="flex items-center mb-4">
                     <div class="bg-green-500 p-2 rounded-lg mr-3">
@@ -237,14 +218,12 @@
                                class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-transparent">
                     </div>
 
-                    <!-- Две кнопки с разным функционалом -->
                     <div class="flex space-x-2">
                         <button onclick="applyCalculationParams()"
                                 class="flex-1 bg-green-600 hover:bg-green-700 text-white px-2 py-2 rounded-md text-sm font-medium transition-colors">
                             <i class="fas fa-play mr-1"></i>
                             Применить
                         </button>
-
                         <button onclick="saveCalculationParams()"
                                 class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-2 rounded-md text-sm font-medium transition-colors">
                             <i class="fas fa-save mr-1"></i>
@@ -252,169 +231,10 @@
                         </button>
                     </div>
 
-                    <!-- Индикатор несохраненных изменений -->
                     <div id="unsavedIndicator" class="hidden text-xs text-orange-600 bg-orange-50 p-2 rounded border border-orange-200">
                         <i class="fas fa-exclamation-circle mr-1"></i>
                         Изменения не сохранены
                     </div>
-                </div>
-            </div>
-
-            <!-- Информационный блок -->
-            <div class="bg-gradient-to-br from-gray-50 to-slate-50 p-4 rounded-lg border border-gray-200">
-                <div class="flex items-center mb-4">
-                    <div class="bg-gray-500 p-2 rounded-lg mr-3">
-                        <i class="fas fa-info-circle text-white text-sm"></i>
-                    </div>
-                    <h3 class="font-bold text-gray-800 text-sm">Информация</h3>
-                </div>
-
-                <div class="space-y-3 text-xs text-gray-600">
-                    <div class="bg-blue-50 p-3 rounded border-l-4 border-blue-400">
-                        <i class="fas fa-clock text-blue-600 mr-1"></i>
-                        <strong>Фильтры времени:</strong> Применяются мгновенно
-                    </div>
-
-                    <div class="bg-yellow-50 p-3 rounded border-l-4 border-yellow-400">
-                        <i class="fas fa-star text-yellow-600 mr-1"></i>
-                        <strong>Скоринговые фильтры:</strong> Фильтруют сигналы по баллам
-                    </div>
-
-                    <div class="bg-red-50 p-3 rounded border-l-4 border-red-400">
-                        <i class="fas fa-exclamation-triangle text-red-600 mr-1"></i>
-                        <strong>Параметры торговли:</strong> Требуют перерасчета сигналов
-                    </div>
-
-                    <div class="bg-purple-50 p-3 rounded border-l-4 border-purple-400">
-                        <i class="fas fa-cogs text-purple-600 mr-1"></i>
-                        <strong>Режим управления:</strong> Выберите Fixed или Trailing
-                    </div>
-                </div>
-            </div>
-
-            <!-- Кнопки быстрого доступа -->
-            <div class="bg-gradient-to-br from-indigo-50 to-blue-50 p-4 rounded-lg border border-indigo-200">
-                <div class="flex items-center mb-4">
-                    <div class="bg-indigo-500 p-2 rounded-lg mr-3">
-                        <i class="fas fa-bolt text-white text-sm"></i>
-                    </div>
-                    <h3 class="font-bold text-gray-800 text-sm">Быстрые действия</h3>
-                </div>
-
-                <div class="space-y-2">
-                    <button onclick="resetToDefaults()"
-                            class="w-full bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                        <i class="fas fa-undo mr-1"></i>
-                        Сбросить к умолчанию
-                    </button>
-
-                    <button onclick="exportSettings()"
-                            class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                        <i class="fas fa-download mr-1"></i>
-                        Экспорт настроек
-                    </button>
-
-                    <button onclick="showHelp()"
-                            class="w-full bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                        <i class="fas fa-question-circle mr-1"></i>
-                        Помощь
-                    </button>
-                </div>
-            </div>
-        </div>                        </button>
-
-                        <button onclick="saveCalculationParams()"
-                                class="flex-1 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-md text-sm">
-                            <i class="fas fa-save mr-1"></i>
-                            Сохранить
-                        </button>
-                    </div>
-
-                    <!-- Индикатор несохраненных изменений -->
-                    <div id="unsavedIndicator" class="hidden text-xs text-orange-600">
-                        <i class="fas fa-exclamation-circle mr-1"></i>
-                        Изменения не сохранены
-                    </div>
-                </div>
-            </div>
-
-            <!-- Добавьте этот блок после "Параметры торговли" в signal_performance.html -->
-            <div class="border-l-4 border-purple-500 pl-4">
-                <h3 class="font-semibold text-gray-700 mb-3">Режим управления позицией</h3>
-
-                <div class="space-y-3">
-                    <!-- Переключатель режимов -->
-                    <div class="flex items-center space-x-4 mb-3">
-                        <label class="flex items-center cursor-pointer">
-                            <input type="radio" name="stopMode" value="fixed"
-                                   id="fixedMode" checked
-                                   onchange="toggleStopMode()"
-                                   class="mr-2">
-                            <span class="text-sm font-medium">Fixed TP/SL</span>
-                        </label>
-                        <label class="flex items-center cursor-pointer">
-                            <input type="radio" name="stopMode" value="trailing"
-                                   id="trailingMode"
-                                   onchange="toggleStopMode()"
-                                   class="mr-2">
-                            <span class="text-sm font-medium">Trailing Stop</span>
-                        </label>
-                    </div>
-
-                    <!-- Параметры Fixed TP/SL (видимы по умолчанию) -->
-                    <div id="fixedParams" class="space-y-3">
-                        <!-- Существующие поля SL и TP переносим сюда -->
-                    </div>
-
-                    <!-- Параметры Trailing Stop (скрыты по умолчанию) -->
-                    <div id="trailingParams" class="space-y-3 hidden">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Trailing Distance (%)
-                                <span class="text-xs text-gray-500">расстояние от максимума</span>
-                            </label>
-                            <input type="number" id="trailingDistance"
-                                   value="2.0"
-                                   min="0.5" max="10" step="0.5"
-                                   class="w-full px-3 py-2 border border-gray-300 rounded-md">
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Activation Level (%)
-                                <span class="text-xs text-gray-500">профит для активации</span>
-                            </label>
-                            <input type="number" id="trailingActivation"
-                                   value="1.0"
-                                   min="0.5" max="5" step="0.5"
-                                   class="w-full px-3 py-2 border border-gray-300 rounded-md">
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Insurance SL (%)
-                                <span class="text-xs text-gray-500">страховочный стоп</span>
-                            </label>
-                            <input type="number" id="insuranceSL"
-                                   value="3.0"
-                                   min="1" max="10" step="0.5"
-                                   class="w-full px-3 py-2 border border-gray-300 rounded-md">
-                        </div>
-
-                        <div class="bg-purple-50 p-3 rounded-lg text-xs text-gray-700">
-                            <i class="fas fa-info-circle mr-1"></i>
-                            <strong>Trailing Stop:</strong> Активируется при достижении
-                            <span id="activationInfo">1%</span> профита, затем следует за ценой
-                            на расстоянии <span id="distanceInfo">2%</span>
-                        </div>
-                    </div>
-
-                    <!-- Кнопка применения с индикацией режима -->
-                    <button onclick="applyTradingMode()"
-                            class="w-full bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-md text-sm">
-                        <i class="fas fa-chart-line mr-1"></i>
-                        <span id="applyButtonText">Применить Fixed TP/SL</span>
-                    </button>
                 </div>
             </div>
         </div>
@@ -950,6 +770,19 @@
     // Автообновление страницы каждую минуту
     setTimeout(() => location.reload(), 60000);
 
+    // Применение фильтров времени
+    function applyTimeFilters() {
+        const params = new URLSearchParams({
+            hide_younger: document.getElementById('hideYounger').value,
+            hide_older: document.getElementById('hideOlder').value,
+            leverage: document.getElementById('leverage').value,
+            position_size: document.getElementById('positionSize').value,
+            score_week: document.getElementById('scoreWeek').value,
+            score_month: document.getElementById('scoreMonth').value
+        });
+        window.location.href = '/signal_performance?' + params.toString();
+    }
+    
     // Применение скоринговых фильтров
     function applyScoringFilters() {
         const params = new URLSearchParams({
@@ -969,7 +802,9 @@
             hide_younger: document.getElementById('hideYounger').value,
             hide_older: document.getElementById('hideOlder').value,
             leverage: document.getElementById('leverage').value,
-            position_size: document.getElementById('positionSize').value
+            position_size: document.getElementById('positionSize').value,
+            score_week: document.getElementById('scoreWeek').value,
+            score_month: document.getElementById('scoreMonth').value
         });
         window.location.href = '/signal_performance?' + params.toString();
     }
@@ -979,45 +814,6 @@
         document.getElementById('reinitWarning').classList.remove('hidden');
     }
 
-    // Переинициализация с новыми параметрами TP/SL
-    function reinitializeWithParams() {
-        const tp = parseFloat(document.getElementById('takeProfit').value);
-        const sl = parseFloat(document.getElementById('stopLoss').value);
-
-        if (!confirm(`Переинициализировать систему с параметрами:\nTP: ${tp}%\nSL: ${sl}%\n\nЭто удалит все текущие данные!`)) {
-            return;
-        }
-
-        const button = event.target.closest('button');
-        button.disabled = true;
-        button.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Инициализация...';
-
-        fetch('/api/initialize_signals', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                take_profit: tp,
-                stop_loss: sl,
-                hours: 48
-            })
-        })
-        .then(response => response.json())
-        .then(result => {
-            if (result.status === 'success') {
-                alert(result.message);
-                location.reload();
-            } else {
-                alert('Ошибка: ' + result.message);
-                button.disabled = false;
-                button.innerHTML = '<i class="fas fa-sync-alt mr-1"></i>Переинициализировать';
-            }
-        })
-        .catch(error => {
-            alert('Ошибка сети: ' + error);
-            button.disabled = false;
-            button.innerHTML = '<i class="fas fa-sync-alt mr-1"></i>Переинициализировать';
-        });
-    }
 
     // Сохранение параметров в БД
     function saveCalculationParams() {
@@ -1087,7 +883,7 @@
         }, 3000);
     }
 
-    // Отслеживание изменений для показа индикатора несохраненных изменений
+    // Основная инициализация при загрузке страницы
     document.addEventListener('DOMContentLoaded', function() {
         // Сохраняем оригинальные значения
         window.savedValues = {
@@ -1132,7 +928,7 @@
         if (hideYoungerInput) hideYoungerInput.addEventListener('input', checkChanges);
         if (hideOlderInput) hideOlderInput.addEventListener('input', checkChanges);
 
-        // Обработка Enter в input полях
+            // Обработка Enter в input полях
         const allInputs = [leverageInput, positionSizeInput, hideYoungerInput, hideOlderInput];
         allInputs.forEach(input => {
             if (input) {
@@ -1155,6 +951,33 @@
         if (saveButton) {
             saveButton.title = 'Сохранить параметры как настройки по умолчанию';
         }
+        
+        // Загружаем сохраненный режим из БД
+        fetch('/api/get_user_trading_mode')
+            .then(response => {
+                if (!response.ok) throw new Error('API not available');
+                return response.json();
+            })
+            .then(data => {
+                if (data && data.use_trailing_stop) {
+                    const trailingMode = document.getElementById('trailingMode');
+                    if (trailingMode) {
+                        trailingMode.checked = true;
+                        const trailingDistance = document.getElementById('trailingDistance');
+                        const trailingActivation = document.getElementById('trailingActivation'); 
+                        const trailingStopLoss = document.getElementById('trailingStopLoss');
+                        
+                        if (trailingDistance) trailingDistance.value = data.trailing_distance_pct || 2.0;
+                        if (trailingActivation) trailingActivation.value = data.trailing_activation_pct || 1.0;
+                        if (trailingStopLoss) trailingStopLoss.value = data.stop_loss || 3.0;
+                        
+                        toggleStopMode();
+                    }
+                }
+            })
+            .catch(err => {
+                console.log('Trading mode API not available:', err);
+            });
     });
 
     // Вспомогательная функция для форматирования чисел
@@ -1203,33 +1026,26 @@
 
 // Переключение режима стопов
 function toggleStopMode() {
-    const isTrailing = document.getElementById('trailingMode').checked;
+    const trailingMode = document.getElementById('trailingMode');
+    const isTrailing = trailingMode && trailingMode.checked;
     const fixedParams = document.getElementById('fixedParams');
     const trailingParams = document.getElementById('trailingParams');
     const applyButton = document.getElementById('applyButtonText');
 
     if (isTrailing) {
-        fixedParams.classList.add('hidden');
-        trailingParams.classList.remove('hidden');
-        applyButton.textContent = 'Применить Trailing Stop';
-
-        // Обновляем информацию
-        updateTrailingInfo();
+        if (fixedParams) fixedParams.classList.add('hidden');
+        if (trailingParams) trailingParams.classList.remove('hidden');
+        if (applyButton) applyButton.textContent = 'Применить Trailing Stop';
     } else {
-        fixedParams.classList.remove('hidden');
-        trailingParams.classList.add('hidden');
-        applyButton.textContent = 'Применить Fixed TP/SL';
+        if (fixedParams) fixedParams.classList.remove('hidden');
+        if (trailingParams) trailingParams.classList.add('hidden');
+        if (applyButton) applyButton.textContent = 'Применить Fixed TP/SL';
     }
+    
+    // Показываем предупреждение о необходимости переинициализации
+    showReinitWarning();
 }
 
-// Обновление информации о trailing stop
-function updateTrailingInfo() {
-    const activation = document.getElementById('trailingActivation').value;
-    const distance = document.getElementById('trailingDistance').value;
-
-    document.getElementById('activationInfo').textContent = activation + '%';
-    document.getElementById('distanceInfo').textContent = distance + '%';
-}
 
 // Применение выбранного режима
 function applyTradingMode() {
@@ -1251,13 +1067,13 @@ function applyTradingMode() {
     if (isTrailing) {
         params.trailing_distance = parseFloat(document.getElementById('trailingDistance').value);
         params.trailing_activation = parseFloat(document.getElementById('trailingActivation').value);
-        params.insurance_sl = parseFloat(document.getElementById('insuranceSL').value);
+        params.stop_loss = parseFloat(document.getElementById('trailingStopLoss').value);
     } else {
         params.take_profit = parseFloat(document.getElementById('takeProfit').value);
         params.stop_loss = parseFloat(document.getElementById('stopLoss').value);
     }
 
-    fetch('/api/initialize_signals_trailing', {
+    fetch('/api/initialize_signals', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(params)
@@ -1279,26 +1095,6 @@ function applyTradingMode() {
     });
 }
 
-// Инициализация при загрузке страницы
-document.addEventListener('DOMContentLoaded', function() {
-    // Загружаем сохраненный режим из БД
-    fetch('/api/get_user_trading_mode')
-        .then(response => response.json())
-        .then(data => {
-            if (data.use_trailing_stop) {
-                document.getElementById('trailingMode').checked = true;
-                document.getElementById('trailingDistance').value = data.trailing_distance_pct || 2.0;
-                document.getElementById('trailingActivation').value = data.trailing_activation_pct || 1.0;
-                document.getElementById('insuranceSL').value = data.insurance_sl || 3.0;
-                toggleStopMode();
-            }
-        })
-        .catch(console.error);
-
-    // Добавляем слушатели для обновления информации
-    document.getElementById('trailingActivation')?.addEventListener('input', updateTrailingInfo);
-    document.getElementById('trailingDistance')?.addEventListener('input', updateTrailingInfo);
-});
 
 // Функция для обновления статистики trailing в реальном времени
 function updateTrailingStats() {
@@ -1322,9 +1118,13 @@ function formatValue(value, format) {
         case 'percent':
             return `${value.toFixed(1)}%`;
         case 'currency':
+            return `$${value.toFixed(2)}`;
+        default:
+            return value.toString();
     }
+}
 
-    // Обновляем каждые 30 секунд
-    setInterval(updateTrailingStats, 30000);
+// Обновляем каждые 30 секунд
+setInterval(updateTrailingStats, 30000);
 </script>
 {% endblock %}
