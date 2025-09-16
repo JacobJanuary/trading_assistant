@@ -1619,7 +1619,8 @@ def api_get_user_trading_mode():
         query = """
             SELECT use_trailing_stop, trailing_distance_pct, 
                    trailing_activation_pct, stop_loss_percent,
-                   take_profit_percent, position_size_usd, leverage
+                   take_profit_percent, position_size_usd, leverage,
+                   allowed_hours
             FROM web.user_signal_filters
             WHERE user_id = %s
         """
@@ -1636,7 +1637,8 @@ def api_get_user_trading_mode():
                 'insurance_sl': float(data['stop_loss_percent'] or 3.0),
                 'take_profit_percent': float(data['take_profit_percent'] or 4.0),
                 'position_size': float(data['position_size_usd'] or 100.0),
-                'leverage': int(data['leverage'] or 5)
+                'leverage': int(data['leverage'] or 5),
+                'allowed_hours': data.get('allowed_hours', list(range(24)))
             })
         else:
             return jsonify({
@@ -1648,7 +1650,8 @@ def api_get_user_trading_mode():
                 'insurance_sl': 3.0,
                 'take_profit_percent': 4.0,
                 'position_size': 100.0,
-                'leverage': 5
+                'leverage': 5,
+                'allowed_hours': list(range(24))
             })
 
     except Exception as e:
@@ -1777,7 +1780,8 @@ def api_efficiency_analyze_30days_progress():
             # Получаем настройки пользователя
             settings_query = """
                 SELECT use_trailing_stop, trailing_distance_pct, trailing_activation_pct,
-                       take_profit_percent, stop_loss_percent, position_size_usd, leverage
+                       take_profit_percent, stop_loss_percent, position_size_usd, leverage,
+                       allowed_hours
                 FROM web.user_signal_filters
                 WHERE user_id = %s
             """
@@ -1795,6 +1799,9 @@ def api_efficiency_analyze_30days_progress():
             sl_percent = float(settings.get('stop_loss_percent', 3.0))
             position_size = float(settings.get('position_size_usd', 100.0))
             leverage = int(settings.get('leverage', 5))
+            allowed_hours = settings.get('allowed_hours', list(range(24)))
+            if not allowed_hours:
+                allowed_hours = list(range(24))
             
             # Определяем период анализа (исключаем последние 2 дня)
             end_date = datetime.now().date() - timedelta(days=2)
@@ -1934,8 +1941,8 @@ def api_efficiency_analyze_30days_progress():
                                 'daily_pnl': float(cached_result[0]['daily_pnl'])
                             }
                         else:
-                            # Получаем сигналы для текущего дня
-                            raw_signals = get_scoring_signals(db, date_str, score_week_min, score_month_min)
+                            # Получаем сигналы для текущего дня с учетом разрешенных часов
+                            raw_signals = get_scoring_signals(db, date_str, score_week_min, score_month_min, allowed_hours)
                             
                             daily_stats = {
                                 'date': date_str,

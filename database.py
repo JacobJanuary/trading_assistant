@@ -1418,9 +1418,9 @@ def get_scoring_date_range(db):
     return result[0] if result else {'min_date': None, 'max_date': None}
 
 
-def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=None):
+def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=None, allowed_hours=None):
     """
-    Получение сигналов на основе простых фильтров score_week и score_month
+    Получение сигналов на основе простых фильтров score_week, score_month и allowed_hours
     НОВАЯ ЛОГИКА: Прямой запрос к fas.scoring_history без сложных конструкторов
     """
 
@@ -1428,6 +1428,7 @@ def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=No
     print(f"[SCORING] Дата: {date_filter}")
     print(f"[SCORING] Минимальный score_week: {score_week_min}")
     print(f"[SCORING] Минимальный score_month: {score_month_min}")
+    print(f"[SCORING] Разрешенные часы: {allowed_hours if allowed_hours else 'Все'}")
 
     # Базовый запрос к fas.scoring_history
     query = """
@@ -1484,6 +1485,11 @@ def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=No
         query += " AND sh.score_month >= %s"
         params.append(score_month_min)
 
+    # Добавляем фильтр по разрешенным часам если задан
+    if allowed_hours is not None and allowed_hours:
+        query += " AND EXTRACT(hour FROM sh.timestamp AT TIME ZONE 'UTC') = ANY(%s)"
+        params.append(allowed_hours)
+
     query += " ORDER BY sh.timestamp DESC"
 
     try:
@@ -1524,9 +1530,9 @@ def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=No
         return []
 
 
-def get_scoring_date_info(db, date, score_week_min=None, score_month_min=None):
+def get_scoring_date_info(db, date, score_week_min=None, score_month_min=None, allowed_hours=None):
     """
-    Получение информации о выбранной дате: режимы рынка и количество сигналов
+    Получение информации о выбранной дате: режимы рынка и количество сигналов с учетом разрешенных часов
     """
     result = {
         'market_regimes': {'BULL': 0, 'NEUTRAL': 0, 'BEAR': 0},
@@ -1577,6 +1583,11 @@ def get_scoring_date_info(db, date, score_week_min=None, score_month_min=None):
         if score_month_min is not None:
             count_query += " AND sh.score_month >= %s"
             params.append(score_month_min)
+
+        # Добавляем фильтр по разрешенным часам если задан
+        if allowed_hours is not None and allowed_hours:
+            count_query += " AND EXTRACT(hour FROM sh.timestamp AT TIME ZONE 'UTC') = ANY(%s)"
+            params.append(allowed_hours)
 
         count_result = db.execute_query(count_query, tuple(params), fetch=True)
         if count_result:

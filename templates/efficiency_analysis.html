@@ -49,6 +49,14 @@
                 <div class="text-sm font-semibold text-gray-800">30 дней</div>
             </div>
         </div>
+        
+        <!-- Фильтр по часам -->
+        <div class="grid grid-cols-1 gap-4 mb-4">
+            <div class="bg-yellow-50 p-3 rounded-lg">
+                <div class="text-xs text-gray-600 mb-1">Фильтр по часам (UTC)</div>
+                <div class="text-sm font-semibold text-gray-800" id="hoursFilter">Загрузка...</div>
+            </div>
+        </div>
 
         <!-- Настройки диапазонов фильтров -->
         <div class="border-t pt-4 mb-4">
@@ -321,6 +329,35 @@
             document.getElementById('tradingMode').textContent = modeText;
             document.getElementById('tpSlParams').textContent = `${data.take_profit_percent}% / ${data.stop_loss_percent}%`;
             document.getElementById('positionParams').textContent = `$${data.position_size} / ${data.leverage}x`;
+            
+            // Отображаем фильтр по часам
+            if (data.allowed_hours && Array.isArray(data.allowed_hours)) {
+                if (data.allowed_hours.length === 24) {
+                    document.getElementById('hoursFilter').textContent = 'Все часы (0-23)';
+                } else if (data.allowed_hours.length === 0) {
+                    document.getElementById('hoursFilter').textContent = 'Нет выбранных часов';
+                } else {
+                    // Группируем последовательные часы для более компактного отображения
+                    const hours = data.allowed_hours.sort((a, b) => a - b);
+                    const ranges = [];
+                    let start = hours[0];
+                    let end = hours[0];
+                    
+                    for (let i = 1; i < hours.length; i++) {
+                        if (hours[i] === end + 1) {
+                            end = hours[i];
+                        } else {
+                            ranges.push(start === end ? `${start}` : `${start}-${end}`);
+                            start = hours[i];
+                            end = hours[i];
+                        }
+                    }
+                    ranges.push(start === end ? `${start}` : `${start}-${end}`);
+                    document.getElementById('hoursFilter').textContent = `Часы: ${ranges.join(', ')}`;
+                }
+            } else {
+                document.getElementById('hoursFilter').textContent = 'Все часы (по умолчанию)';
+            }
         } catch (error) {
             console.error('Ошибка загрузки настроек:', error);
         }
