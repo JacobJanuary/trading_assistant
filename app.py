@@ -34,12 +34,17 @@ if not secret_key:
 app.secret_key = secret_key
 
 # Настройки сессий для сервера
+from datetime import timedelta
+
 app.config.update(
     SESSION_COOKIE_SECURE=False,  # Для разработки - False, для продакшена - True
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
-    PERMANENT_SESSION_LIFETIME=3600,  # 1 час
-    SESSION_TYPE='filesystem' if os.getenv('SESSION_TYPE') == 'filesystem' else None
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),  # 30 дней для запомненных сессий
+    SESSION_TYPE='filesystem' if os.getenv('SESSION_TYPE') == 'filesystem' else None,
+    REMEMBER_COOKIE_DURATION=timedelta(days=30),  # Время жизни cookie "запомнить меня"
+    REMEMBER_COOKIE_SECURE=False,  # Для разработки
+    REMEMBER_COOKIE_HTTPONLY=True
 )
 
 # Настройка Flask-Login
@@ -116,6 +121,11 @@ def check_user_approval():
     if request.endpoint in public_endpoints or request.path.startswith('/static/'):
         return
     
+    # Обновляем активность сессии для авторизованных пользователей
+    if current_user.is_authenticated:
+        session.permanent = True  # Обновляем время жизни сессии при активности
+        session.modified = True  # Помечаем сессию как измененную
+    
     # Проверяем аутентификацию и подтверждение
     if current_user.is_authenticated:
         if not current_user.is_approved and not current_user.is_admin:
@@ -149,8 +159,15 @@ def login():
         
         if user:
             if user.is_approved or user.is_admin:
-                login_user(user, remember=request.form.get('remember_me'))
-                logger.info(f"Пользователь {username} вошел в систему")
+                # Проверяем, нужно ли запомнить пользователя
+                remember = bool(request.form.get('remember_me'))
+                login_user(user, remember=remember)
+                
+                # Если пользователь выбрал "запомнить меня", делаем сессию постоянной
+                if remember:
+                    session.permanent = True
+                
+                logger.info(f"Пользователь {username} вошел в систему (remember={remember})")
                 
                 # Перенаправление на запрошенную страницу или дашборд
                 next_page = request.args.get('next')
