@@ -1927,6 +1927,8 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                 float(signal.get('indicator_score', 0)),
                 float(signal.get('pattern_score', 0)),
                 float(signal.get('combination_score', 0)),
+                float(signal.get('score_week', 0)),
+                float(signal.get('score_month', 0)),
                 entry_price,
                 best_price_reached,
                 close_price,
@@ -2042,12 +2044,13 @@ def _insert_batch_results(db, batch_data):
             session_id, user_id, signal_timestamp, pair_symbol, trading_pair_id,
             signal_action, market_regime, exchange_name,
             total_score, indicator_score, pattern_score, combination_score,
+            score_week, score_month,
             entry_price, best_price, close_price, close_time,
             is_closed, close_reason, hours_to_close,
             pnl_percent, pnl_usd,
             max_potential_profit_percent, max_potential_profit_usd,
             tp_percent, sl_percent, position_size, leverage
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
 
     for data in batch_data:
