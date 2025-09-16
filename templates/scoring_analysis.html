@@ -311,7 +311,7 @@
                 <thead class="bg-gray-50">
                 <tr>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Время / Биржа
+                        Время (UTC) / Биржа
                     </th>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Пара
@@ -619,7 +619,8 @@
         tbody.innerHTML = signals.map(signal => {
             const time = new Date(signal.timestamp).toLocaleTimeString('ru-RU', {
                 hour: '2-digit',
-                minute: '2-digit'
+                minute: '2-digit',
+                timeZone: 'UTC'
             });
 
             // Определяем статус badge

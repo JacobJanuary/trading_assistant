@@ -1134,6 +1134,8 @@ def api_scoring_apply_filters():
         print(f"[API] Обработка фильтров для даты {selected_date}")
         print(f"[API] Фильтры: score_week >= {score_week_min}, score_month >= {score_month_min}")
         print(f"[API] Режим: {'Trailing Stop' if use_trailing_stop else 'Fixed TP/SL'}")
+        print(f"[API] Разрешенные часы: {allowed_hours if allowed_hours else 'Все'}")
+        print(f"[API] Количество разрешенных часов: {len(allowed_hours) if allowed_hours else 24}")
 
         # Получаем сигналы по упрощенным фильтрам с учетом разрешенных часов
         raw_signals = get_scoring_signals(db, selected_date, score_week_min, score_month_min, allowed_hours)
