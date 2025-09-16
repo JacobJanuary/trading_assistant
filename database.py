@@ -1428,7 +1428,11 @@ def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=No
     print(f"[SCORING] Дата: {date_filter}")
     print(f"[SCORING] Минимальный score_week: {score_week_min}")
     print(f"[SCORING] Минимальный score_month: {score_month_min}")
-    print(f"[SCORING] Разрешенные часы: {allowed_hours if allowed_hours else 'Все'}")
+    if allowed_hours:
+        print(f"[SCORING] Разрешенные часы (UTC): {sorted(allowed_hours)}")
+        print(f"[SCORING] Количество разрешенных часов: {len(allowed_hours)}")
+    else:
+        print(f"[SCORING] Разрешенные часы: Все (фильтр не применяется)")
 
     # Базовый запрос к fas.scoring_history
     query = """
@@ -1487,7 +1491,7 @@ def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=No
 
     # Добавляем фильтр по разрешенным часам если задан
     if allowed_hours is not None and allowed_hours:
-        query += " AND EXTRACT(hour FROM sh.timestamp AT TIME ZONE 'UTC') = ANY(%s)"
+        query += " AND EXTRACT(hour FROM sh.timestamp AT TIME ZONE 'UTC')::integer = ANY(%s::integer[])"
         params.append(allowed_hours)
 
     query += " ORDER BY sh.timestamp DESC"
@@ -1498,9 +1502,10 @@ def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=No
         if results:
             print(f"[SCORING] Найдено сигналов: {len(results)}")
 
-            # Группируем по биржам для статистики
+            # Группируем по биржам и часам для статистики
             exchanges_count = {}
             actions_count = {'BUY': 0, 'SELL': 0, 'LONG': 0, 'SHORT': 0, 'NEUTRAL': 0}
+            hours_count = {}
 
             for signal in results:
                 exchange = signal.get('exchange_name', 'Unknown')
@@ -1509,10 +1514,27 @@ def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=No
                 action = signal.get('signal_action', 'NEUTRAL')
                 if action in actions_count:
                     actions_count[action] += 1
+                    
+                # Добавляем статистику по часам
+                signal_timestamp = signal.get('timestamp')
+                if signal_timestamp:
+                    signal_hour = signal_timestamp.hour
+                    hours_count[signal_hour] = hours_count.get(signal_hour, 0) + 1
 
             print("\n[SCORING] Распределение по биржам:")
             for exchange, count in exchanges_count.items():
                 print(f"  {exchange}: {count} сигналов")
+            
+            if allowed_hours and hours_count:
+                print("\n[SCORING] Распределение по часам (UTC):")
+                for hour in sorted(hours_count.keys()):
+                    print(f"  {hour:02d}:00 - {hours_count[hour]} сигналов")
+                    
+                # Проверяем, есть ли сигналы вне разрешенных часов
+                invalid_hours = [h for h in hours_count.keys() if h not in allowed_hours]
+                if invalid_hours:
+                    print(f"\n[SCORING] ВНИМАНИЕ! Найдены сигналы в неразрешенные часы: {invalid_hours}")
+                    print(f"[SCORING] Это может указывать на проблему с фильтром")
 
             print("\n[SCORING] Распределение по типам сигналов:")
             for action, count in actions_count.items():
@@ -1586,7 +1608,7 @@ def get_scoring_date_info(db, date, score_week_min=None, score_month_min=None, a
 
         # Добавляем фильтр по разрешенным часам если задан
         if allowed_hours is not None and allowed_hours:
-            count_query += " AND EXTRACT(hour FROM sh.timestamp AT TIME ZONE 'UTC') = ANY(%s)"
+            count_query += " AND EXTRACT(hour FROM sh.timestamp AT TIME ZONE 'UTC')::integer = ANY(%s::integer[])"
             params.append(allowed_hours)
 
         count_result = db.execute_query(count_query, tuple(params), fetch=True)
