@@ -1139,6 +1139,35 @@ def scoring_analysis_v2():
             trailing_activation = float(settings.get('trailing_activation_pct', 1.0))
             allowed_hours = settings.get('allowed_hours', list(range(24)))
 
+        # Форматируем allowed_hours для отображения
+        hours_display = ""
+        if allowed_hours and len(allowed_hours) < 24:
+            # Группируем часы в диапазоны для компактного отображения
+            sorted_hours = sorted(allowed_hours)
+            ranges = []
+            start = sorted_hours[0]
+            end = sorted_hours[0]
+            
+            for hour in sorted_hours[1:]:
+                if hour == end + 1:
+                    end = hour
+                else:
+                    if start == end:
+                        ranges.append(str(start))
+                    else:
+                        ranges.append(f"{start}-{end}")
+                    start = hour
+                    end = hour
+            
+            if start == end:
+                ranges.append(str(start))
+            else:
+                ranges.append(f"{start}-{end}")
+            
+            hours_display = f"Часы (UTC): {', '.join(ranges)}"
+        else:
+            hours_display = "Часы (UTC): Все"
+
         return render_template(
             'scoring_analysis_v2.html',
             date_range=date_range,
@@ -1153,7 +1182,7 @@ def scoring_analysis_v2():
                 'trailing_distance': trailing_distance,
                 'trailing_activation': trailing_activation
             },
-            allowed_hours=allowed_hours
+            hours_display=hours_display
         )
 
     except Exception as e:
@@ -1182,12 +1211,12 @@ def api_scoring_apply_filters_v2():
         score_week_min = data.get('score_week_min')
         score_month_min = data.get('score_month_min')
         max_trades_per_15min = data.get('max_trades_per_15min', 3)
-        allowed_hours = data.get('allowed_hours', list(range(24)))
         
-        # Получаем настройки пользователя
+        # Получаем настройки пользователя включая allowed_hours
         settings_query = """
             SELECT take_profit_percent, stop_loss_percent, position_size_usd, leverage,
-                   use_trailing_stop, trailing_distance_pct, trailing_activation_pct
+                   use_trailing_stop, trailing_distance_pct, trailing_activation_pct,
+                   allowed_hours
             FROM web.user_signal_filters
             WHERE user_id = %s
         """
@@ -1201,6 +1230,7 @@ def api_scoring_apply_filters_v2():
         use_trailing_stop = False
         trailing_distance_pct = 2.0
         trailing_activation_pct = 1.0
+        allowed_hours = list(range(24))  # По умолчанию все часы
 
         if user_settings:
             settings = user_settings[0]
@@ -1211,6 +1241,10 @@ def api_scoring_apply_filters_v2():
             use_trailing_stop = settings.get('use_trailing_stop', False)
             trailing_distance_pct = float(settings.get('trailing_distance_pct', 2.0))
             trailing_activation_pct = float(settings.get('trailing_activation_pct', 1.0))
+            # Получаем allowed_hours из настроек пользователя
+            allowed_hours = settings.get('allowed_hours', list(range(24)))
+            if not allowed_hours:
+                allowed_hours = list(range(24))
         
         # Если в запросе переданы параметры, используем их
         tp_percent = data.get('tp_percent', tp_percent)

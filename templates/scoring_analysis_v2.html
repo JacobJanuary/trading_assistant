@@ -103,6 +103,7 @@
                     <div id="previewStats" class="text-sm text-gray-600">
                         <div>Сигналов найдено: <span id="previewCount" class="font-bold text-blue-600">0</span></div>
                         <div>После фильтра 15 мин: <span id="filteredCount" class="font-bold text-green-600">0</span></div>
+                        <div class="text-xs text-gray-500 mt-1">{{ hours_display }}</div>
                         <div class="text-xs text-gray-500 mt-1">Нажмите "Применить фильтры" для детального анализа</div>
                     </div>
                 </div>
@@ -193,17 +194,6 @@
         </div>
     </div>
 
-    <!-- Фильтр по часам (UTC) -->
-    <div id="hourFilterSection" class="hidden bg-white rounded-lg shadow-lg p-6 mb-6">
-        <h2 class="text-lg font-semibold text-gray-800 mb-4">
-            <i class="fas fa-clock mr-2 text-purple-600"></i>
-            Фильтр по часам (UTC)
-            <span id="selectedHoursCount" class="text-sm font-normal text-gray-600 ml-2"></span>
-        </h2>
-        <div id="hourCheckboxes" class="grid grid-cols-6 md:grid-cols-12 gap-2">
-            <!-- Чекбоксы часов будут добавлены через JS -->
-        </div>
-    </div>
 
     <!-- Таблица результатов -->
     <div id="resultsTable" class="hidden bg-white rounded-lg shadow-lg overflow-hidden">
@@ -310,16 +300,11 @@
     let currentScoreMonth = 0;
     let currentMaxTrades = 3;
     let currentSignals = [];
-    let selectedHours = Array.from({length: 24}, (_, i) => i); // По умолчанию все часы
 
     // Инициализация страницы
     document.addEventListener('DOMContentLoaded', function() {
         initializePage();
-        initializeHourCheckboxes(); // Инициализируем чекбоксы сразу
-        loadUserHourFilter();
         updateDateInfo();
-        // Показываем секцию с фильтром по часам сразу
-        document.getElementById('hourFilterSection').classList.remove('hidden');
     });
 
     function initializePage() {
@@ -355,85 +340,6 @@
         updatePreviewCount();
     }
 
-    // Загрузка фильтра по часам пользователя
-    function loadUserHourFilter() {
-        fetch('/api/get_user_hour_filter')
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success' && data.allowed_hours) {
-                    selectedHours = data.allowed_hours;
-                    // Обновляем состояние чекбоксов если они уже созданы
-                    for (let hour = 0; hour < 24; hour++) {
-                        const checkbox = document.getElementById(`hour_${hour}`);
-                        if (checkbox) {
-                            checkbox.checked = selectedHours.includes(hour);
-                        }
-                    }
-                    updateSelectedHoursCount();
-                }
-            })
-            .catch(error => {
-                console.error('Ошибка загрузки фильтра по часам:', error);
-                // При ошибке используем все часы по умолчанию
-                selectedHours = Array.from({length: 24}, (_, i) => i);
-            });
-    }
-
-    // Инициализация чекбоксов для часов
-    function initializeHourCheckboxes() {
-        const container = document.getElementById('hourCheckboxes');
-        container.innerHTML = '';
-        
-        for (let hour = 0; hour < 24; hour++) {
-            const div = document.createElement('div');
-            div.className = 'flex items-center';
-            
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.id = `hour_${hour}`;
-            checkbox.value = hour;
-            checkbox.checked = selectedHours.includes(hour);
-            checkbox.className = 'h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded';
-            checkbox.onchange = updateSelectedHours;
-            
-            const label = document.createElement('label');
-            label.htmlFor = `hour_${hour}`;
-            label.className = 'ml-1 text-sm text-gray-700';
-            label.textContent = hour.toString().padStart(2, '0');
-            
-            div.appendChild(checkbox);
-            div.appendChild(label);
-            container.appendChild(div);
-        }
-        
-        updateSelectedHoursCount();
-    }
-
-    // Обновление выбранных часов
-    function updateSelectedHours() {
-        selectedHours = [];
-        for (let hour = 0; hour < 24; hour++) {
-            const checkbox = document.getElementById(`hour_${hour}`);
-            if (checkbox && checkbox.checked) {
-                selectedHours.push(hour);
-            }
-        }
-        updateSelectedHoursCount();
-    }
-
-    // Обновление счетчика выбранных часов
-    function updateSelectedHoursCount() {
-        const count = selectedHours.length;
-        let text = '';
-        if (count === 24) {
-            text = 'Все часы';
-        } else if (count === 0) {
-            text = 'Не выбрано';
-        } else {
-            text = `Выбрано: ${count}`;
-        }
-        document.getElementById('selectedHoursCount').textContent = text;
-    }
 
     // Обновление информации о дате
     function updateDateInfo() {
@@ -534,8 +440,7 @@
                         tp_percent: tp,
                         sl_percent: sl,
                         position_size: positionSize,
-                        leverage: leverage,
-                        allowed_hours: selectedHours
+                        leverage: leverage
                     })
                 })
                 .then(response => response.json())
