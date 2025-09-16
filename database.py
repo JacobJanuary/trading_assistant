@@ -2084,15 +2084,17 @@ def get_scoring_signals_v2(db, date_filter, score_week_min=None, score_month_min
     print(f"[SCORING V2] Минимальный score_week: {score_week_min}")
     print(f"[SCORING V2] Минимальный score_month: {score_month_min}")
     print(f"[SCORING V2] Максимум сделок за 15 минут: {max_trades_per_15min}")
+    if allowed_hours:
+        print(f"[SCORING V2] Разрешенные часы (UTC): {sorted(allowed_hours)}")
     
-    # Сначала получаем все сигналы без фильтра по 15 минутам
+    # Сначала получаем все сигналы С УЧЕТОМ фильтра по часам
     all_signals = get_scoring_signals(db, date_filter, score_week_min, score_month_min, allowed_hours)
     
     if not all_signals:
         print(f"[SCORING V2] Нет сигналов для фильтрации")
         return []
     
-    print(f"[SCORING V2] Найдено {len(all_signals)} сигналов до фильтрации по 15 минутам")
+    print(f"[SCORING V2] Найдено {len(all_signals)} сигналов после фильтра по часам")
     
     # Группируем сигналы по 15-минутным интервалам
     from datetime import datetime, timedelta
