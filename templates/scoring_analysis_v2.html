@@ -315,8 +315,11 @@
     // Инициализация страницы
     document.addEventListener('DOMContentLoaded', function() {
         initializePage();
+        initializeHourCheckboxes(); // Инициализируем чекбоксы сразу
         loadUserHourFilter();
         updateDateInfo();
+        // Показываем секцию с фильтром по часам сразу
+        document.getElementById('hourFilterSection').classList.remove('hidden');
     });
 
     function initializePage() {
@@ -359,8 +362,20 @@
             .then(data => {
                 if (data.status === 'success' && data.allowed_hours) {
                     selectedHours = data.allowed_hours;
-                    initializeHourCheckboxes();
+                    // Обновляем состояние чекбоксов если они уже созданы
+                    for (let hour = 0; hour < 24; hour++) {
+                        const checkbox = document.getElementById(`hour_${hour}`);
+                        if (checkbox) {
+                            checkbox.checked = selectedHours.includes(hour);
+                        }
+                    }
+                    updateSelectedHoursCount();
                 }
+            })
+            .catch(error => {
+                console.error('Ошибка загрузки фильтра по часам:', error);
+                // При ошибке используем все часы по умолчанию
+                selectedHours = Array.from({length: 24}, (_, i) => i);
             });
     }
 
@@ -548,7 +563,7 @@
         
         // Показываем секции с результатами
         document.getElementById('resultsStats').classList.remove('hidden');
-        document.getElementById('hourFilterSection').classList.remove('hidden');
+        // hourFilterSection уже показан при загрузке страницы
         document.getElementById('resultsTable').classList.remove('hidden');
         
         // Активируем кнопку экспорта

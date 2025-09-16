@@ -1221,6 +1221,14 @@ def api_scoring_apply_filters_v2():
         print(f"[API V2] Обработка фильтров для даты {selected_date}")
         print(f"[API V2] Фильтры: score_week >= {score_week_min}, score_month >= {score_month_min}")
         print(f"[API V2] Максимум сделок за 15 минут: {max_trades_per_15min}")
+        
+        if allowed_hours is None or len(allowed_hours) == 0:
+            print(f"[API V2] Разрешенные часы: Не заданы")
+        elif len(allowed_hours) == 24:
+            print(f"[API V2] Разрешенные часы: Все 24 часа (фильтр не применяется)")
+        else:
+            print(f"[API V2] Разрешенные часы: {sorted(allowed_hours)[:10]}... ({len(allowed_hours)} часов)")
+        
         print(f"[API V2] Режим: {'Trailing Stop' if use_trailing_stop else 'Fixed TP/SL'}")
 
         # Получаем сигналы с учетом фильтра по 15 минутам

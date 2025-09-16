@@ -1428,11 +1428,14 @@ def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=No
     print(f"[SCORING] Дата: {date_filter}")
     print(f"[SCORING] Минимальный score_week: {score_week_min}")
     print(f"[SCORING] Минимальный score_month: {score_month_min}")
-    if allowed_hours:
+    
+    if allowed_hours is None or len(allowed_hours) == 0:
+        print(f"[SCORING] Разрешенные часы: Не заданы (фильтр не применяется)")
+    elif len(allowed_hours) == 24:
+        print(f"[SCORING] Разрешенные часы: Все 24 часа (фильтр не применяется)")
+    else:
         print(f"[SCORING] Разрешенные часы (UTC): {sorted(allowed_hours)}")
         print(f"[SCORING] Количество разрешенных часов: {len(allowed_hours)}")
-    else:
-        print(f"[SCORING] Разрешенные часы: Все (фильтр не применяется)")
 
     # Базовый запрос к fas.scoring_history
     query = """
@@ -1490,7 +1493,8 @@ def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=No
         params.append(score_month_min)
 
     # Добавляем фильтр по разрешенным часам если задан
-    if allowed_hours is not None and allowed_hours:
+    # Применяем фильтр только если выбраны НЕ все часы (не 24 часа)
+    if allowed_hours is not None and len(allowed_hours) > 0 and len(allowed_hours) < 24:
         query += " AND EXTRACT(hour FROM sh.timestamp AT TIME ZONE 'UTC')::integer = ANY(%s::integer[])"
         params.append(allowed_hours)
 
@@ -2084,7 +2088,7 @@ def get_scoring_signals_v2(db, date_filter, score_week_min=None, score_month_min
     print(f"[SCORING V2] Минимальный score_week: {score_week_min}")
     print(f"[SCORING V2] Минимальный score_month: {score_month_min}")
     print(f"[SCORING V2] Максимум сделок за 15 минут: {max_trades_per_15min}")
-    if allowed_hours:
+    if allowed_hours is not None and len(allowed_hours) > 0 and len(allowed_hours) < 24:
         print(f"[SCORING V2] Разрешенные часы (UTC): {sorted(allowed_hours)}")
     
     # Сначала получаем все сигналы С УЧЕТОМ фильтра по часам
