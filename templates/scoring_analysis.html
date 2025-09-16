@@ -663,8 +663,8 @@
                     </td>
                     <td class="px-4 py-3">
                         <div class="flex flex-col space-y-0.5 text-xs">
-                            <div>W: <span class="font-semibold">${signal.score_week || 'N/A'}</span></div>
-                            <div>M: <span class="font-semibold">${signal.score_month || 'N/A'}</span></div>
+                            <div>W: <span class="font-semibold">${signal.score_week !== null && signal.score_week !== undefined ? signal.score_week.toFixed(1) : 'N/A'}</span></div>
+                            <div>M: <span class="font-semibold">${signal.score_month !== null && signal.score_month !== undefined ? signal.score_month.toFixed(1) : 'N/A'}</span></div>
                         </div>
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-900 font-mono">
