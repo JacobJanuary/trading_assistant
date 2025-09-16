@@ -1,0 +1,869 @@
+{% extends "base.html" %}
+
+{% block title %}Анализ скоринга V2 - Помощник Трейдера{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <h1 class="text-2xl font-bold text-gray-800 mb-6">
+        <i class="fas fa-chart-area mr-2 text-blue-600"></i>
+        Анализ скоринга (Расширенный)
+    </h1>
+
+    <!-- Фильтр даты с информацией о рынке -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">
+            <i class="fas fa-filter mr-2 text-blue-600"></i>
+            Параметры фильтрации
+        </h2>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Левая колонка: Дата и фильтры скоринга -->
+            <div class="space-y-4">
+                <!-- Выбор даты -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Дата анализа</label>
+                    <input type="date" id="dateFilter"
+                           value="{{ selected_date }}"
+                           min="{{ date_range.min_date }}"
+                           max="{{ date_range.max_date }}"
+                           onchange="updateDateInfo()"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                    <span class="text-xs text-gray-600 mt-1 block">
+                        Доступно: {{ date_range.min_date }} — {{ date_range.max_date }}
+                    </span>
+                </div>
+
+                <!-- Фильтр Score Week -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        Минимальный Score Week
+                        <span id="scoreWeekValue" class="text-blue-600 font-semibold ml-2">0</span>
+                    </label>
+                    <div class="flex items-center space-x-3">
+                        <span class="text-sm text-gray-500">-100</span>
+                        <input type="range" id="scoreWeekFilter"
+                               min="-100" max="100" step="1" value="0"
+                               oninput="updateScoreDisplay('week', this.value)"
+                               class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                        <span class="text-sm text-gray-500">100</span>
+                    </div>
+                </div>
+
+                <!-- Фильтр Score Month -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        Минимальный Score Month
+                        <span id="scoreMonthValue" class="text-blue-600 font-semibold ml-2">0</span>
+                    </label>
+                    <div class="flex items-center space-x-3">
+                        <span class="text-sm text-gray-500">-100</span>
+                        <input type="range" id="scoreMonthFilter"
+                               min="-100" max="100" step="1" value="0"
+                               oninput="updateScoreDisplay('month', this.value)"
+                               class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                        <span class="text-sm text-gray-500">100</span>
+                    </div>
+                </div>
+
+                <!-- НОВЫЙ ФИЛЬТР: Не более сделок за 15 минут -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        Не более сделок за 15 минут
+                        <span class="text-blue-600 font-semibold ml-2" id="maxTradesValue">3</span>
+                    </label>
+                    <div class="flex items-center space-x-3">
+                        <span class="text-sm text-gray-500">1</span>
+                        <input type="range" id="maxTradesFilter"
+                               min="1" max="10" step="1" value="3"
+                               oninput="updateMaxTradesDisplay(this.value)"
+                               class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                        <span class="text-sm text-gray-500">10</span>
+                    </div>
+                    <span class="text-xs text-gray-500 mt-1 block">
+                        Выбираются топ N сигналов с максимальным Score Week каждые 15 минут
+                    </span>
+                </div>
+            </div>
+
+            <!-- Правая колонка: Информация о рынке и результатах -->
+            <div class="space-y-4">
+                <!-- Информация о режимах рынка -->
+                <div id="marketInfo" class="bg-gray-50 p-4 rounded-lg">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3">Режимы рынка в выбранный день</h3>
+                    <div id="marketRegimes" class="grid grid-cols-3 gap-2 mb-3">
+                        <!-- Заполняется через JS -->
+                    </div>
+                    <div id="dominantRegime" class="text-sm text-gray-600">
+                        <!-- Заполняется через JS -->
+                    </div>
+                </div>
+
+                <!-- Превью результатов -->
+                <div class="bg-blue-50 p-4 rounded-lg">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-2">Предварительный подсчет</h3>
+                    <div id="previewStats" class="text-sm text-gray-600">
+                        <div>Сигналов найдено: <span id="previewCount" class="font-bold text-blue-600">0</span></div>
+                        <div>После фильтра 15 мин: <span id="filteredCount" class="font-bold text-green-600">0</span></div>
+                        <div class="text-xs text-gray-500 mt-1">Нажмите "Применить фильтры" для детального анализа</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Панель управления и параметры расчета -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">
+            <i class="fas fa-cog mr-2 text-blue-600"></i>
+            Параметры торговли
+        </h2>
+
+        <div class="grid grid-cols-2 md:grid-cols-2 gap-4 mb-4">
+            <!-- Position Size -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                    Размер позиции ($)
+                </label>
+                <input type="number" id="positionSize"
+                       value="{{ params.position_size_usd|default(100) }}"
+                       min="10" max="10000" step="10"
+                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+            </div>
+
+            <!-- Leverage -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                    Плечо
+                </label>
+                <input type="number" id="leverage"
+                       value="{{ params.leverage|default(5) }}"
+                       min="1" max="20" step="1"
+                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+            </div>
+        </div>
+
+        <!-- Кнопки управления -->
+        <div class="flex flex-wrap gap-3 mt-6">
+            <button onclick="applyFilters()"
+                    class="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors">
+                <i class="fas fa-play mr-2"></i>
+                Применить фильтры
+            </button>
+
+            <!-- Группа кнопок сохранения/загрузки -->
+            <div class="flex gap-2">
+                <button onclick="showSaveModal()"
+                        class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 transition-colors">
+                    <i class="fas fa-save mr-2"></i>
+                    Сохранить
+                </button>
+
+                <button onclick="showLoadModal()"
+                        class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors">
+                    <i class="fas fa-folder-open mr-2"></i>
+                    Загрузить
+                </button>
+            </div>
+
+            <button onclick="exportToExcel()"
+                    id="exportBtn"
+                    disabled
+                    class="px-4 py-2 bg-gray-400 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:enabled:bg-gray-600 transition-colors">
+                <i class="fas fa-file-excel mr-2"></i>
+                Экспорт
+            </button>
+        </div>
+
+        <!-- Контейнер для отображения сохраненных фильтров -->
+        <div id="savedFiltersInfo" class="hidden mt-4 p-3 bg-blue-50 rounded-md">
+            <span class="text-sm text-blue-800">
+                <i class="fas fa-info-circle mr-1"></i>
+                <span id="savedFiltersText"></span>
+            </span>
+        </div>
+    </div>
+
+    <!-- Статистика результатов -->
+    <div id="resultsStats" class="hidden bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">
+            <i class="fas fa-chart-bar mr-2 text-green-600"></i>
+            Статистика результатов
+        </h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <!-- Статистика будет заполнена через JS -->
+        </div>
+    </div>
+
+    <!-- Фильтр по часам (UTC) -->
+    <div id="hourFilterSection" class="hidden bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">
+            <i class="fas fa-clock mr-2 text-purple-600"></i>
+            Фильтр по часам (UTC)
+            <span id="selectedHoursCount" class="text-sm font-normal text-gray-600 ml-2"></span>
+        </h2>
+        <div id="hourCheckboxes" class="grid grid-cols-6 md:grid-cols-12 gap-2">
+            <!-- Чекбоксы часов будут добавлены через JS -->
+        </div>
+    </div>
+
+    <!-- Таблица результатов -->
+    <div id="resultsTable" class="hidden bg-white rounded-lg shadow-lg overflow-hidden">
+        <div class="p-6 border-b">
+            <h2 class="text-lg font-semibold text-gray-800">
+                <i class="fas fa-table mr-2 text-indigo-600"></i>
+                Детализация сигналов
+                <span id="signalCount" class="text-sm font-normal text-gray-600 ml-2"></span>
+            </h2>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Время (UTC) / Биржа
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Пара
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Действие
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Scores
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Вход
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Текущая
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        P&L
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Потенциал
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Статус
+                    </th>
+                </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200" id="signalsTableBody">
+                    <!-- Данные будут заполнены через JS -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Модальные окна остаются такими же как в оригинале -->
+<!-- Модальное окно сохранения фильтра -->
+<div id="saveModal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+    <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+        <div class="mt-3">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Сохранить набор фильтров</h3>
+            <input type="text" id="filterName" placeholder="Название набора фильтров"
+                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4">
+            <div class="flex justify-end space-x-3">
+                <button onclick="closeSaveModal()"
+                        class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400">
+                    Отмена
+                </button>
+                <button onclick="saveFilters()"
+                        class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                    Сохранить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно загрузки фильтра -->
+<div id="loadModal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+    <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+        <div class="mt-3">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Загрузить набор фильтров</h3>
+            <select id="savedFiltersList" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4">
+                <option value="">Выберите набор фильтров</option>
+            </select>
+            <div class="flex justify-end space-x-3">
+                <button onclick="closeLoadModal()"
+                        class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400">
+                    Отмена
+                </button>
+                <button onclick="loadSelectedFilter()"
+                        class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                    Загрузить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Notification -->
+<div id="notification" class="hidden fixed bottom-4 right-4 px-6 py-3 bg-green-500 text-white rounded-lg shadow-lg z-50">
+    <span id="notificationText"></span>
+</div>
+
+<script>
+    // Глобальные переменные для хранения фильтров
+    let currentScoreWeek = 0;
+    let currentScoreMonth = 0;
+    let currentMaxTrades = 3;
+    let currentSignals = [];
+    let selectedHours = Array.from({length: 24}, (_, i) => i); // По умолчанию все часы
+
+    // Инициализация страницы
+    document.addEventListener('DOMContentLoaded', function() {
+        initializePage();
+        loadUserHourFilter();
+        updateDateInfo();
+    });
+
+    function initializePage() {
+        // Загружаем сохраненные значения фильтров из локального хранилища
+        const savedFilters = localStorage.getItem('scoringFiltersV2');
+        if (savedFilters) {
+            const filters = JSON.parse(savedFilters);
+            document.getElementById('scoreWeekFilter').value = filters.scoreWeek || 0;
+            document.getElementById('scoreMonthFilter').value = filters.scoreMonth || 0;
+            document.getElementById('maxTradesFilter').value = filters.maxTrades || 3;
+            updateScoreDisplay('week', filters.scoreWeek || 0);
+            updateScoreDisplay('month', filters.scoreMonth || 0);
+            updateMaxTradesDisplay(filters.maxTrades || 3);
+        }
+    }
+
+    // Обновление отображения Score
+    function updateScoreDisplay(type, value) {
+        if (type === 'week') {
+            currentScoreWeek = parseInt(value);
+            document.getElementById('scoreWeekValue').textContent = value;
+        } else {
+            currentScoreMonth = parseInt(value);
+            document.getElementById('scoreMonthValue').textContent = value;
+        }
+        updatePreviewCount();
+    }
+
+    // Обновление отображения максимального количества сделок
+    function updateMaxTradesDisplay(value) {
+        currentMaxTrades = parseInt(value);
+        document.getElementById('maxTradesValue').textContent = value;
+        updatePreviewCount();
+    }
+
+    // Загрузка фильтра по часам пользователя
+    function loadUserHourFilter() {
+        fetch('/api/get_user_hour_filter')
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success' && data.allowed_hours) {
+                    selectedHours = data.allowed_hours;
+                    initializeHourCheckboxes();
+                }
+            });
+    }
+
+    // Инициализация чекбоксов для часов
+    function initializeHourCheckboxes() {
+        const container = document.getElementById('hourCheckboxes');
+        container.innerHTML = '';
+        
+        for (let hour = 0; hour < 24; hour++) {
+            const div = document.createElement('div');
+            div.className = 'flex items-center';
+            
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.id = `hour_${hour}`;
+            checkbox.value = hour;
+            checkbox.checked = selectedHours.includes(hour);
+            checkbox.className = 'h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded';
+            checkbox.onchange = updateSelectedHours;
+            
+            const label = document.createElement('label');
+            label.htmlFor = `hour_${hour}`;
+            label.className = 'ml-1 text-sm text-gray-700';
+            label.textContent = hour.toString().padStart(2, '0');
+            
+            div.appendChild(checkbox);
+            div.appendChild(label);
+            container.appendChild(div);
+        }
+        
+        updateSelectedHoursCount();
+    }
+
+    // Обновление выбранных часов
+    function updateSelectedHours() {
+        selectedHours = [];
+        for (let hour = 0; hour < 24; hour++) {
+            const checkbox = document.getElementById(`hour_${hour}`);
+            if (checkbox && checkbox.checked) {
+                selectedHours.push(hour);
+            }
+        }
+        updateSelectedHoursCount();
+    }
+
+    // Обновление счетчика выбранных часов
+    function updateSelectedHoursCount() {
+        const count = selectedHours.length;
+        let text = '';
+        if (count === 24) {
+            text = 'Все часы';
+        } else if (count === 0) {
+            text = 'Не выбрано';
+        } else {
+            text = `Выбрано: ${count}`;
+        }
+        document.getElementById('selectedHoursCount').textContent = text;
+    }
+
+    // Обновление информации о дате
+    function updateDateInfo() {
+        const date = document.getElementById('dateFilter').value;
+        
+        fetch('/api/scoring/get_date_info', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({date: date})
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.status === 'success') {
+                // Обновляем информацию о режимах рынка
+                updateMarketRegimes(result.market_regimes);
+            }
+        })
+        .catch(error => {
+            console.error('Ошибка получения информации о дате:', error);
+        });
+    }
+
+    // Обновление превью количества сигналов
+    function updatePreviewCount() {
+        const date = document.getElementById('dateFilter').value;
+
+        fetch('/api/scoring/get_date_info_v2', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                date: date,
+                score_week: currentScoreWeek,
+                score_month: currentScoreMonth,
+                max_trades_per_15min: currentMaxTrades
+            })
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.status === 'success') {
+                document.getElementById('previewCount').textContent = result.signal_count || 0;
+                document.getElementById('filteredCount').textContent = result.filtered_count || 0;
+            }
+        });
+    }
+
+    // Применение фильтров
+    function applyFilters() {
+        const date = document.getElementById('dateFilter').value;
+        const positionSize = parseFloat(document.getElementById('positionSize').value);
+        const leverage = parseInt(document.getElementById('leverage').value);
+        
+        // Используем параметры из сохраненной стратегии
+        const tp = {{ params.tp_percent|default(4.0) }};
+        const sl = {{ params.sl_percent|default(3.0) }};
+
+        // Проверка минимальных значений фильтров
+        if (currentScoreWeek < -100 || currentScoreMonth < -100) {
+            alert('Неверные значения фильтров');
+            return;
+        }
+
+        // Получаем режим торговли
+        fetch('/api/get_user_trading_mode')
+            .then(response => response.json())
+            .then(modeData => {
+                const modeText = modeData.use_trailing_stop ?
+                    `Trailing Stop (Activation: ${modeData.trailing_activation_pct}%, Distance: ${modeData.trailing_distance_pct}%)` :
+                    `Fixed TP/SL`;
+
+                // Подтверждение
+                const message = `Будут обработаны сигналы с:\n` +
+                              `- Score Week >= ${currentScoreWeek}\n` +
+                              `- Score Month >= ${currentScoreMonth}\n` +
+                              `- Макс. сделок за 15 мин: ${currentMaxTrades}\n\n` +
+                              `Режим: ${modeText}\n` +
+                              `Параметры: TP=${tp}%, SL=${sl}%, Size=$${positionSize}, Lev=${leverage}x\n\n` +
+                              `Продолжить?`;
+
+                if (!confirm(message)) {
+                    return;
+                }
+
+                // Показываем индикатор загрузки
+                const button = document.querySelector('button[onclick="applyFilters()"]');
+                const originalText = button.innerHTML;
+                button.disabled = true;
+                button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Обработка...';
+
+                // Отправляем запрос
+                fetch('/api/scoring/apply_filters_v2', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        date: date,
+                        score_week_min: currentScoreWeek,
+                        score_month_min: currentScoreMonth,
+                        max_trades_per_15min: currentMaxTrades,
+                        tp_percent: tp,
+                        sl_percent: sl,
+                        position_size: positionSize,
+                        leverage: leverage,
+                        allowed_hours: selectedHours
+                    })
+                })
+                .then(response => response.json())
+                .then(result => {
+                    if (result.status === 'success') {
+                        updateResults(result.data);
+                        showNotification(`Обработано ${result.data.stats.total} сигналов`, 'success');
+                    } else {
+                        alert('Ошибка: ' + result.message);
+                    }
+                })
+                .catch(error => {
+                    alert('Ошибка сети: ' + error);
+                })
+                .finally(() => {
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                });
+            });
+    }
+
+    // Обновление результатов
+    function updateResults(data) {
+        currentSignals = data.signals;
+        
+        // Показываем секции с результатами
+        document.getElementById('resultsStats').classList.remove('hidden');
+        document.getElementById('hourFilterSection').classList.remove('hidden');
+        document.getElementById('resultsTable').classList.remove('hidden');
+        
+        // Активируем кнопку экспорта
+        document.getElementById('exportBtn').disabled = false;
+        document.getElementById('exportBtn').classList.replace('bg-gray-400', 'bg-green-600');
+        
+        // Обновляем статистику
+        updateStats(data.stats);
+        
+        // Обновляем таблицу
+        updateSignalsTable(data.signals);
+        
+        // Обновляем счетчик сигналов
+        document.getElementById('signalCount').textContent = `(${data.signals.length} сигналов)`;
+    }
+
+    // Остальные функции остаются такими же как в оригинале...
+    
+    function updateMarketRegimes(regimes) {
+        const container = document.getElementById('marketRegimes');
+        const dominantDiv = document.getElementById('dominantRegime');
+        
+        if (!regimes || regimes.length === 0) {
+            container.innerHTML = '<span class="text-sm text-gray-500">Нет данных о режимах</span>';
+            dominantDiv.textContent = '';
+            return;
+        }
+        
+        container.innerHTML = '';
+        let maxCount = 0;
+        let dominantRegime = '';
+        
+        regimes.forEach(regime => {
+            const div = document.createElement('div');
+            div.className = 'text-center p-2 bg-white rounded border';
+            
+            let colorClass = '';
+            if (regime.regime === 'BULLISH') colorClass = 'text-green-600 border-green-200';
+            else if (regime.regime === 'BEARISH') colorClass = 'text-red-600 border-red-200';
+            else colorClass = 'text-gray-600 border-gray-200';
+            
+            div.className += ' ' + colorClass;
+            div.innerHTML = `
+                <div class="text-xs font-semibold">${regime.regime}</div>
+                <div class="text-lg font-bold">${regime.count}</div>
+            `;
+            
+            container.appendChild(div);
+            
+            if (regime.count > maxCount) {
+                maxCount = regime.count;
+                dominantRegime = regime.regime;
+            }
+        });
+        
+        dominantDiv.innerHTML = `Доминирующий режим: <span class="font-semibold">${dominantRegime}</span>`;
+    }
+
+    function updateStats(stats) {
+        const container = document.getElementById('resultsStats').querySelector('.grid');
+        
+        container.innerHTML = `
+            <div class="bg-gray-50 p-3 rounded">
+                <div class="text-xs text-gray-600">Всего сигналов</div>
+                <div class="text-xl font-bold text-gray-800">${stats.total}</div>
+            </div>
+            <div class="bg-blue-50 p-3 rounded">
+                <div class="text-xs text-gray-600">BUY / SELL</div>
+                <div class="text-xl font-bold text-blue-600">${stats.buy_signals} / ${stats.sell_signals}</div>
+            </div>
+            <div class="bg-green-50 p-3 rounded">
+                <div class="text-xs text-gray-600">Take Profit</div>
+                <div class="text-xl font-bold text-green-600">${stats.tp_count}</div>
+            </div>
+            <div class="bg-red-50 p-3 rounded">
+                <div class="text-xs text-gray-600">Stop Loss</div>
+                <div class="text-xl font-bold text-red-600">${stats.sl_count}</div>
+            </div>
+            <div class="bg-purple-50 p-3 rounded">
+                <div class="text-xs text-gray-600">Trailing Stop</div>
+                <div class="text-xl font-bold text-purple-600">${stats.trailing_count || 0}</div>
+            </div>
+            <div class="bg-yellow-50 p-3 rounded">
+                <div class="text-xs text-gray-600">Timeout</div>
+                <div class="text-xl font-bold text-yellow-600">${stats.timeout_count}</div>
+            </div>
+            <div class="bg-indigo-50 p-3 rounded">
+                <div class="text-xs text-gray-600">Открытые</div>
+                <div class="text-xl font-bold text-indigo-600">${stats.open_count}</div>
+            </div>
+            <div class="${stats.total_pnl >= 0 ? 'bg-green-50' : 'bg-red-50'} p-3 rounded">
+                <div class="text-xs text-gray-600">Итого P&L</div>
+                <div class="text-xl font-bold ${stats.total_pnl >= 0 ? 'text-green-600' : 'text-red-600'}">
+                    ${stats.total_pnl >= 0 ? '+' : ''}$${Math.abs(stats.total_pnl).toFixed(2)}
+                </div>
+            </div>
+        `;
+    }
+
+    function updateSignalsTable(signals) {
+        const tbody = document.getElementById('signalsTableBody');
+        
+        if (!signals || signals.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="9" class="px-4 py-8 text-center text-gray-500">
+                        Нет сигналов по заданным фильтрам
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        tbody.innerHTML = signals.map(signal => {
+            const time = new Date(signal.timestamp).toLocaleTimeString('ru-RU', {
+                hour: '2-digit',
+                minute: '2-digit',
+                timeZone: 'UTC'
+            });
+
+            // Определяем статус badge
+            let statusBadge = '';
+            if (signal.close_reason === 'take_profit') {
+                statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800 font-medium">TP</span>';
+            } else if (signal.close_reason === 'stop_loss') {
+                statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800 font-medium">SL</span>';
+            } else if (signal.close_reason === 'trailing_stop') {
+                const trailingColor = signal.pnl_usd >= 0 ? 'bg-purple-100 text-purple-800' : 'bg-orange-100 text-orange-800';
+                statusBadge = `<span class="px-2 py-1 text-xs rounded-full ${trailingColor} font-medium">TRAIL</span>`;
+            } else if (signal.close_reason === 'timeout') {
+                statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-800 font-medium">TIMEOUT</span>';
+            } else {
+                statusBadge = '<span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800 font-medium">ОТКРЫТА</span>';
+            }
+
+            const pnlColor = signal.pnl_usd >= 0 ? 'text-green-600' : 'text-red-600';
+            const pnlPrefix = signal.pnl_usd >= 0 ? '+' : '';
+
+            return `
+                <tr class="hover:bg-gray-50 transition-colors">
+                    <td class="px-4 py-3 whitespace-nowrap">
+                        <div class="flex flex-col">
+                            <span class="text-sm font-medium text-gray-900">${time}</span>
+                            <span class="text-xs text-gray-500">${signal.exchange_name || 'Unknown'}</span>
+                        </div>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                        <span class="text-sm font-medium text-gray-900">${signal.pair_symbol}</span>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                        <span class="px-2 py-1 text-xs rounded-full font-medium ${
+                            signal.signal_action === 'BUY' ?
+                            'bg-green-100 text-green-800' :
+                            'bg-red-100 text-red-800'
+                        }">
+                            ${signal.signal_action}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3">
+                        <div class="flex flex-col space-y-0.5 text-xs">
+                            <div>W: <span class="font-semibold">${signal.score_week !== null && signal.score_week !== undefined ? signal.score_week.toFixed(1) : 'N/A'}</span></div>
+                            <div>M: <span class="font-semibold">${signal.score_month !== null && signal.score_month !== undefined ? signal.score_month.toFixed(1) : 'N/A'}</span></div>
+                        </div>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-900 font-mono">
+                        ${signal.entry_price.toFixed(8)}
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-900 font-mono">
+                        ${signal.current_price.toFixed(8)}
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                        <div class="flex flex-col">
+                            <span class="text-sm font-bold ${pnlColor}">
+                                ${pnlPrefix}$${Math.abs(signal.pnl_usd).toFixed(2)}
+                            </span>
+                            <span class="text-xs ${pnlColor}">
+                                ${signal.pnl_percent.toFixed(2)}%
+                            </span>
+                        </div>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                        <div class="flex flex-col">
+                            <span class="text-sm font-medium text-blue-600">
+                                $${signal.max_potential_profit.toFixed(2)}
+                            </span>
+                            <span class="text-xs text-gray-500">
+                                ${signal.hours_to_close ? signal.hours_to_close.toFixed(1) + 'ч' : '-'}
+                            </span>
+                        </div>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                        ${statusBadge}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    // Modal functions
+    function showSaveModal() {
+        document.getElementById('saveModal').classList.remove('hidden');
+    }
+
+    function closeSaveModal() {
+        document.getElementById('saveModal').classList.add('hidden');
+        document.getElementById('filterName').value = '';
+    }
+
+    function showLoadModal() {
+        loadSavedFilters();
+        document.getElementById('loadModal').classList.remove('hidden');
+    }
+
+    function closeLoadModal() {
+        document.getElementById('loadModal').classList.add('hidden');
+    }
+
+    function saveFilters() {
+        const filterName = document.getElementById('filterName').value.trim();
+        if (!filterName) {
+            alert('Введите название для набора фильтров');
+            return;
+        }
+
+        fetch('/api/scoring/save_filter', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                name: filterName,
+                score_week_min: currentScoreWeek,
+                score_month_min: currentScoreMonth,
+                max_trades_per_15min: currentMaxTrades
+            })
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.status === 'success') {
+                showNotification('Фильтры сохранены', 'success');
+                closeSaveModal();
+            } else {
+                alert('Ошибка сохранения: ' + result.message);
+            }
+        });
+    }
+
+    function loadSavedFilters() {
+        fetch('/api/scoring/get_filters')
+            .then(response => response.json())
+            .then(result => {
+                if (result.status === 'success') {
+                    const select = document.getElementById('savedFiltersList');
+                    select.innerHTML = '<option value="">Выберите набор фильтров</option>';
+                    
+                    result.filters.forEach(filter => {
+                        const option = document.createElement('option');
+                        option.value = filter.id;
+                        option.textContent = filter.name;
+                        option.dataset.filter = JSON.stringify(filter);
+                        select.appendChild(option);
+                    });
+                }
+            });
+    }
+
+    function loadSelectedFilter() {
+        const select = document.getElementById('savedFiltersList');
+        const selectedOption = select.options[select.selectedIndex];
+        
+        if (!selectedOption.value) {
+            alert('Выберите набор фильтров');
+            return;
+        }
+        
+        const filter = JSON.parse(selectedOption.dataset.filter);
+        
+        if (filter) {
+            // Устанавливаем значения слайдеров
+            if (filter.score_week_min !== undefined) {
+                document.getElementById('scoreWeekFilter').value = filter.score_week_min;
+                updateScoreDisplay('week', filter.score_week_min);
+            }
+            if (filter.score_month_min !== undefined) {
+                document.getElementById('scoreMonthFilter').value = filter.score_month_min;
+                updateScoreDisplay('month', filter.score_month_min);
+            }
+            if (filter.max_trades_per_15min !== undefined) {
+                document.getElementById('maxTradesFilter').value = filter.max_trades_per_15min;
+                updateMaxTradesDisplay(filter.max_trades_per_15min);
+            }
+            
+            showNotification(`Загружен набор: ${filter.name}`, 'success');
+            closeLoadModal();
+        }
+    }
+
+    function showNotification(text, type) {
+        const notification = document.getElementById('notification');
+        const notificationText = document.getElementById('notificationText');
+        
+        notificationText.textContent = text;
+        notification.className = `fixed bottom-4 right-4 px-6 py-3 ${type === 'success' ? 'bg-green-500' : 'bg-red-500'} text-white rounded-lg shadow-lg z-50`;
+        
+        setTimeout(() => {
+            notification.classList.add('hidden');
+        }, 3000);
+    }
+
+    function exportToExcel() {
+        if (!currentSignals || currentSignals.length === 0) {
+            alert('Нет данных для экспорта');
+            return;
+        }
+
+        // Здесь можно добавить логику экспорта в Excel
+        showNotification('Функция экспорта в разработке', 'info');
+    }
+</script>
+{% endblock %}
