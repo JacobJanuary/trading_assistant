@@ -1410,7 +1410,7 @@ def api_scoring_apply_filters():
     try:
         data = request.get_json()
 
-        from database import get_scoring_signals, process_scoring_signals_batch, get_scoring_analysis_results
+        from database import get_scoring_signals_v2, process_scoring_signals_batch, get_scoring_analysis_results
         import uuid
 
         # Генерируем ID сессии
@@ -1420,6 +1420,7 @@ def api_scoring_apply_filters():
         selected_date = data.get('date')
         score_week_min = data.get('score_week_min')
         score_month_min = data.get('score_month_min')
+        max_trades_per_15min = data.get('max_trades_per_15min', 3)
         
         # Получаем ВСЕ настройки пользователя из user_signal_filters
         settings_query = """
@@ -1470,7 +1471,7 @@ def api_scoring_apply_filters():
         print(f"[API] Количество разрешенных часов: {len(allowed_hours) if allowed_hours else 24}")
 
         # Получаем сигналы по упрощенным фильтрам с учетом разрешенных часов
-        raw_signals = get_scoring_signals(db, selected_date, score_week_min, score_month_min, allowed_hours)
+        raw_signals = get_scoring_signals_v2(db, selected_date, score_week_min, score_month_min, allowed_hours, max_trades_per_15min)
 
         if raw_signals:
             print(f"[API] Найдено {len(raw_signals)} сигналов")
@@ -2044,7 +2045,7 @@ def trailing_analysis():
 def api_efficiency_analyze_30days_progress():
     """SSE endpoint для отправки прогресса анализа эффективности в реальном времени"""
     from flask import Response, request
-    from database import get_scoring_signals, process_scoring_signals_batch
+    from database import get_scoring_signals_v2, process_scoring_signals_batch
     from datetime import datetime, timedelta
     import uuid
     import json
@@ -2056,6 +2057,7 @@ def api_efficiency_analyze_30days_progress():
     score_month_min_param = int(request.args.get('score_month_min', 60))
     score_month_max_param = int(request.args.get('score_month_max', 80))
     step_param = int(request.args.get('step', 10))
+    max_trades_per_15min = int(request.args.get('max_trades_per_15min', 3))
     force_recalc = request.args.get('force_recalc', 'false').lower() == 'true'
     session_id = request.args.get('session_id', '')  # ID сессии для отслеживания переподключений
     
@@ -2292,8 +2294,8 @@ def api_efficiency_analyze_30days_progress():
                                 'daily_pnl': float(cached_result[0]['daily_pnl'])
                             }
                         else:
-                            # Получаем сигналы для текущего дня с учетом разрешенных часов
-                            raw_signals = get_scoring_signals(db, date_str, score_week_min, score_month_min, allowed_hours)
+                            # Получаем сигналы для текущего дня с учетом разрешенных часов и лимита 15 минут
+                            raw_signals = get_scoring_signals_v2(db, date_str, score_week_min, score_month_min, allowed_hours, max_trades_per_15min)
                             
                             daily_stats = {
                                 'date': date_str,
@@ -2475,7 +2477,7 @@ def api_efficiency_analyze_30days_progress():
 def api_tpsl_analyze_progress():
     """SSE endpoint для анализа эффективности TP/SL"""
     from flask import Response, request
-    from database import get_scoring_signals, process_scoring_signals_batch
+    from database import get_scoring_signals_v2, process_scoring_signals_batch
     from datetime import datetime, timedelta
     import uuid
     import json
@@ -2489,6 +2491,7 @@ def api_tpsl_analyze_progress():
     sl_min = float(request.args.get('sl_min', 1.0))
     sl_max = float(request.args.get('sl_max', 4.0))
     step = float(request.args.get('step', 0.5))
+    max_trades_per_15min = int(request.args.get('max_trades_per_15min', 3))
     
     # Сохраняем user_id до создания генератора
     user_id = current_user.id
@@ -2607,7 +2610,7 @@ def api_tpsl_analyze_progress():
                             }
                         else:
                             # Получаем сигналы с фильтрами Score Week, Score Month и разрешенными часами
-                            raw_signals = get_scoring_signals(db, date_str, score_week, score_month, allowed_hours)
+                            raw_signals = get_scoring_signals_v2(db, date_str, score_week, score_month, allowed_hours, max_trades_per_15min)
                             
                             daily_stats = {
                                 'date': date_str,
@@ -2728,7 +2731,7 @@ def api_tpsl_analyze_progress():
 def api_trailing_analyze_progress():
     """SSE endpoint для анализа эффективности Trailing Stop"""
     from flask import Response, request
-    from database import get_scoring_signals, process_scoring_signals_batch
+    from database import get_scoring_signals_v2, process_scoring_signals_batch
     from datetime import datetime, timedelta
     import uuid
     import json
@@ -2744,6 +2747,7 @@ def api_trailing_analyze_progress():
     stop_loss_min = float(request.args.get('stop_loss_min', 1.0))
     stop_loss_max = float(request.args.get('stop_loss_max', 5.0))
     step = float(request.args.get('step', 0.5))
+    max_trades_per_15min = int(request.args.get('max_trades_per_15min', 3))
     
     # Сохраняем user_id до создания генератора
     user_id = current_user.id
@@ -2877,7 +2881,7 @@ def api_trailing_analyze_progress():
                                 }
                             else:
                                 # Получаем сигналы с фильтрами Score Week, Score Month и разрешенными часами
-                                raw_signals = get_scoring_signals(db, date_str, score_week, score_month, allowed_hours)
+                                raw_signals = get_scoring_signals_v2(db, date_str, score_week, score_month, allowed_hours, max_trades_per_15min)
                                 
                                 daily_stats = {
                                     'date': date_str,

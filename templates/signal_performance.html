@@ -188,6 +188,19 @@
                                class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-yellow-500 focus:border-transparent">
                     </div>
 
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">
+                            Макс. сделок за 15 мин
+                        </label>
+                        <input type="number" id="maxTradesPer15Min"
+                               value="{{ filters.max_trades_per_15min|default(3) }}"
+                               min="1" max="10" step="1"
+                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-yellow-500 focus:border-transparent">
+                        <span class="text-xs text-gray-500 mt-1 block">
+                            Топ N по Score Week
+                        </span>
+                    </div>
+
                     <button onclick="applyScoringFilters()"
                             class="w-full bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
                         <i class="fas fa-filter mr-1"></i>
@@ -835,10 +848,12 @@
         // Сохраняем фильтры скоринга в БД
         const scoreWeek = parseInt(document.getElementById('scoreWeek').value || 0);
         const scoreMonth = parseInt(document.getElementById('scoreMonth').value || 0);
+        const maxTradesPer15Min = parseInt(document.getElementById('maxTradesPer15Min').value || 3);
         
         const data = {
             score_week_min: scoreWeek,
             score_month_min: scoreMonth,
+            max_trades_per_15min: maxTradesPer15Min,
             // Также отправляем текущие значения других фильтров
             hide_younger_than_hours: parseInt(document.getElementById('hideYounger').value),
             hide_older_than_hours: parseInt(document.getElementById('hideOlder').value),

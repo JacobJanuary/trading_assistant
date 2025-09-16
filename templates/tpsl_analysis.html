@@ -98,6 +98,16 @@
                     <span class="text-xs text-gray-500 ml-4" id="combinationsCount">Комбинаций: 0</span>
                 </div>
             </div>
+            
+            <!-- 15-minute trade limit -->
+            <div class="mt-4">
+                <label class="block text-xs font-medium text-gray-600 mb-2">Макс. сделок за 15 минут</label>
+                <div class="flex items-center space-x-2">
+                    <input type="number" id="maxTradesPer15Min" value="3" min="1" max="10"
+                           class="w-24 px-2 py-1 border border-gray-300 rounded text-sm">
+                    <span class="text-xs text-gray-500">Топ N сигналов по Score Week каждые 15 минут</span>
+                </div>
+            </div>
         </div>
 
         <!-- Дополнительные параметры -->
@@ -414,7 +424,8 @@
                 tp_max: tpMax,
                 sl_min: slMin,
                 sl_max: slMax,
-                step: step
+                step: step,
+                max_trades_per_15min: parseInt(document.getElementById('maxTradesPer15Min').value)
             });
             
             const eventSource = new EventSource(`/api/tpsl/analyze_progress?${params}`);
