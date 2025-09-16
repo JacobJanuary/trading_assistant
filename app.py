@@ -1294,6 +1294,60 @@ def api_scoring_save_filters():
         logger.error(f"Ошибка сохранения фильтров: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+
+@app.route('/api/save_trading_mode', methods=['POST'])
+@login_required
+def api_save_trading_mode():
+    """Сохранение режима управления позицией (Fixed/Trailing) без переинициализации"""
+    try:
+        data = request.get_json()
+        use_trailing_stop = data.get('use_trailing_stop', False)
+        
+        if use_trailing_stop:
+            # Сохраняем параметры Trailing Stop
+            trailing_distance = float(data.get('trailing_distance', 2.0))
+            trailing_activation = float(data.get('trailing_activation', 1.0))
+            trailing_stop_loss = float(data.get('trailing_stop_loss', 3.0))
+            
+            update_query = """
+                UPDATE web.user_signal_filters SET
+                    use_trailing_stop = %s,
+                    trailing_distance_pct = %s,
+                    trailing_activation_pct = %s,
+                    stop_loss_percent = %s,
+                    updated_at = NOW()
+                WHERE user_id = %s
+            """
+            db.execute_query(update_query, (
+                True, trailing_distance, trailing_activation, 
+                trailing_stop_loss, current_user.id
+            ))
+        else:
+            # Сохраняем параметры Fixed TP/SL
+            take_profit = float(data.get('take_profit', 4.0))
+            stop_loss = float(data.get('stop_loss', 3.0))
+            
+            update_query = """
+                UPDATE web.user_signal_filters SET
+                    use_trailing_stop = %s,
+                    take_profit_percent = %s,
+                    stop_loss_percent = %s,
+                    updated_at = NOW()
+                WHERE user_id = %s
+            """
+            db.execute_query(update_query, (
+                False, take_profit, stop_loss, current_user.id
+            ))
+        
+        return jsonify({
+            'status': 'success',
+            'message': f"Режим {'Trailing Stop' if use_trailing_stop else 'Fixed TP/SL'} сохранен"
+        })
+        
+    except Exception as e:
+        logger.error(f"Ошибка сохранения режима управления: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 # ========== API ENDPOINTS ==========
 
 @app.route('/api/initialize_signals', methods=['POST'])

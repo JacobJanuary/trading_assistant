@@ -144,9 +144,17 @@
 
                     <button onclick="applyTradingMode()"
                             class="w-full bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                        <i class="fas fa-chart-line mr-1"></i>
-                        <span id="applyButtonText">Применить Fixed TP/SL</span>
+                        <i class="fas fa-save mr-1"></i>
+                        <span id="applyButtonText">Сохранить режим</span>
                     </button>
+                    
+                    {% if current_user.is_admin %}
+                    <button onclick="reinitializeSignals()"
+                            class="w-full mt-2 bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                        <i class="fas fa-sync-alt mr-1"></i>
+                        Переинициализировать
+                    </button>
+                    {% endif %}
                 </div>
             </div>
 
@@ -822,7 +830,9 @@
             hide_younger_than_hours: parseInt(document.getElementById('hideYounger').value),
             hide_older_than_hours: parseInt(document.getElementById('hideOlder').value),
             leverage: parseInt(document.getElementById('leverage').value),
-            position_size_usd: parseFloat(document.getElementById('positionSize').value)
+            position_size_usd: parseFloat(document.getElementById('positionSize').value),
+            score_week_min: parseInt(document.getElementById('scoreWeek').value || 0),
+            score_month_min: parseInt(document.getElementById('scoreMonth').value || 0)
         };
 
         // Показываем индикатор загрузки
@@ -1036,35 +1046,98 @@ function toggleStopMode() {
     if (isTrailing) {
         if (fixedParams) fixedParams.classList.add('hidden');
         if (trailingParams) trailingParams.classList.remove('hidden');
-        if (applyButton) applyButton.textContent = 'Применить Trailing Stop';
+        if (applyButton) applyButton.textContent = 'Сохранить режим';
     } else {
         if (fixedParams) fixedParams.classList.remove('hidden');
         if (trailingParams) trailingParams.classList.add('hidden');
-        if (applyButton) applyButton.textContent = 'Применить Fixed TP/SL';
+        if (applyButton) applyButton.textContent = 'Сохранить режим';
     }
     
-    // Показываем предупреждение о необходимости переинициализации
-    showReinitWarning();
+    // Не показываем предупреждение, так как переинициализация теперь отдельная кнопка
+    // showReinitWarning();
 }
 
 
 // Применение выбранного режима
 function applyTradingMode() {
     const isTrailing = document.getElementById('trailingMode').checked;
+    const button = event.target.closest('button');
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Сохранение...';
 
-    if (!confirm(`Переинициализировать систему в режиме ${isTrailing ? 'Trailing Stop' : 'Fixed TP/SL'}?`)) {
-        return;
+    // Собираем параметры для сохранения режима
+    let params = {
+        use_trailing_stop: isTrailing
+    };
+
+    if (isTrailing) {
+        params.trailing_distance = parseFloat(document.getElementById('trailingDistance').value);
+        params.trailing_activation = parseFloat(document.getElementById('trailingActivation').value);
+        params.trailing_stop_loss = parseFloat(document.getElementById('trailingStopLoss').value);
+    } else {
+        params.take_profit = parseFloat(document.getElementById('takeProfit').value);
+        params.stop_loss = parseFloat(document.getElementById('stopLoss').value);
     }
 
+    // Сохраняем режим без переинициализации
+    fetch('/api/save_trading_mode', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(params)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.status === 'success') {
+            showNotification('Режим управления сохранен', 'success');
+            button.disabled = false;
+            button.innerHTML = `<i class="fas fa-chart-line mr-1"></i>${isTrailing ? 'Trailing Stop активен' : 'Fixed TP/SL активен'}`;
+            
+            // Обновляем отображение без перезагрузки страницы
+            updateTradingModeDisplay();
+        } else {
+            showNotification('Ошибка: ' + result.message, 'error');
+            button.disabled = false;
+            button.innerHTML = `<i class="fas fa-chart-line mr-1"></i>${isTrailing ? 'Применить Trailing Stop' : 'Применить Fixed TP/SL'}`;
+        }
+    })
+    .catch(error => {
+        showNotification('Ошибка сети: ' + error, 'error');
+        button.disabled = false;
+        button.innerHTML = `<i class="fas fa-chart-line mr-1"></i>Применить`;
+    });
+}
+
+// Функция для обновления отображения режима без перезагрузки
+function updateTradingModeDisplay() {
+    const isTrailing = document.getElementById('trailingMode').checked;
+    const modeIndicators = document.querySelectorAll('[data-mode-indicator]');
+    
+    modeIndicators.forEach(indicator => {
+        if (indicator.dataset.modeIndicator === 'trailing') {
+            indicator.style.display = isTrailing ? 'block' : 'none';
+        } else if (indicator.dataset.modeIndicator === 'fixed') {
+            indicator.style.display = isTrailing ? 'none' : 'block';
+        }
+    });
+}
+
+// Функция переинициализации сигналов (только для админов)
+function reinitializeSignals() {
+    const isTrailing = document.getElementById('trailingMode').checked;
+    
+    if (!confirm(`Вы уверены что хотите переинициализировать все сигналы?\nЭто удалит текущие данные и пересчитает их заново.`)) {
+        return;
+    }
+    
     const button = event.target.closest('button');
     button.disabled = true;
     button.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Инициализация...';
-
+    
     let params = {
         hours: 48,
         use_trailing_stop: isTrailing
     };
-
+    
     if (isTrailing) {
         params.trailing_distance = parseFloat(document.getElementById('trailingDistance').value);
         params.trailing_activation = parseFloat(document.getElementById('trailingActivation').value);
@@ -1073,7 +1146,7 @@ function applyTradingMode() {
         params.take_profit = parseFloat(document.getElementById('takeProfit').value);
         params.stop_loss = parseFloat(document.getElementById('stopLoss').value);
     }
-
+    
     fetch('/api/initialize_signals', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -1087,12 +1160,13 @@ function applyTradingMode() {
         } else {
             showNotification('Ошибка: ' + result.message, 'error');
             button.disabled = false;
-            button.innerHTML = `<i class="fas fa-chart-line mr-1"></i>${isTrailing ? 'Применить Trailing Stop' : 'Применить Fixed TP/SL'}`;
+            button.innerHTML = '<i class="fas fa-sync-alt mr-1"></i>Переинициализировать';
         }
     })
     .catch(error => {
         showNotification('Ошибка сети: ' + error, 'error');
         button.disabled = false;
+        button.innerHTML = '<i class="fas fa-sync-alt mr-1"></i>Переинициализировать';
     });
 }
 
