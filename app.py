@@ -1088,6 +1088,279 @@ def scoring_analysis():
 
 
 
+@app.route('/scoring_analysis_v2')
+@login_required
+def scoring_analysis_v2():
+    """Расширенная версия анализа скоринга с фильтром по 15 минутам"""
+    try:
+        # Получаем диапазон дат
+        date_range = db.execute_query("""
+            SELECT 
+                MIN(timestamp)::date as min_date,
+                (CURRENT_DATE - INTERVAL '2 days')::date as max_date
+            FROM fas.scoring_history
+        """, fetch=True)[0]
+
+        # Получаем выбранную дату или используем максимальную
+        selected_date = request.args.get('date', str(date_range['max_date']))
+
+        # Получаем сохраненные фильтры пользователя
+        from database import get_user_scoring_filters
+        saved_filters = get_user_scoring_filters(db, current_user.id)
+        
+        # Получаем настройки режима торговли и параметры из user_signal_filters
+        settings_query = """
+            SELECT use_trailing_stop, trailing_distance_pct, trailing_activation_pct,
+                   take_profit_percent, stop_loss_percent, position_size_usd, leverage,
+                   allowed_hours
+            FROM web.user_signal_filters
+            WHERE user_id = %s
+        """
+        user_settings = db.execute_query(settings_query, (current_user.id,), fetch=True)
+        
+        # Значения по умолчанию
+        mode = 'Fixed TP/SL'
+        tp_percent = 4.0
+        sl_percent = 3.0
+        position_size = 100.0
+        leverage = 5
+        trailing_distance = 2.0
+        trailing_activation = 1.0
+        allowed_hours = list(range(24))
+        
+        if user_settings:
+            settings = user_settings[0]
+            mode = 'Trailing Stop' if settings['use_trailing_stop'] else 'Fixed TP/SL'
+            tp_percent = float(settings.get('take_profit_percent', 4.0))
+            sl_percent = float(settings.get('stop_loss_percent', 3.0))
+            position_size = float(settings.get('position_size_usd', 100.0))
+            leverage = int(settings.get('leverage', 5))
+            trailing_distance = float(settings.get('trailing_distance_pct', 2.0))
+            trailing_activation = float(settings.get('trailing_activation_pct', 1.0))
+            allowed_hours = settings.get('allowed_hours', list(range(24)))
+
+        return render_template(
+            'scoring_analysis_v2.html',
+            date_range=date_range,
+            selected_date=selected_date,
+            saved_filters=saved_filters,
+            params={
+                'mode': mode,
+                'tp_percent': tp_percent,
+                'sl_percent': sl_percent,
+                'position_size': position_size,
+                'leverage': leverage,
+                'trailing_distance': trailing_distance,
+                'trailing_activation': trailing_activation
+            },
+            allowed_hours=allowed_hours
+        )
+
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке страницы скоринга V2: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        flash('Ошибка при загрузке данных скоринга', 'error')
+        return redirect(url_for('dashboard'))
+
+
+@app.route('/api/scoring/apply_filters_v2', methods=['POST'])
+@login_required
+def api_scoring_apply_filters_v2():
+    """API для расширенной версии скоринга с фильтром по 15 минутам"""
+    try:
+        data = request.get_json()
+
+        from database import get_scoring_signals_v2, process_scoring_signals_batch, get_scoring_analysis_results
+        import uuid
+
+        # Генерируем ID сессии
+        session_id = f"scoring_v2_{current_user.id}_{uuid.uuid4().hex[:8]}"
+
+        # Получаем параметры
+        selected_date = data.get('date')
+        score_week_min = data.get('score_week_min')
+        score_month_min = data.get('score_month_min')
+        max_trades_per_15min = data.get('max_trades_per_15min', 3)
+        allowed_hours = data.get('allowed_hours', list(range(24)))
+        
+        # Получаем настройки пользователя
+        settings_query = """
+            SELECT take_profit_percent, stop_loss_percent, position_size_usd, leverage,
+                   use_trailing_stop, trailing_distance_pct, trailing_activation_pct
+            FROM web.user_signal_filters
+            WHERE user_id = %s
+        """
+        user_settings = db.execute_query(settings_query, (current_user.id,), fetch=True)
+
+        # Значения по умолчанию
+        tp_percent = 4.0
+        sl_percent = 3.0
+        position_size = 100.0
+        leverage = 5
+        use_trailing_stop = False
+        trailing_distance_pct = 2.0
+        trailing_activation_pct = 1.0
+
+        if user_settings:
+            settings = user_settings[0]
+            tp_percent = float(settings.get('take_profit_percent', 4.0))
+            sl_percent = float(settings.get('stop_loss_percent', 3.0))
+            position_size = float(settings.get('position_size_usd', 100.0))
+            leverage = int(settings.get('leverage', 5))
+            use_trailing_stop = settings.get('use_trailing_stop', False)
+            trailing_distance_pct = float(settings.get('trailing_distance_pct', 2.0))
+            trailing_activation_pct = float(settings.get('trailing_activation_pct', 1.0))
+        
+        # Если в запросе переданы параметры, используем их
+        tp_percent = data.get('tp_percent', tp_percent)
+        sl_percent = data.get('sl_percent', sl_percent)
+        position_size = data.get('position_size', position_size)
+        leverage = data.get('leverage', leverage)
+
+        print(f"[API V2] Обработка фильтров для даты {selected_date}")
+        print(f"[API V2] Фильтры: score_week >= {score_week_min}, score_month >= {score_month_min}")
+        print(f"[API V2] Максимум сделок за 15 минут: {max_trades_per_15min}")
+        print(f"[API V2] Режим: {'Trailing Stop' if use_trailing_stop else 'Fixed TP/SL'}")
+
+        # Получаем сигналы с учетом фильтра по 15 минутам
+        raw_signals = get_scoring_signals_v2(db, selected_date, score_week_min, score_month_min, 
+                                            allowed_hours, max_trades_per_15min)
+
+        if raw_signals:
+            print(f"[API V2] Найдено {len(raw_signals)} сигналов после фильтрации")
+
+            # Обрабатываем сигналы
+            result = process_scoring_signals_batch(
+                db, raw_signals, session_id, current_user.id,
+                tp_percent=tp_percent,
+                sl_percent=sl_percent,
+                position_size=position_size,
+                leverage=leverage,
+                use_trailing_stop=use_trailing_stop,
+                trailing_distance_pct=trailing_distance_pct,
+                trailing_activation_pct=trailing_activation_pct
+            )
+
+            # Получаем обработанные результаты
+            signals_data = get_scoring_analysis_results(db, session_id, current_user.id)
+
+            # Форматируем для отображения
+            formatted_signals = []
+            for signal in signals_data:
+                formatted_signals.append({
+                    'timestamp': signal['signal_timestamp'].isoformat() if signal['signal_timestamp'] else None,
+                    'pair_symbol': signal['pair_symbol'],
+                    'exchange_name': signal.get('exchange_name', 'Unknown'),
+                    'signal_action': signal['signal_action'],
+                    'market_regime': signal['market_regime'],
+                    'total_score': float(signal['total_score'] or 0),
+                    'score_week': float(signal.get('score_week', 0)) if signal.get('score_week') else None,
+                    'score_month': float(signal.get('score_month', 0)) if signal.get('score_month') else None,
+                    'entry_price': float(signal['entry_price']) if signal['entry_price'] else 0,
+                    'current_price': float(signal['close_price']) if signal['close_price'] else 0,
+                    'is_closed': signal['is_closed'],
+                    'close_reason': signal['close_reason'],
+                    'hours_to_close': float(signal['hours_to_close'] or 0),
+                    'pnl_usd': float(signal['pnl_usd'] or 0),
+                    'pnl_percent': float(signal['pnl_percent'] or 0),
+                    'max_potential_profit': float(signal['max_potential_profit_usd'] or 0)
+                })
+
+            # Статистика
+            stats_data = result['stats']
+
+            stats = {
+                'total': int(stats_data.get('total') or 0),
+                'buy_signals': int(stats_data.get('buy_signals') or 0),
+                'sell_signals': int(stats_data.get('sell_signals') or 0),
+                'tp_count': int(stats_data.get('tp_count') or 0),
+                'sl_count': int(stats_data.get('sl_count') or 0),
+                'trailing_count': int(stats_data.get('trailing_count') or 0),
+                'timeout_count': int(stats_data.get('timeout_count') or 0),
+                'open_count': int(stats_data.get('open_count') or 0),
+                'total_pnl': float(stats_data.get('total_pnl') or 0)
+            }
+
+            return jsonify({
+                'status': 'success',
+                'data': {
+                    'signals': formatted_signals,
+                    'stats': stats
+                }
+            })
+        else:
+            return jsonify({
+                'status': 'success',
+                'data': {
+                    'signals': [],
+                    'stats': {
+                        'total': 0,
+                        'buy_signals': 0,
+                        'sell_signals': 0,
+                        'tp_count': 0,
+                        'sl_count': 0,
+                        'trailing_count': 0,
+                        'timeout_count': 0,
+                        'open_count': 0,
+                        'total_pnl': 0
+                    }
+                }
+            })
+
+    except Exception as e:
+        logger.error(f"Ошибка в API scoring V2: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/scoring/get_date_info_v2', methods=['POST'])
+@login_required
+def api_scoring_get_date_info_v2():
+    """API для получения информации о сигналах с учетом фильтра 15 минут"""
+    try:
+        data = request.get_json()
+        selected_date = data.get('date')
+        score_week_min = data.get('score_week', 0)
+        score_month_min = data.get('score_month', 0)
+        max_trades_per_15min = data.get('max_trades_per_15min', 3)
+
+        # Получаем общее количество сигналов
+        count_query = """
+            SELECT COUNT(*) as total
+            FROM fas.scoring_history sh
+            JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
+            WHERE sh.timestamp::date = %s
+                AND sh.score_week >= %s
+                AND sh.score_month >= %s
+                AND tp.contract_type_id = 1
+                AND tp.exchange_id IN (1, 2)
+        """
+        
+        result = db.execute_query(count_query, 
+                                 (selected_date, score_week_min, score_month_min), 
+                                 fetch=True)
+        total_count = result[0]['total'] if result else 0
+
+        # Получаем количество после фильтрации по 15 минутам
+        from database import get_scoring_signals_v2
+        filtered_signals = get_scoring_signals_v2(db, selected_date, score_week_min, 
+                                                 score_month_min, list(range(24)), 
+                                                 max_trades_per_15min)
+        filtered_count = len(filtered_signals) if filtered_signals else 0
+
+        return jsonify({
+            'status': 'success',
+            'signal_count': total_count,
+            'filtered_count': filtered_count
+        })
+
+    except Exception as e:
+        logger.error(f"Ошибка в API get_date_info_v2: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 @app.route('/api/scoring/apply_filters', methods=['POST'])
 @login_required
 def api_scoring_apply_filters():

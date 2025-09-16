@@ -2072,6 +2072,79 @@ def get_scoring_analysis_results(db, session_id, user_id):
     return db.execute_query(query, (session_id, user_id), fetch=True)
 
 
+def get_scoring_signals_v2(db, date_filter, score_week_min=None, score_month_min=None, 
+                          allowed_hours=None, max_trades_per_15min=3):
+    """
+    Получение сигналов с фильтром по максимальному количеству сделок за 15 минут.
+    Выбираются топ N сигналов с максимальным score_week каждые 15 минут.
+    """
+    
+    print(f"\n[SCORING V2] ========== ПОЛУЧЕНИЕ СИГНАЛОВ С ФИЛЬТРОМ 15 МИН ==========")
+    print(f"[SCORING V2] Дата: {date_filter}")
+    print(f"[SCORING V2] Минимальный score_week: {score_week_min}")
+    print(f"[SCORING V2] Минимальный score_month: {score_month_min}")
+    print(f"[SCORING V2] Максимум сделок за 15 минут: {max_trades_per_15min}")
+    
+    # Сначала получаем все сигналы без фильтра по 15 минутам
+    all_signals = get_scoring_signals(db, date_filter, score_week_min, score_month_min, allowed_hours)
+    
+    if not all_signals:
+        print(f"[SCORING V2] Нет сигналов для фильтрации")
+        return []
+    
+    print(f"[SCORING V2] Найдено {len(all_signals)} сигналов до фильтрации по 15 минутам")
+    
+    # Группируем сигналы по 15-минутным интервалам
+    from datetime import datetime, timedelta
+    
+    signals_by_interval = {}
+    
+    for signal in all_signals:
+        # Получаем timestamp и округляем до 15 минут
+        timestamp = signal['timestamp']
+        # Округляем до 15 минут
+        minutes = timestamp.minute
+        rounded_minutes = (minutes // 15) * 15
+        interval_key = timestamp.replace(minute=rounded_minutes, second=0, microsecond=0)
+        
+        if interval_key not in signals_by_interval:
+            signals_by_interval[interval_key] = []
+        signals_by_interval[interval_key].append(signal)
+    
+    print(f"[SCORING V2] Найдено {len(signals_by_interval)} уникальных 15-минутных интервалов")
+    
+    # Выбираем топ N сигналов с максимальным score_week из каждого интервала
+    filtered_signals = []
+    
+    for interval, signals in sorted(signals_by_interval.items()):
+        # Сортируем сигналы по score_week (убывание)
+        sorted_signals = sorted(signals, key=lambda x: x.get('score_week', 0), reverse=True)
+        
+        # Берем только первые max_trades_per_15min сигналов
+        top_signals = sorted_signals[:max_trades_per_15min]
+        filtered_signals.extend(top_signals)
+        
+        if len(signals) > max_trades_per_15min:
+            print(f"[SCORING V2] Интервал {interval}: {len(signals)} сигналов -> оставлено {len(top_signals)}")
+    
+    # Сортируем итоговый список по timestamp
+    filtered_signals.sort(key=lambda x: x['timestamp'], reverse=True)
+    
+    print(f"[SCORING V2] После фильтрации осталось {len(filtered_signals)} сигналов")
+    
+    # Статистика по биржам
+    exchanges_count = {}
+    for signal in filtered_signals:
+        exchange = signal.get('exchange_name', 'Unknown')
+        exchanges_count[exchange] = exchanges_count.get(exchange, 0) + 1
+    
+    print("\n[SCORING V2] Распределение отфильтрованных сигналов по биржам:")
+    for exchange, count in exchanges_count.items():
+        print(f"  {exchange}: {count} сигналов")
+    
+    return filtered_signals
+
+
 def save_user_scoring_filters(db, user_id, filter_name, buy_filters, sell_filters):
     """Сохранение пользовательских фильтров скоринга"""
     query = """
