@@ -958,6 +958,11 @@ def debug_session():
         'user_agent': request.headers.get('User-Agent'),
         'remote_addr': request.remote_addr
     })
+
+
+@app.route('/scoring_analysis')
+@login_required
+def scoring_analysis():
     """Страница анализа скоринга - УПРОЩЕННАЯ ВЕРСИЯ"""
     try:
         # Получаем диапазон дат
