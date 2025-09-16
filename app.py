@@ -987,7 +987,8 @@ def scoring_analysis():
         # Получаем настройки режима торговли и параметры из user_signal_filters
         settings_query = """
             SELECT use_trailing_stop, trailing_distance_pct, trailing_activation_pct,
-                   take_profit_percent, stop_loss_percent, position_size_usd, leverage
+                   take_profit_percent, stop_loss_percent, position_size_usd, leverage,
+                   allowed_hours
             FROM web.user_signal_filters
             WHERE user_id = %s
         """
@@ -1004,6 +1005,9 @@ def scoring_analysis():
             trailing_distance = float(settings.get('trailing_distance_pct', 2.0))
             trailing_activation = float(settings.get('trailing_activation_pct', 1.0))
             mode = 'Trailing' if use_trailing_stop else 'Fixed'
+            allowed_hours = settings.get('allowed_hours', list(range(24)))
+            if not allowed_hours:
+                allowed_hours = list(range(24))
         else:
             # Значения по умолчанию
             tp_percent = 4.0
@@ -1013,6 +1017,7 @@ def scoring_analysis():
             trailing_distance = 2.0
             trailing_activation = 1.0
             mode = 'Fixed'
+            allowed_hours = list(range(24))
 
         # Инициализация данных по умолчанию
         signals_data = []
@@ -1053,7 +1058,8 @@ def scoring_analysis():
                 'leverage': leverage,
                 'trailing_distance': trailing_distance,
                 'trailing_activation': trailing_activation
-            }
+            },
+            allowed_hours=allowed_hours
         )
 
     except Exception as e:
@@ -1086,7 +1092,8 @@ def api_scoring_apply_filters():
         # Получаем ВСЕ настройки пользователя из user_signal_filters
         settings_query = """
             SELECT take_profit_percent, stop_loss_percent, position_size_usd, leverage,
-                   use_trailing_stop, trailing_distance_pct, trailing_activation_pct
+                   use_trailing_stop, trailing_distance_pct, trailing_activation_pct,
+                   allowed_hours
             FROM web.user_signal_filters
             WHERE user_id = %s
         """
@@ -1100,6 +1107,7 @@ def api_scoring_apply_filters():
         use_trailing_stop = False
         trailing_distance_pct = 2.0
         trailing_activation_pct = 1.0
+        allowed_hours = list(range(24))
 
         if user_settings:
             settings = user_settings[0]
@@ -1112,6 +1120,10 @@ def api_scoring_apply_filters():
             use_trailing_stop = settings.get('use_trailing_stop', False)
             trailing_distance_pct = float(settings.get('trailing_distance_pct', 2.0))
             trailing_activation_pct = float(settings.get('trailing_activation_pct', 1.0))
+            # Загружаем разрешенные часы
+            allowed_hours = settings.get('allowed_hours', list(range(24)))
+            if not allowed_hours:
+                allowed_hours = list(range(24))
         
         # Если в запросе переданы параметры, используем их (для ручного переопределения)
         tp_percent = data.get('tp_percent', tp_percent)
@@ -1123,8 +1135,8 @@ def api_scoring_apply_filters():
         print(f"[API] Фильтры: score_week >= {score_week_min}, score_month >= {score_month_min}")
         print(f"[API] Режим: {'Trailing Stop' if use_trailing_stop else 'Fixed TP/SL'}")
 
-        # Получаем сигналы по упрощенным фильтрам
-        raw_signals = get_scoring_signals(db, selected_date, score_week_min, score_month_min)
+        # Получаем сигналы по упрощенным фильтрам с учетом разрешенных часов
+        raw_signals = get_scoring_signals(db, selected_date, score_week_min, score_month_min, allowed_hours)
 
         if raw_signals:
             print(f"[API] Найдено {len(raw_signals)} сигналов")

@@ -113,6 +113,51 @@
             </div>
         </div>
         
+        <!-- Фильтр по часам -->
+        <div class="bg-yellow-50 p-3 rounded-lg mb-4">
+            <div class="text-xs text-gray-600 mb-1">Фильтр по часам (UTC)</div>
+            <div class="text-sm font-semibold text-gray-800" id="hoursFilter">
+                {% if allowed_hours %}
+                    {% if allowed_hours|length == 24 %}
+                        Все часы (0-23)
+                    {% elif allowed_hours|length == 0 %}
+                        Нет выбранных часов
+                    {% else %}
+                        Часы: 
+                        {% set ns = namespace(ranges=[]) %}
+                        {% set ns.start = allowed_hours[0] %}
+                        {% set ns.end = allowed_hours[0] %}
+                        {% for hour in allowed_hours[1:] %}
+                            {% if hour == ns.end + 1 %}
+                                {% set ns.end = hour %}
+                            {% else %}
+                                {% if ns.start == ns.end %}
+                                    {% set _ = ns.ranges.append(ns.start|string) %}
+                                {% else %}
+                                    {% set _ = ns.ranges.append(ns.start|string + '-' + ns.end|string) %}
+                                {% endif %}
+                                {% set ns.start = hour %}
+                                {% set ns.end = hour %}
+                            {% endif %}
+                        {% endfor %}
+                        {% if ns.start == ns.end %}
+                            {% set _ = ns.ranges.append(ns.start|string) %}
+                        {% else %}
+                            {% set _ = ns.ranges.append(ns.start|string + '-' + ns.end|string) %}
+                        {% endif %}
+                        {{ ns.ranges|join(', ') }}
+                    {% endif %}
+                {% else %}
+                    Все часы (по умолчанию)
+                {% endif %}
+            </div>
+            <div class="text-xs text-gray-500 mt-1">
+                <a href="{{ url_for('signal_performance') }}" class="text-blue-600 hover:text-blue-700 underline">
+                    Настроить в разделе Сигналы
+                </a>
+            </div>
+        </div>
+        
         <!-- Параметры стратегии из сохраненных настроек -->
         <div class="bg-gray-50 p-3 rounded-lg mb-4">
             <div class="text-xs text-gray-600 mb-2">Параметры стратегии (из сохраненных настроек):</div>
