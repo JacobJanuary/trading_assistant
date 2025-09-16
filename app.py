@@ -385,7 +385,7 @@ def api_dashboard_data():
 
 
 @app.route('/signal_performance')
-#@login_required
+@login_required
 def signal_performance():
     """Страница отслеживания эффективности торговых сигналов"""
     print(f"[AUTH_DEBUG] signal_performance called by user: {current_user.id if current_user.is_authenticated else 'Not authenticated'}")
@@ -2156,9 +2156,9 @@ def api_tpsl_analyze_progress():
             last_heartbeat = time.time()
             last_yield = time.time()
             
-            # Получаем настройки пользователя (позиция и плечо)
+            # Получаем настройки пользователя (позиция, плечо и разрешенные часы)
             settings_query = """
-                SELECT position_size_usd, leverage
+                SELECT position_size_usd, leverage, allowed_hours
                 FROM web.user_signal_filters
                 WHERE user_id = %s
             """
@@ -2171,6 +2171,9 @@ def api_tpsl_analyze_progress():
             settings = user_settings[0]
             position_size = float(settings.get('position_size_usd', 100.0))
             leverage = int(settings.get('leverage', 5))
+            allowed_hours = settings.get('allowed_hours', list(range(24)))
+            if not allowed_hours:
+                allowed_hours = list(range(24))
             
             # Определяем период анализа (исключаем последние 2 дня)
             end_date = datetime.now().date() - timedelta(days=2)
@@ -2252,8 +2255,8 @@ def api_tpsl_analyze_progress():
                                 'daily_pnl': float(cached_result[0]['daily_pnl'])
                             }
                         else:
-                            # Получаем сигналы с фильтрами Score Week и Score Month
-                            raw_signals = get_scoring_signals(db, date_str, score_week, score_month)
+                            # Получаем сигналы с фильтрами Score Week, Score Month и разрешенными часами
+                            raw_signals = get_scoring_signals(db, date_str, score_week, score_month, allowed_hours)
                             
                             daily_stats = {
                                 'date': date_str,
@@ -2408,9 +2411,9 @@ def api_trailing_analyze_progress():
             last_heartbeat = time.time()
             last_yield = time.time()
             
-            # Получаем настройки пользователя (позиция и плечо)
+            # Получаем настройки пользователя (позиция, плечо и разрешенные часы)
             settings_query = """
-                SELECT position_size_usd, leverage, take_profit_percent
+                SELECT position_size_usd, leverage, take_profit_percent, allowed_hours
                 FROM web.user_signal_filters
                 WHERE user_id = %s
             """
@@ -2425,6 +2428,9 @@ def api_trailing_analyze_progress():
             leverage = int(settings.get('leverage', 5))
             # TP для Trailing Stop берем из настроек как максимальный уровень
             tp_percent = float(settings.get('take_profit_percent', 10.0))
+            allowed_hours = settings.get('allowed_hours', list(range(24)))
+            if not allowed_hours:
+                allowed_hours = list(range(24))
             
             # Определяем период анализа (исключаем последние 2 дня)
             end_date = datetime.now().date() - timedelta(days=2)
@@ -2519,8 +2525,8 @@ def api_trailing_analyze_progress():
                                     'daily_pnl': float(cached_result[0]['daily_pnl'])
                                 }
                             else:
-                                # Получаем сигналы с фильтрами Score Week и Score Month
-                                raw_signals = get_scoring_signals(db, date_str, score_week, score_month)
+                                # Получаем сигналы с фильтрами Score Week, Score Month и разрешенными часами
+                                raw_signals = get_scoring_signals(db, date_str, score_week, score_month, allowed_hours)
                                 
                                 daily_stats = {
                                     'date': date_str,
