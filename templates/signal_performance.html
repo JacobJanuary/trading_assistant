@@ -850,6 +850,12 @@
         const scoreMonth = parseInt(document.getElementById('scoreMonth').value || 0);
         const maxTradesPer15Min = parseInt(document.getElementById('maxTradesPer15Min').value || 3);
         
+        // Собираем выбранные часы
+        const selectedHours = [];
+        document.querySelectorAll('.hour-filter:checked').forEach(checkbox => {
+            selectedHours.push(parseInt(checkbox.value));
+        });
+        
         const data = {
             score_week_min: scoreWeek,
             score_month_min: scoreMonth,
@@ -858,7 +864,9 @@
             hide_younger_than_hours: parseInt(document.getElementById('hideYounger').value),
             hide_older_than_hours: parseInt(document.getElementById('hideOlder').value),
             leverage: parseInt(document.getElementById('leverage').value),
-            position_size_usd: parseFloat(document.getElementById('positionSize').value)
+            position_size_usd: parseFloat(document.getElementById('positionSize').value),
+            // ВАЖНО: передаем текущие выбранные часы
+            allowed_hours: selectedHours.length > 0 ? selectedHours : [...Array(24).keys()]
         };
         
         // Сначала сохраняем в БД
@@ -916,13 +924,21 @@
 
     // Сохранение параметров в БД
     function saveCalculationParams() {
+        // Собираем выбранные часы
+        const selectedHours = [];
+        document.querySelectorAll('.hour-filter:checked').forEach(checkbox => {
+            selectedHours.push(parseInt(checkbox.value));
+        });
+        
         const data = {
             hide_younger_than_hours: parseInt(document.getElementById('hideYounger').value),
             hide_older_than_hours: parseInt(document.getElementById('hideOlder').value),
             leverage: parseInt(document.getElementById('leverage').value),
             position_size_usd: parseFloat(document.getElementById('positionSize').value),
             score_week_min: parseInt(document.getElementById('scoreWeek').value || 0),
-            score_month_min: parseInt(document.getElementById('scoreMonth').value || 0)
+            score_month_min: parseInt(document.getElementById('scoreMonth').value || 0),
+            // ВАЖНО: передаем текущие выбранные часы
+            allowed_hours: selectedHours.length > 0 ? selectedHours : [...Array(24).keys()]
         };
 
         // Показываем индикатор загрузки
