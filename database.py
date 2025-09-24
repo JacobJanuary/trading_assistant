@@ -82,6 +82,7 @@ class Database:
             params.extend([
                 "sslmode=disable",  # Отключаем SSL для стабильности
                 "connect_timeout=10",
+                "prepare_threshold=0",  # ВАЖНО: отключаем prepared statements для пула
                 "keepalives=1",  # Включаем TCP keepalive
                 "keepalives_idle=30",  # Время простоя до первой проверки (30 секунд)
                 "keepalives_interval=5",  # Интервал между проверками (5 секунд)
@@ -449,9 +450,15 @@ class Database:
                             conn.commit()
                             return None
                             
-            except psycopg.OperationalError as e:
+            except (psycopg.OperationalError, psycopg.errors.DuplicatePreparedStatement) as e:
                 last_error = e
                 error_msg = str(e).lower()
+                
+                # Если это ошибка prepared statement, просто повторяем
+                if 'prepared statement' in error_msg and attempt < max_retries - 1:
+                    logger.warning(f"Duplicate prepared statement on attempt {attempt + 1}/{max_retries}: {e}")
+                    time.sleep(0.1)  # Короткая пауза
+                    continue
                 
                 # Если это ошибка EOF или разрыва соединения
                 if any(x in error_msg for x in ['eof detected', 'connection reset', 'broken pipe', 'consuming input failed']):
