@@ -10,6 +10,8 @@ import os
 from contextlib import contextmanager
 import logging
 import time
+import socket
+import platform
 from typing import Optional
 from datetime import datetime, timezone
 import pytz
@@ -61,11 +63,28 @@ class Database:
         else:
             # Формируем строку подключения из отдельных параметров в формате key=value
             # Если пароль не указан, psycopg автоматически использует .pgpass
-            # Добавляем sslmode=prefer для автоматического выбора режима SSL
+            # Формируем строку подключения с параметрами для стабильности
+            params = [
+                f"host={host}",
+                f"port={port or 5432}",
+                f"dbname={database}",
+                f"user={user}"
+            ]
+            
             if password:
-                self.database_url = f"host={host} port={port} dbname={database} user={user} password={password} sslmode=prefer"
-            else:
-                self.database_url = f"host={host} port={port} dbname={database} user={user} sslmode=prefer"
+                params.append(f"password={password}")
+            
+            # Добавляем параметры для стабильности соединения
+            params.extend([
+                "sslmode=prefer",
+                "connect_timeout=10",
+                "keepalives=1",  # Включаем keepalive
+                "keepalives_idle=60",  # Время простоя до первой проверки
+                "keepalives_interval=10",  # Интервал между проверками
+                "keepalives_count=6"  # Количество проверок
+            ])
+            
+            self.database_url = " ".join(params)
 
         self.use_pool = use_pool
         self.connection_pool = None
@@ -73,22 +92,52 @@ class Database:
             self._initialize_pool()
 
     def _initialize_pool(self):
-        """Инициализация пула подключений"""
+        """Инициализация пула подключений с проверкой здоровья"""
         try:
             self.connection_pool = ConnectionPool(
                 conninfo=self.database_url,
-                min_size=2,  # Увеличиваем минимальное количество
-                max_size=10,  # Увеличиваем максимальное количество подключений
-                timeout=30.0,  # Увеличиваем таймаут для получения подключения
-                max_idle=300.0,  # Максимальное время простоя подключения (5 минут)
-                max_lifetime=3600.0,  # Максимальное время жизни соединения (1 час)
-                # Важно! Настраиваем пул так, чтобы он не откатывал транзакции автоматически
-                reset=False  # Отключаем автоматический сброс соединения
+                min_size=2,
+                max_size=10,
+                timeout=30.0,
+                max_idle=180.0,  # Уменьшаем до 3 минут для предотвращения EOF
+                max_lifetime=1800.0,  # 30 минут максимум
+                max_waiting=20,  # Максимум ожидающих клиентов
+                check=self._check_connection,  # Проверка перед выдачей
+                configure=self._configure_connection,  # Настройка новых соединений
+                reset=False
             )
-            logger.info("Пул подключений к базе данных инициализирован")
+            logger.info("Пул подключений инициализирован с проверкой здоровья")
         except Exception as e:
             logger.error(f"Ошибка при инициализации пула подключений: {e}")
             raise
+    
+    def _check_connection(self, conn):
+        """Проверка соединения перед выдачей из пула"""
+        if conn.closed:
+            return False
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+            return True
+        except:
+            return False
+    
+    def _configure_connection(self, conn):
+        """Настройка TCP keepalive для нового соединения"""
+        try:
+            sock = conn.pgconn.socket
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            
+            if platform.system() == 'Linux':
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 6)
+            elif platform.system() == 'Darwin':  # macOS
+                TCP_KEEPALIVE = 0x10
+                sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPALIVE, 60)
+        except Exception as e:
+            logger.debug(f"Could not configure keepalive: {e}")
 
     @contextmanager
     def get_connection(self):
@@ -123,8 +172,14 @@ class Database:
                     self.connection_pool.putconn(connection, close=True)
                     connection = self.connection_pool.getconn()
                 
-                # Устанавливаем autocommit
+                # Устанавливаем autocommit (сначала проверяем состояние транзакции)
                 if connection:
+                    # Если соединение в транзакции, откатываем ее
+                    if connection.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+                        try:
+                            connection.rollback()
+                        except:
+                            pass
                     connection.autocommit = False
             else:
                 # Создаем новое подключение без пула
@@ -219,28 +274,63 @@ class Database:
         """Деструктор для автоматического закрытия пула"""
         self.close()
 
-    def execute_query(self, query, params=None, fetch=False):
+    def execute_query(self, query, params=None, fetch=False, retry_on_error=True):
         """
-        Выполнение SQL запроса
+        Выполнение SQL запроса с автоматическим восстановлением при EOF
         
         Args:
             query (str): SQL запрос
             params (tuple): Параметры для запроса
             fetch (bool): Нужно ли возвращать результат
+            retry_on_error (bool): Повторять ли при ошибке соединения
             
         Returns:
             list: Результат запроса, если fetch=True
         """
-        with self.get_connection() as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute(query, params)
-                if fetch:
-                    result = cur.fetchall()
-                    conn.commit()  # Коммитим даже для SELECT (для завершения транзакции)
-                    return result
-                else:
-                    conn.commit()  # ВАЖНО! Коммитим для INSERT/UPDATE/DELETE
-                    return None
+        max_retries = 3 if retry_on_error else 1
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                with self.get_connection() as conn:
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        cur.execute(query, params)
+                        if fetch:
+                            result = cur.fetchall()
+                            conn.commit()
+                            return result
+                        else:
+                            conn.commit()
+                            return None
+                            
+            except psycopg.OperationalError as e:
+                last_error = e
+                error_msg = str(e).lower()
+                
+                # Если это ошибка EOF или разрыва соединения
+                if any(x in error_msg for x in ['eof detected', 'connection reset', 'broken pipe', 'consuming input failed']):
+                    logger.warning(f"Connection error on attempt {attempt + 1}/{max_retries}: {e}")
+                    
+                    if attempt < max_retries - 1:
+                        # Ждем перед повторной попыткой
+                        time.sleep(2 ** attempt)
+                        
+                        # Проверяем здоровье пула
+                        if self.use_pool:
+                            self.check_pool_health()
+                        continue
+                
+                # Если это другая ошибка или исчерпали попытки
+                raise
+                
+            except Exception as e:
+                # Для других ошибок не повторяем
+                logger.error(f"Query execution error: {e}")
+                raise
+        
+        # Если все попытки исчерпаны
+        if last_error:
+            raise last_error
 
     def initialize_schema(self):
         """Проверка существования необходимых таблиц в базе данных"""
