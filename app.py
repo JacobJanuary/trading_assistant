@@ -2097,8 +2097,10 @@ def api_efficiency_analyze_30days_progress():
                         results = saved_progress.get('results', []) or []
                         
                         if not saved_progress['completed']:
-                            # Логируем в консоль вместо показа уведомления
-                            logger.info(f'Восстанавливаем прогресс с комбинации {start_from_combination + 1}')
+                            # Логируем восстановление прогресса
+                            logger.info(f'Восстанавливаем прогресс с комбинации {start_from_combination + 1} из {total_combinations}')
+                            # ВАЖНО: отправляем клиенту информацию о восстановлении
+                            yield f"data: {json.dumps({'type': 'info', 'message': f'Продолжаем с {start_from_combination + 1} из {total_combinations}'})}\n\n"
                     else:
                         # Параметры изменились, удаляем старый прогресс
                         db.execute_query("DELETE FROM web.analysis_progress WHERE user_id = %s AND analysis_type = 'efficiency'", (user_id,))
@@ -2333,10 +2335,10 @@ def api_efficiency_analyze_30days_progress():
                             if raw_signals:
                                 session_id = f"eff_{user_id}_{uuid.uuid4().hex[:8]}"
                                 
-                                # Отправляем heartbeat перед тяжелой операцией
-                                # чтобы поддержать соединение активным
-                                if days_processed % 5 == 0:
-                                    yield f": processing day {days_processed}\n\n"
+                                # КРИТИЧНО: отправляем heartbeat перед КАЖДОЙ тяжелой операцией
+                                # при большом количестве комбинаций
+                                if total_combinations > 100:
+                                    yield f": processing c{current_combination}d{days_processed}\n\n"
                                 
                                 result = process_scoring_signals_batch(
                                     db, raw_signals, session_id, user_id,
@@ -2420,9 +2422,22 @@ def api_efficiency_analyze_30days_progress():
                         
                         results.append(combination_result)
                         
-                        # Сохраняем промежуточные результаты в БД каждые 10 комбинаций или в конце
-                        # Это уменьшает нагрузку на БД и предотвращает разрывы соединения
-                        if current_combination % 10 == 0 or current_combination == total_combinations:
+                        # КРИТИЧНО: При большом количестве комбинаций сохраняем КАЖДУЮ
+                        # чтобы не потерять прогресс при разрыве соединения
+                        should_save = False
+                        
+                        if total_combinations > 100:
+                            # Сохраняем каждую комбинацию
+                            should_save = True
+                        else:
+                            # При малом количестве сохраняем каждую 5-ю
+                            should_save = (current_combination % 5 == 0) or (current_combination == total_combinations)
+                        
+                        # ВСЕГДА сохраняем первую обработанную комбинацию после восстановления
+                        if current_combination == start_from_combination + 1:
+                            should_save = True
+                        
+                        if should_save:
                             update_progress_query = """
                                 UPDATE web.analysis_progress 
                                 SET results = %s, 
@@ -2430,11 +2445,17 @@ def api_efficiency_analyze_30days_progress():
                                     updated_at = NOW()
                                 WHERE user_id = %s AND analysis_type = 'efficiency'
                             """
-                            db.execute_query(update_progress_query, (
-                                json.dumps(results),
-                                current_combination,
-                                user_id
-                            ))
+                            try:
+                                db.execute_query(update_progress_query, (
+                                    json.dumps(results),
+                                    current_combination,
+                                    user_id
+                                ))
+                                # Отправляем keepalive после сохранения
+                                yield f": saved {current_combination}\n\n"
+                            except Exception as e:
+                                logger.error(f"Не удалось сохранить прогресс на комбинации {current_combination}: {e}")
+                                # Продолжаем работу даже если не удалось сохранить
                         
                         # Отправляем промежуточный результат только для малого количества комбинаций
                         if total_combinations <= 50:
