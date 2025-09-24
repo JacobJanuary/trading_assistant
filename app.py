@@ -2097,7 +2097,8 @@ def api_efficiency_analyze_30days_progress():
                         results = saved_progress.get('results', []) or []
                         
                         if not saved_progress['completed']:
-                            yield f"data: {json.dumps({'type': 'info', 'message': f'Восстанавливаем прогресс с комбинации {start_from_combination + 1}'})}\n\n"
+                            # Логируем в консоль вместо показа уведомления
+                            logger.info(f'Восстанавливаем прогресс с комбинации {start_from_combination + 1}')
                     else:
                         # Параметры изменились, удаляем старый прогресс
                         db.execute_query("DELETE FROM web.analysis_progress WHERE user_id = %s AND analysis_type = 'efficiency'", (user_id,))
@@ -2202,7 +2203,8 @@ def api_efficiency_analyze_30days_progress():
             
             # Отправляем начальное сообщение
             if start_from_combination > 0:
-                yield f"data: {json.dumps({'type': 'start', 'message': f'Продолжаем анализ с комбинации {start_from_combination + 1} из {total_combinations}...', 'total_combinations': total_combinations, 'resume': True, 'start_from': start_from_combination})}\n\n"
+                # Показываем продолжение только если это действительно возобновление после длительного перерыва
+                yield f"data: {json.dumps({'type': 'start', 'message': f'Анализ эффективности за 30 дней', 'total_combinations': total_combinations, 'resume': True, 'start_from': start_from_combination})}\n\n"
                 # Отправляем уже обработанные результаты
                 if results:
                     for result in results[:5]:  # Отправляем первые 5 для отображения
@@ -2239,8 +2241,10 @@ def api_efficiency_analyze_30days_progress():
                     # Вычисляем прогресс для текущей комбинации
                     progress_percent = int((current_combination - 0.5) / total_combinations * 100)
                     
-                    # Отправляем прогресс каждые 3 комбинации или при завершении
-                    if current_combination % 3 == 1 or current_combination == total_combinations:
+                    # Отправляем прогресс реже для большого количества комбинаций
+                    # Это предотвращает перегрузку и разрывы соединения
+                    progress_interval = 1 if total_combinations <= 20 else (5 if total_combinations <= 100 else 10)
+                    if current_combination % progress_interval == 0 or current_combination == total_combinations:
                         yield f"data: {json.dumps({'type': 'progress', 'percent': progress_percent, 'message': f'Обработка {current_combination}/{total_combinations}', 'current_combination': current_combination, 'total_combinations': total_combinations})}\n\n"
                         yield f": heartbeat\n\n"
                         last_yield = time.time()
@@ -2253,9 +2257,10 @@ def api_efficiency_analyze_30days_progress():
                         days_processed += 1
                         date_str = current_date.strftime('%Y-%m-%d')
                         
-                        # Отправляем heartbeat только если давно не отправляли данные
+                        # Отправляем heartbeat чаще при большом количестве комбинаций
                         current_time = time.time()
-                        if current_time - last_yield > 3:  # Каждые 3 секунды
+                        heartbeat_interval = 1 if total_combinations > 100 else 3
+                        if current_time - last_yield > heartbeat_interval:
                             yield f": keepalive\n\n"
                             last_yield = current_time
                         
@@ -2310,6 +2315,11 @@ def api_efficiency_analyze_30days_progress():
                             
                             if raw_signals:
                                 session_id = f"eff_{user_id}_{uuid.uuid4().hex[:8]}"
+                                
+                                # Отправляем heartbeat перед тяжелой операцией
+                                # чтобы поддержать соединение активным
+                                if days_processed % 5 == 0:
+                                    yield f": processing day {days_processed}\n\n"
                                 
                                 result = process_scoring_signals_batch(
                                     db, raw_signals, session_id, user_id,
@@ -2393,19 +2403,21 @@ def api_efficiency_analyze_30days_progress():
                         
                         results.append(combination_result)
                         
-                        # Сохраняем промежуточные результаты в БД после каждой комбинации
-                        update_progress_query = """
-                            UPDATE web.analysis_progress 
-                            SET results = %s, 
-                                last_processed_combination = %s,
-                                updated_at = NOW()
-                            WHERE user_id = %s AND analysis_type = 'efficiency'
-                        """
-                        db.execute_query(update_progress_query, (
-                            json.dumps(results),
-                            current_combination,
-                            user_id
-                        ))
+                        # Сохраняем промежуточные результаты в БД каждые 10 комбинаций или в конце
+                        # Это уменьшает нагрузку на БД и предотвращает разрывы соединения
+                        if current_combination % 10 == 0 or current_combination == total_combinations:
+                            update_progress_query = """
+                                UPDATE web.analysis_progress 
+                                SET results = %s, 
+                                    last_processed_combination = %s,
+                                    updated_at = NOW()
+                                WHERE user_id = %s AND analysis_type = 'efficiency'
+                            """
+                            db.execute_query(update_progress_query, (
+                                json.dumps(results),
+                                current_combination,
+                                user_id
+                            ))
                         
                         # Отправляем промежуточный результат только для малого количества комбинаций
                         if total_combinations <= 50:
