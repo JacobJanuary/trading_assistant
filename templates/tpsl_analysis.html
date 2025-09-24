@@ -430,23 +430,8 @@
             
             const eventSource = new EventSource(`/api/tpsl/analyze_progress?${params}`);
             
-            let activityTimeout = setInterval(() => {
-                // Увеличиваем таймаут до 5 минут (300 секунд) для обработки до 1000 комбинаций
-                if (Date.now() - lastActivity > 300000) {
-                    console.log('Timeout detected (300s/5min)');
-                    eventSource.close();
-                    clearInterval(activityTimeout);
-                    
-                    if (reconnectAttempts < maxReconnectAttempts) {
-                        reconnectAttempts++;
-                        showNotification(`Переподключение... Попытка ${reconnectAttempts}/${maxReconnectAttempts}`, 'info');
-                        setTimeout(() => createEventSource(), 3000);
-                    } else {
-                        showNotification('Превышено время ожидания', 'error');
-                        resetAnalysisButton();
-                    }
-                }
-            }, 10000);
+            // SSE автоматически переподключается при разрыве
+            // Не нужно вручную проверять таймауты
             
             eventSource.onmessage = function(event) {
                 lastActivity = Date.now();
@@ -470,7 +455,6 @@
                             break;
                             
                         case 'complete':
-                            clearInterval(activityTimeout);
                             eventSource.close();
                             currentEventSource = null;
                             analysisInProgress = false;
@@ -481,7 +465,6 @@
                             break;
                             
                         case 'error':
-                            clearInterval(activityTimeout);
                             eventSource.close();
                             currentEventSource = null;
                             analysisInProgress = false;

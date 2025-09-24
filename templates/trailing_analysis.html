@@ -468,22 +468,8 @@
             
             const eventSource = new EventSource(`/api/trailing/analyze_progress?${params}`);
             
-            let activityTimeout = setInterval(() => {
-                if (Date.now() - lastActivity > 300000) {  // 5 минут
-                    console.log('Timeout detected');
-                    eventSource.close();
-                    clearInterval(activityTimeout);
-                    
-                    if (reconnectAttempts < maxReconnectAttempts) {
-                        reconnectAttempts++;
-                        showNotification(`Переподключение... Попытка ${reconnectAttempts}/${maxReconnectAttempts}`, 'info');
-                        setTimeout(() => createEventSource(), 3000);
-                    } else {
-                        showNotification('Превышено время ожидания', 'error');
-                        resetAnalysisButton();
-                    }
-                }
-            }, 10000);
+            // SSE автоматически переподключается при разрыве
+            // Не нужно вручную проверять таймауты
             
             eventSource.onmessage = function(event) {
                 lastActivity = Date.now();
@@ -507,7 +493,6 @@
                             break;
                             
                         case 'complete':
-                            clearInterval(activityTimeout);
                             eventSource.close();
                             currentEventSource = null;
                             analysisInProgress = false;
@@ -518,7 +503,6 @@
                             break;
                             
                         case 'error':
-                            clearInterval(activityTimeout);
                             eventSource.close();
                             currentEventSource = null;
                             analysisInProgress = false;

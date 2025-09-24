@@ -2461,21 +2461,15 @@ def api_efficiency_analyze_30days_progress():
             logger.error(traceback.format_exc())
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
-    response = Response(
+    return Response(
         generate(), 
         mimetype='text/event-stream',
         headers={
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0',
+            'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no',  # Отключаем буферизацию в Nginx
-            'X-Content-Type-Options': 'nosniff'
+            'X-Accel-Buffering': 'no'  # Для nginx
         }
     )
-    # Отключаем буферизацию на уровне Flask
-    response.direct_passthrough = True
-    return response
 
 
 @app.route('/api/tpsl/analyze_progress')
@@ -2729,21 +2723,15 @@ def api_tpsl_analyze_progress():
             logger.error(traceback.format_exc())
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
-    response = Response(
+    return Response(
         generate(),
         mimetype='text/event-stream',
         headers={
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0',
+            'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no',  # Отключаем буферизацию в Nginx
-            'X-Content-Type-Options': 'nosniff'
+            'X-Accel-Buffering': 'no'
         }
     )
-    # Отключаем буферизацию на уровне Flask
-    response.direct_passthrough = True
-    return response
 
 
 @app.route('/api/trailing/analyze_progress')
@@ -3021,21 +3009,15 @@ def api_trailing_analyze_progress():
             logger.error(traceback.format_exc())
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
-    response = Response(
+    return Response(
         generate(),
         mimetype='text/event-stream',
         headers={
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0',
+            'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no',  # Отключаем буферизацию в Nginx
-            'X-Content-Type-Options': 'nosniff'
+            'X-Accel-Buffering': 'no'
         }
     )
-    # Отключаем буферизацию на уровне Flask
-    response.direct_passthrough = True
-    return response
 
 
 @app.route('/api/efficiency/analyze_30days', methods=['POST'])
@@ -4083,22 +4065,16 @@ def api_ab_test_run():
             logger.error(traceback.format_exc())
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
-    response = Response(
+    return Response(
         generate(), 
         mimetype='text/event-stream',
         headers={
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0',
+            'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no',  # Отключаем буферизацию в Nginx
-            'Content-Type': 'text/event-stream',
-            'X-Content-Type-Options': 'nosniff'
+            'X-Accel-Buffering': 'no',  # Для nginx
+            'Content-Type': 'text/event-stream'
         }
     )
-    # Отключаем буферизацию на уровне Flask
-    response.direct_passthrough = True
-    return response
 
 # Обработка ошибок
 @app.errorhandler(404)
