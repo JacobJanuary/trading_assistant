@@ -2066,26 +2066,6 @@ def api_efficiency_analyze_30days_progress():
     
     def generate():
         nonlocal session_id, force_recalc  # Указываем, что используем внешние переменные
-        
-        # Вспомогательная функция для отправки SSE сообщений
-        def send_sse(data=None, event=None, id=None, retry=None):
-            """Отправляет SSE сообщение в правильном формате"""
-            msg = ''
-            if event:
-                msg += f'event: {event}\n'
-            if id:
-                msg += f'id: {id}\n'
-            if retry:
-                msg += f'retry: {retry}\n'
-            if data:
-                # Для JSON данных
-                if isinstance(data, dict):
-                    msg += f'data: {json.dumps(data)}\n'
-                else:
-                    msg += f'data: {data}\n'
-            msg += '\n'  # Обязательная пустая строка в конце
-            return msg
-        
         try:
             # Проверяем, есть ли сохраненные промежуточные результаты в БД
             start_from_combination = 0
@@ -2143,8 +2123,9 @@ def api_efficiency_analyze_30days_progress():
                     db.execute_query(clear_old_cache_query, (user_id,))
             
             # Отправляем немедленный heartbeat для проверки соединения
-            yield send_sse(event='ping')
-            yield send_sse(data={'type': 'heartbeat'})
+            # ВАЖНО: Отправляем простую строку сначала для проверки соединения
+            yield ": ping\n\n"
+            yield f"data: {json.dumps({'type': 'connection_test'})}\n\n"
             
             # Переменные для отслеживания времени и обработки
             last_heartbeat = time.time()
@@ -2231,8 +2212,14 @@ def api_efficiency_analyze_30days_progress():
                         combination_str = f"Week≥{result['score_week']}%, Month≥{result['score_month']}%"
                         yield f"data: {json.dumps({'type': 'intermediate', 'combination': combination_str, 'pnl': round(result['total_pnl'], 2), 'signals': result['total_signals'], 'win_rate': round(result['win_rate'], 1)})}\n\n"
             else:
-                yield f"data: {json.dumps({'type': 'start', 'message': 'Инициализация анализа за 30 дней...', 'total_combinations': total_combinations})}\n\n"
-            yield f": heartbeat\n\n"  # Немедленный heartbeat после старта
+                # Отправляем начальное сообщение
+                start_msg = {'type': 'start', 'message': 'Инициализация анализа за 30 дней...', 'total_combinations': total_combinations}
+                yield f"data: {json.dumps(start_msg)}\n\n"
+                # Форсируем отправку
+                yield ": keepalive\n\n"
+                
+                # Сразу отправляем первый прогресс чтобы показать начало работы
+                yield f"data: {json.dumps({'type': 'progress', 'percent': 0, 'message': 'Начинаем обработку...', 'current_combination': 0, 'total_combinations': total_combinations})}\n\n"
             
             # Перебираем все комбинации на основе пользовательских настроек
             for score_week_min in week_steps:
@@ -2268,15 +2255,15 @@ def api_efficiency_analyze_30days_progress():
                     # Вычисляем прогресс для текущей комбинации
                     progress_percent = int((current_combination - 0.5) / total_combinations * 100)
                     
-                    # Упрощенная логика отправки прогресса
                     # Отправляем прогресс в начале обработки каждой комбинации
-                    yield send_sse(data={
+                    progress_data = {
                         'type': 'progress', 
                         'percent': progress_percent, 
                         'message': f'Обработка {current_combination}/{total_combinations}', 
                         'current_combination': current_combination, 
                         'total_combinations': total_combinations
-                    })
+                    }
+                    yield f"data: {json.dumps(progress_data)}\n\n"
                     last_yield = time.time()
                     
                     # Обрабатываем каждый день
@@ -2503,24 +2490,16 @@ def api_efficiency_analyze_30days_progress():
             logger.error(traceback.format_exc())
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
-    # Создаем Response с правильными настройками для SSE
-    # stream_with_context сохраняет Flask контекст в генераторе
+    # Создаем Response БЕЗ stream_with_context - это может блокировать
     response = Response(
-        stream_with_context(generate()), 
+        generate(),  # Простой генератор без оберток
         mimetype='text/event-stream',
         headers={
-            'Cache-Control': 'no-cache, no-transform',
+            'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
             'X-Accel-Buffering': 'no',  # Отключает буферизацию в Nginx
-            'Content-Encoding': 'none',  # Важно! Предотвращает сжатие
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET',
         }
     )
-    # Критически важные настройки для стриминга
-    response.implicit_sequence_conversion = False
-    response.direct_passthrough = True  # Передаем данные напрямую без буферизации
-    response.automatically_set_content_length = False  # SSE не имеет заранее известной длины
     
     return response
 
@@ -2776,22 +2755,15 @@ def api_tpsl_analyze_progress():
             logger.error(traceback.format_exc())
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
-    response = Response(
-        stream_with_context(generate()),
+    return Response(
+        generate(),
         mimetype='text/event-stream',
         headers={
-            'Cache-Control': 'no-cache, no-transform',
+            'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no',
-            'Content-Encoding': 'none',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET'
+            'X-Accel-Buffering': 'no'
         }
     )
-    response.implicit_sequence_conversion = False
-    response.direct_passthrough = True
-    response.automatically_set_content_length = False
-    return response
 
 
 @app.route('/api/trailing/analyze_progress')
@@ -3069,22 +3041,15 @@ def api_trailing_analyze_progress():
             logger.error(traceback.format_exc())
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
-    response = Response(
-        stream_with_context(generate()),
+    return Response(
+        generate(),
         mimetype='text/event-stream',
         headers={
-            'Cache-Control': 'no-cache, no-transform',
+            'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no',
-            'Content-Encoding': 'none',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET'
+            'X-Accel-Buffering': 'no'
         }
     )
-    response.implicit_sequence_conversion = False
-    response.direct_passthrough = True
-    response.automatically_set_content_length = False
-    return response
 
 
 @app.route('/api/efficiency/analyze_30days', methods=['POST'])
@@ -4132,21 +4097,16 @@ def api_ab_test_run():
             logger.error(traceback.format_exc())
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
-    response = Response(
-        stream_with_context(generate()), 
+    return Response(
+        generate(), 
         mimetype='text/event-stream',
         headers={
-            'Cache-Control': 'no-cache, no-transform',
+            'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
             'X-Accel-Buffering': 'no',
-            'Content-Encoding': 'none',
             'Content-Type': 'text/event-stream'
         }
     )
-    response.implicit_sequence_conversion = False
-    response.direct_passthrough = True
-    response.automatically_set_content_length = False
-    return response
 
 # Обработка ошибок
 @app.errorhandler(404)
