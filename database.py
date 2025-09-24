@@ -96,6 +96,20 @@ class Database:
         if use_pool:
             self._initialize_pool()
 
+    @staticmethod
+    def _reset_connection(conn):
+        """Функция для сброса соединения при возврате в пул"""
+        try:
+            # Откатываем незавершенные транзакции
+            if conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+                conn.rollback()
+            # Сбрасываем параметры сессии если нужно
+            with conn.cursor() as cur:
+                cur.execute("DISCARD ALL")
+        except Exception:
+            # Если не удалось сбросить, соединение будет закрыто
+            pass
+    
     def _initialize_pool(self):
         """Инициализация пула подключений"""
         try:
@@ -103,10 +117,10 @@ class Database:
             # Оптимизируем размер пула для стабильности
             pool_params = {
                 "conninfo": self.database_url,
-                "min_size": 5,   # Минимальное количество соединений
-                "max_size": 20,  # Максимум соединений (меньше воркеров * 2)
+                "min_size": 10,  # Минимальное количество соединений (меньше чем воркеров)
+                "max_size": 30,  # Максимум соединений (14 воркеров * 2 + запас)
                 "timeout": 30.0,
-                "reset": True    # ВАЖНО: сбрасывать состояние соединения при возврате в пул
+                "reset": self._reset_connection  # Функция для сброса соединения
             }
             
             # Добавляем дополнительные параметры если поддерживаются
