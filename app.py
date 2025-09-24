@@ -2066,7 +2066,6 @@ def api_efficiency_analyze_30days_progress():
     
     def generate():
         nonlocal session_id, force_recalc  # Указываем, что используем внешние переменные
-        import sys
         try:
             # Проверяем, есть ли сохраненные промежуточные результаты в БД
             start_from_combination = 0
@@ -2254,11 +2253,10 @@ def api_efficiency_analyze_30days_progress():
                         days_processed += 1
                         date_str = current_date.strftime('%Y-%m-%d')
                         
-                        # Отправляем heartbeat более часто для стабильности соединения
+                        # Отправляем heartbeat только если давно не отправляли данные
                         current_time = time.time()
-                        if current_time - last_yield > 0.5:  # Каждые 0.5 секунды
-                            yield f": keepalive {current_combination}-{days_processed}\n\n"
-                            sys.stdout.flush()  # Принудительная очистка буфера
+                        if current_time - last_yield > 3:  # Каждые 3 секунды
+                            yield f": keepalive\n\n"
                             last_yield = current_time
                         
                         # Не отправляем детальный прогресс для уменьшения нагрузки при большом количестве комбинаций
@@ -2383,9 +2381,8 @@ def api_efficiency_analyze_30days_progress():
                         current_date += timedelta(days=1)
                         
                         # Отправляем heartbeat после каждого дня для поддержания соединения
-                        if days_processed % 2 == 0:  # Каждые 2 дня
+                        if days_processed % 5 == 0:  # Каждые 5 дней
                             yield f": heartbeat day {days_processed}\n\n"
-                            sys.stdout.flush()  # Принудительная очистка буфера
                             last_yield = time.time()
                     
                     # Рассчитываем win rate
@@ -2592,14 +2589,11 @@ def api_tpsl_analyze_progress():
                     while current_date <= end_date:
                         date_str = current_date.strftime('%Y-%m-%d')
                         
-                        # Отправляем keepalive очень активно для предотвращения разрывов
+                        # Отправляем keepalive более активно для предотвращения таймаута
                         current_time = time.time()
-                        if current_time - last_yield > 0.5:  # Каждые 0.5 секунды
-                            yield f": keepalive {tp_percent}-{sl_percent}-{days_processed}\n\n"
+                        if current_time - last_yield > 2:  # Уменьшаем с 3 до 2 секунд
+                            yield f": keepalive\n\n"
                             yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': current_time})}\n\n"
-                            # Принудительная отправка буфера
-                            if hasattr(generate, '__self__'):
-                                generate.__self__.flush()
                             last_yield = current_time
                         
                         # Проверяем кэш
@@ -2877,13 +2871,10 @@ def api_trailing_analyze_progress():
                         while current_date <= end_date:
                             date_str = current_date.strftime('%Y-%m-%d')
                             
-                            # Отправляем keepalive очень часто для стабильности
+                            # Отправляем keepalive если давно не отправляли данные
                             current_time = time.time()
-                            if current_time - last_yield > 0.5:  # Каждые 0.5 секунды
-                                yield f": keepalive trailing-{activation_pct}-{distance_pct}-{days_processed}\n\n"
-                                # Принудительная отправка буфера
-                                if hasattr(generate, '__self__'):
-                                    generate.__self__.flush()
+                            if current_time - last_yield > 3:
+                                yield f": keepalive\n\n"
                                 last_yield = current_time
                             
                             # Проверяем кэш

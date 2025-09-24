@@ -454,18 +454,9 @@
             const eventSource = new EventSource(`/api/efficiency/analyze_30days_progress?${params}`);
             currentEventSource = eventSource;
             
-            // Отслеживаем состояние соединения
+            // Не создаем таймеры для проверки активности - SSE сам переподключается
+            // Используем только отслеживание состояния
             let isReconnecting = false;
-            
-            // Мониторинг соединения для отображения пользователю
-            const monitorInterval = setInterval(() => {
-                const timeSinceLastActivity = Date.now() - lastActivity;
-                if (timeSinceLastActivity > 10000 && !connectionLostWarningShown) {
-                    connectionLostWarningShown = true;
-                    document.getElementById('progressDetails').innerHTML = 
-                        '<span class="text-yellow-600"><i class="fas fa-exclamation-triangle"></i> Соединение нестабильно, ожидаем восстановления...</span>';
-                }
-            }, 5000);
         
         // Обработка heartbeat комментариев
         eventSource.addEventListener('message', function(event) {
@@ -531,7 +522,6 @@
                     
                 case 'complete':
                     // Анализ завершен
-                    clearInterval(monitorInterval);
                     eventSource.close();
                     currentEventSource = null;
                     analysisInProgress = false;
@@ -543,7 +533,6 @@
                     
                 case 'error':
                     // Ошибка
-                    clearInterval(monitorInterval);
                     eventSource.close();
                     currentEventSource = null;
                     analysisInProgress = false;
@@ -565,34 +554,29 @@
             // SSE автоматически переподключается при разрыве соединения
             console.log('SSE connection interrupted, auto-reconnecting...');
             
-            // readyState: 0=connecting, 1=open, 2=closed
-            // SSE будет автоматически переподключаться при readyState 0 и 1
-            // Вмешиваемся только если соединение окончательно закрыто
+            // Только если это критическая ошибка (readyState === 2 означает CLOSED)
             if (eventSource.readyState === 2) {
-                clearInterval(monitorInterval);
                 console.error('SSE connection closed permanently');
                 
                 if (!isReconnecting && reconnectAttempts < maxReconnectAttempts) {
                     isReconnecting = true;
                     reconnectAttempts++;
+                    console.log(`Manual reconnect attempt ${reconnectAttempts}/${maxReconnectAttempts}`);
                     
+                    // Показываем пользователю, что идет переподключение
                     document.getElementById('progressDetails').innerHTML = 
-                        `<span class="text-yellow-600"><i class="fas fa-sync fa-spin"></i> Переподключение (попытка ${reconnectAttempts}/${maxReconnectAttempts})...</span>`;
+                        `<span class="text-yellow-600">Соединение прервано. Переподключение (попытка ${reconnectAttempts}/${maxReconnectAttempts})...</span>`;
                     
-                    // Ждем перед переподключением с экспоненциальной задержкой
-                    const delay = Math.min(3000 * Math.pow(1.5, reconnectAttempts - 1), 30000);
-                    
+                    // Ждем немного перед переподключением
                     setTimeout(() => {
                         if (analysisInProgress) {
-                            console.log(`Attempting manual reconnect after ${delay}ms delay`);
                             createEventSource();
                         }
                         isReconnecting = false;
-                    }, delay);
+                    }, 3000);
                 } else if (reconnectAttempts >= maxReconnectAttempts) {
-                    clearInterval(monitorInterval);
                     cleanupConnection();
-                    showNotification('Не удалось восстановить соединение. Пожалуйста, запустите анализ заново.', 'error');
+                    showNotification('Превышено количество попыток переподключения', 'error');
                     resetAnalysisButton();
                 }
             }
