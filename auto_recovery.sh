@@ -2,9 +2,9 @@
 
 # Скрипт автоматического восстановления Trading Assistant
 # Запускать через cron каждые 5 минут:
-# */5 * * * * /home/trading/trading_assistant/auto_recovery.sh
+# */5 * * * * /home/elcrypto/trading_assistant/auto_recovery.sh
 
-LOG_FILE="/home/trading/trading_assistant/logs/recovery.log"
+LOG_FILE="/home/elcrypto/trading_assistant/logs/recovery.log"
 APP_URL="http://localhost:5000/"
 MAX_DB_CONNECTIONS=20
 MAX_MEMORY_PERCENT=85
@@ -47,9 +47,9 @@ check_memory() {
 # Очистка старых логов
 cleanup_logs() {
     # Архивируем логи старше 7 дней
-    find /home/trading/trading_assistant/logs -name "*.log" -mtime +7 -exec gzip {} \;
+    find /home/elcrypto/trading_assistant/logs -name "*.log" -mtime +7 -exec gzip {} \;
     # Удаляем архивы старше 30 дней
-    find /home/trading/trading_assistant/logs -name "*.log.gz" -mtime +30 -delete
+    find /home/elcrypto/trading_assistant/logs -name "*.log.gz" -mtime +30 -delete
 }
 
 # Основная логика
@@ -75,7 +75,7 @@ main() {
     fi
     
     # Проверка на критические ошибки в логах
-    if [ -f "/home/trading/trading_assistant/logs/gunicorn_error.log" ]; then
+    if [ -f "/home/elcrypto/trading_assistant/logs/gunicorn_error.log" ]; then
         critical_errors=$(tail -100 /home/trading/trading_assistant/logs/gunicorn_error.log | grep -c "decryption failed\|SIGKILL\|MemoryError")
         if [ "$critical_errors" -gt 0 ]; then
             log_message "ERROR: Найдены критические ошибки в логах ($critical_errors)"

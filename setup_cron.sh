@@ -5,7 +5,7 @@
 echo "=== Настройка автоматических задач для Trading Assistant ==="
 
 # Путь к приложению
-APP_PATH="/home/trading/trading_assistant"
+APP_PATH="/home/elcrypto/trading_assistant"
 
 # Создание директории для логов если не существует
 mkdir -p "$APP_PATH/logs"
