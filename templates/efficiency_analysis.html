@@ -428,7 +428,18 @@
         // Генерируем уникальный ID сессии для отслеживания переподключений
         const sessionId = 'eff_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         
+        // Отменяем все таймеры при закрытии
+        function cleanupConnection() {
+            if (currentEventSource) {
+                currentEventSource.close();
+                currentEventSource = null;
+            }
+        }
+        
         function createEventSource() {
+            // Очищаем предыдущее соединение
+            cleanupConnection();
+            
             // Создаем SSE соединение с параметрами
             const params = new URLSearchParams({
                 score_week_min: scoreWeekMin,
@@ -440,45 +451,13 @@
                 session_id: sessionId  // Передаем ID сессии для отслеживания переподключений
             });
             const eventSource = new EventSource(`/api/efficiency/analyze_30days_progress?${params}`);
+            currentEventSource = eventSource;
             
-            // Отслеживаем активность для больших анализов
-            let activityTimeout = null;
-            if (total_combinations > 50) {
-                // Для больших анализов увеличиваем timeout
-                activityTimeout = setInterval(() => {
-                    if (Date.now() - lastActivity > 300000) { // 300 секунд (5 минут) без активности для больших анализов
-                        console.log('Timeout detected for large analysis, attempting to reconnect...');
-                        eventSource.close();
-                        clearInterval(activityTimeout);
-                        
-                        if (reconnectAttempts < maxReconnectAttempts) {
-                            reconnectAttempts++;
-                            showNotification(`Переподключение... Попытка ${reconnectAttempts}/${maxReconnectAttempts}`, 'info');
-                            setTimeout(() => createEventSource(), 3000);
-                        } else {
-                            showNotification('Превышено время ожидания. Анализ слишком большой, попробуйте уменьшить диапазон.', 'error');
-                            resetAnalysisButton();
-                        }
-                    }
-                }, 10000); // Проверяем каждые 10 секунд для больших анализов
-            } else {
-                // Для малых анализов стандартный timeout
-                activityTimeout = setInterval(() => {
-                    if (Date.now() - lastActivity > 300000) { // 300 секунд (5 минут) без активности
-                        console.log('Timeout detected, attempting to reconnect...');
-                        eventSource.close();
-                        clearInterval(activityTimeout);
-                        
-                        if (reconnectAttempts < maxReconnectAttempts) {
-                            reconnectAttempts++;
-                            setTimeout(() => createEventSource(), 2000);
-                        } else {
-                            showNotification('Превышено время ожидания. Попробуйте еще раз.', 'error');
-                            resetAnalysisButton();
-                        }
-                    }
-                }, 15000);  // Увеличиваем таймаут до 15 секунд
-            }
+            // Не создаем таймеры для проверки активности - SSE сам переподключается
+            // Используем только отслеживание состояния
+            let isReconnecting = false;
+            // Не используем таймеры для проверки активности
+            // SSE сам переподключается автоматически
         
         // Обработка heartbeat комментариев
         eventSource.addEventListener('message', function(event) {
@@ -569,20 +548,33 @@
         });
         
         eventSource.onerror = function(error) {
-            console.error('SSE Error:', error);
-            lastActivity = Date.now(); // Обновляем активность при ошибке
+            // SSE автоматически переподключается при разрыве соединения
+            // Не нужно вручную переподключаться, это создает дубликаты
+            console.log('SSE connection error (will auto-reconnect):', error);
             
-            // Не закрываем сразу, даем шанс переподключиться
-            if (reconnectAttempts >= maxReconnectAttempts) {
-                clearInterval(activityTimeout);
-                eventSource.close();
-                showNotification('Ошибка соединения с сервером. Попробуйте еще раз.', 'error');
-                resetAnalysisButton();
+            // Только если это критическая ошибка (readyState === 2 означает CLOSED)
+            if (eventSource.readyState === 2) {
+                console.error('SSE connection closed permanently');
+                
+                if (!isReconnecting && reconnectAttempts < maxReconnectAttempts) {
+                    isReconnecting = true;
+                    reconnectAttempts++;
+                    console.log(`Manual reconnect attempt ${reconnectAttempts}/${maxReconnectAttempts}`);
+                    
+                    // Ждем немного перед переподключением
+                    setTimeout(() => {
+                        if (analysisInProgress) {
+                            createEventSource();
+                        }
+                        isReconnecting = false;
+                    }, 3000);
+                } else if (reconnectAttempts >= maxReconnectAttempts) {
+                    cleanupConnection();
+                    showNotification('Превышено количество попыток переподключения', 'error');
+                    resetAnalysisButton();
+                }
             }
         };
-        
-        currentEventSource = eventSource;
-        return eventSource;
         }
         
         // Функция сброса кнопки
