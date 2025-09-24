@@ -76,7 +76,7 @@ main() {
     
     # Проверка на критические ошибки в логах
     if [ -f "/home/elcrypto/trading_assistant/logs/gunicorn_error.log" ]; then
-        critical_errors=$(tail -100 /home/trading/trading_assistant/logs/gunicorn_error.log | grep -c "decryption failed\|SIGKILL\|MemoryError")
+        critical_errors=$(tail -100 /home/elcrypto/trading_assistant/logs/gunicorn_error.log | grep -c "decryption failed\|SIGKILL\|MemoryError\|PoolTimeout")
         if [ "$critical_errors" -gt 0 ]; then
             log_message "ERROR: Найдены критические ошибки в логах ($critical_errors)"
             problems_found=true

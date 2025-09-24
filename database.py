@@ -5,10 +5,11 @@
 """
 import psycopg
 from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
+from psycopg_pool import ConnectionPool, PoolTimeout
 import os
 from contextlib import contextmanager
 import logging
+import time
 from typing import Optional
 from datetime import datetime, timezone
 import pytz
@@ -76,10 +77,11 @@ class Database:
         try:
             self.connection_pool = ConnectionPool(
                 conninfo=self.database_url,
-                min_size=1,
-                max_size=5,  # Уменьшаем максимальное количество подключений
-                timeout=10.0,  # Таймаут для получения подключения
+                min_size=2,  # Увеличиваем минимальное количество
+                max_size=10,  # Увеличиваем максимальное количество подключений
+                timeout=30.0,  # Увеличиваем таймаут для получения подключения
                 max_idle=300.0,  # Максимальное время простоя подключения (5 минут)
+                max_lifetime=3600.0,  # Максимальное время жизни соединения (1 час)
                 # Важно! Настраиваем пул так, чтобы он не откатывал транзакции автоматически
                 reset=False  # Отключаем автоматический сброс соединения
             )
@@ -92,60 +94,118 @@ class Database:
     def get_connection(self):
         """Контекстный менеджер для получения подключения"""
         connection = None
+        
         try:
             if self.use_pool:
-                connection = self.connection_pool.getconn()
+                # Пытаемся получить соединение из пула с retry логикой
+                retry_count = 0
+                max_retries = 2
+                
+                while retry_count < max_retries:
+                    try:
+                        connection = self.connection_pool.getconn()
+                        break  # Успешно получили соединение
+                    except PoolTimeout as e:
+                        logger.warning(f"Pool timeout on attempt {retry_count + 1}/{max_retries}: {e}")
+                        retry_count += 1
+                        
+                        if retry_count < max_retries:
+                            # Проверяем здоровье пула
+                            self.check_pool_health()
+                            time.sleep(1)  # Небольшая пауза
+                        else:
+                            logger.error("Failed to get connection from pool after retries")
+                            raise
+                
                 # Проверяем, что соединение живо
-                if connection.closed:
+                if connection and connection.closed:
                     logger.warning("Получено закрытое соединение из пула, создаем новое")
-                    self.connection_pool.putconn(connection)
+                    self.connection_pool.putconn(connection, close=True)
                     connection = self.connection_pool.getconn()
-                # Устанавливаем autocommit для правильной работы транзакций
-                connection.autocommit = False
+                
+                # Устанавливаем autocommit
+                if connection:
+                    connection.autocommit = False
             else:
                 # Создаем новое подключение без пула
                 connection = psycopg.connect(self.database_url, autocommit=False)
+            
+            # Возвращаем соединение для использования
             yield connection
+            
         except psycopg.OperationalError as e:
             # Специальная обработка ошибок соединения
+            logger.error(f"Ошибка соединения с базой данных: {e}")
             if connection:
                 try:
                     connection.rollback()
                 except:
-                    pass  # Игнорируем ошибки при откате
-            logger.error(f"Ошибка соединения с базой данных: {e}")
-            # Помечаем соединение как плохое для удаления из пула
-            if self.use_pool and connection:
+                    pass
+                # Помечаем соединение для закрытия
+                if self.use_pool:
+                    try:
+                        self.connection_pool.putconn(connection, close=True)
+                        connection = None  # Помечаем что соединение обработано
+                    except:
+                        pass
+            raise
+            
+        except Exception as e:
+            # Общая обработка ошибок
+            logger.error(f"Ошибка при работе с базой данных: {e}")
+            if connection:
                 try:
-                    self.connection_pool.putconn(connection, close=True)
+                    connection.rollback()
                 except:
                     pass
             raise
-        except Exception as e:
-            if connection:
-                try:
-                    connection.rollback()
-                except:
-                    pass  # Игнорируем ошибки при откате
-            logger.error(f"Ошибка при работе с базой данных: {e}")
-            raise
+            
         finally:
-            if connection and not connection.closed:
+            # Возвращаем соединение в пул или закрываем
+            if connection:
                 if self.use_pool:
-                    # Перед возвратом в пул убеждаемся, что транзакция завершена
                     try:
-                        if connection.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
-                            connection.rollback()
-                        self.connection_pool.putconn(connection)
-                    except:
-                        # Если не можем вернуть в пул, закрываем соединение
+                        # Проверяем состояние транзакции перед возвратом в пул
+                        if not connection.closed:
+                            if connection.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+                                try:
+                                    connection.rollback()
+                                except:
+                                    pass
+                            # Возвращаем в пул
+                            self.connection_pool.putconn(connection)
+                    except Exception as e:
+                        logger.error(f"Ошибка при возврате соединения в пул: {e}")
                         try:
                             connection.close()
                         except:
                             pass
                 else:
-                    connection.close()
+                    try:
+                        connection.close()
+                    except:
+                        pass
 
+    def check_pool_health(self):
+        """Проверка здоровья пула соединений"""
+        if not self.connection_pool:
+            return False
+        try:
+            # Проверяем статистику пула
+            stats = self.connection_pool.get_stats()
+            logger.info(f"Pool stats: size={stats.get('pool_size', 0)}, "
+                       f"available={stats.get('pool_available', 0)}, "
+                       f"waiting={stats.get('requests_waiting', 0)}")
+            
+            # Если есть много ожидающих запросов, логируем предупреждение
+            if stats.get('requests_waiting', 0) > 5:
+                logger.warning(f"High number of waiting requests: {stats.get('requests_waiting', 0)}")
+                
+            return True
+        except Exception as e:
+            logger.error(f"Error checking pool health: {e}")
+            return False
+    
     def close(self):
         """Закрытие пула соединений"""
         if self.connection_pool:
