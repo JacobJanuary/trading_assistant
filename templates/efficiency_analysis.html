@@ -446,7 +446,7 @@
             if (total_combinations > 50) {
                 // Для больших анализов увеличиваем timeout
                 activityTimeout = setInterval(() => {
-                    if (Date.now() - lastActivity > 120000) { // 120 секунд без активности для больших анализов
+                    if (Date.now() - lastActivity > 300000) { // 300 секунд (5 минут) без активности для больших анализов
                         console.log('Timeout detected for large analysis, attempting to reconnect...');
                         eventSource.close();
                         clearInterval(activityTimeout);
@@ -464,7 +464,7 @@
             } else {
                 // Для малых анализов стандартный timeout
                 activityTimeout = setInterval(() => {
-                    if (Date.now() - lastActivity > 60000) { // 60 секунд без активности
+                    if (Date.now() - lastActivity > 300000) { // 300 секунд (5 минут) без активности
                         console.log('Timeout detected, attempting to reconnect...');
                         eventSource.close();
                         clearInterval(activityTimeout);

@@ -469,7 +469,7 @@
             const eventSource = new EventSource(`/api/trailing/analyze_progress?${params}`);
             
             let activityTimeout = setInterval(() => {
-                if (Date.now() - lastActivity > 60000) {
+                if (Date.now() - lastActivity > 300000) {  // 5 минут
                     console.log('Timeout detected');
                     eventSource.close();
                     clearInterval(activityTimeout);

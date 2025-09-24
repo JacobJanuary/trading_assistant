@@ -2583,10 +2583,11 @@ def api_tpsl_analyze_progress():
                     while current_date <= end_date:
                         date_str = current_date.strftime('%Y-%m-%d')
                         
-                        # Отправляем keepalive если давно не отправляли данные
+                        # Отправляем keepalive более активно для предотвращения таймаута
                         current_time = time.time()
-                        if current_time - last_yield > 3:
+                        if current_time - last_yield > 2:  # Уменьшаем с 3 до 2 секунд
                             yield f": keepalive\n\n"
+                            yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': current_time})}\n\n"
                             last_yield = current_time
                         
                         # Проверяем кэш
@@ -2625,6 +2626,13 @@ def api_tpsl_analyze_progress():
                             
                             if raw_signals:
                                 session_id = f"tpsl_{user_id}_{uuid.uuid4().hex[:8]}"
+                                
+                                # Отправляем heartbeat перед длительной обработкой
+                                current_time = time.time()
+                                if current_time - last_yield > 1.5:
+                                    yield f": processing\n\n"
+                                    yield f"data: {json.dumps({'type': 'heartbeat', 'processing': date_str})}\n\n"
+                                    last_yield = current_time
                                 
                                 # Обрабатываем с текущими TP/SL
                                 result = process_scoring_signals_batch(

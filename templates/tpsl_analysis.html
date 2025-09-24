@@ -431,8 +431,9 @@
             const eventSource = new EventSource(`/api/tpsl/analyze_progress?${params}`);
             
             let activityTimeout = setInterval(() => {
-                if (Date.now() - lastActivity > 60000) {
-                    console.log('Timeout detected');
+                // Увеличиваем таймаут до 5 минут (300 секунд) для обработки до 1000 комбинаций
+                if (Date.now() - lastActivity > 300000) {
+                    console.log('Timeout detected (300s/5min)');
                     eventSource.close();
                     clearInterval(activityTimeout);
                     
