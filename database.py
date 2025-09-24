@@ -10,8 +10,6 @@ import os
 from contextlib import contextmanager
 import logging
 import time
-import socket
-import platform
 from typing import Optional
 from datetime import datetime, timezone
 import pytz
@@ -76,7 +74,7 @@ class Database:
             
             # Добавляем параметры для стабильности соединения
             params.extend([
-                "sslmode=prefer",
+                "sslmode=disable",  # Отключаем SSL для стабильности
                 "connect_timeout=10",
                 "keepalives=1",  # Включаем keepalive
                 "keepalives_idle=60",  # Время простоя до первой проверки
@@ -122,33 +120,6 @@ class Database:
             logger.error(f"Ошибка при инициализации пула подключений: {e}")
             raise
     
-    def _check_connection(self, conn):
-        """Проверка соединения перед выдачей из пула"""
-        if conn.closed:
-            return False
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
-                cur.fetchone()
-            return True
-        except:
-            return False
-    
-    def _configure_connection(self, conn):
-        """Настройка TCP keepalive для нового соединения"""
-        try:
-            sock = conn.pgconn.socket
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            
-            if platform.system() == 'Linux':
-                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
-                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
-                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 6)
-            elif platform.system() == 'Darwin':  # macOS
-                TCP_KEEPALIVE = 0x10
-                sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPALIVE, 60)
-        except Exception as e:
-            logger.debug(f"Could not configure keepalive: {e}")
 
     @contextmanager
     def get_connection(self):
@@ -180,7 +151,7 @@ class Database:
                 # Проверяем, что соединение живо
                 if connection and connection.closed:
                     logger.warning("Получено закрытое соединение из пула, создаем новое")
-                    self.connection_pool.putconn(connection, close=True)
+                    self.connection_pool.putconn(connection)  # БЕЗ close=True!
                     connection = self.connection_pool.getconn()
                 
                 # Дополнительная проверка здоровья соединения
@@ -192,7 +163,7 @@ class Database:
                             cur.fetchone()
                     except Exception as e:
                         logger.warning(f"Соединение не прошло проверку: {e}")
-                        self.connection_pool.putconn(connection, close=True)
+                        self.connection_pool.putconn(connection)  # БЕЗ close=True!
                         connection = self.connection_pool.getconn()
                 
                 # Устанавливаем autocommit (сначала проверяем состояние транзакции)
@@ -222,7 +193,7 @@ class Database:
                 # Помечаем соединение для закрытия
                 if self.use_pool:
                     try:
-                        self.connection_pool.putconn(connection, close=True)
+                        self.connection_pool.putconn(connection)  # БЕЗ close=True!
                         connection = None  # Помечаем что соединение обработано
                     except:
                         pass
