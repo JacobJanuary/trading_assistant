@@ -423,7 +423,8 @@
         let intermediateResults = [];
         let lastActivity = Date.now();
         let reconnectAttempts = 0;
-        const maxReconnectAttempts = total_combinations > 100 ? 5 : 3; // Больше попыток для больших анализов
+        let connectionLostWarningShown = false;
+        const maxReconnectAttempts = total_combinations > 100 ? 10 : 5; // Больше попыток для больших анализов
         
         // Генерируем уникальный ID сессии для отслеживания переподключений
         const sessionId = 'eff_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
@@ -453,16 +454,29 @@
             const eventSource = new EventSource(`/api/efficiency/analyze_30days_progress?${params}`);
             currentEventSource = eventSource;
             
-            // Не создаем таймеры для проверки активности - SSE сам переподключается
-            // Используем только отслеживание состояния
+            // Отслеживаем состояние соединения
             let isReconnecting = false;
-            // Не используем таймеры для проверки активности
-            // SSE сам переподключается автоматически
+            
+            // Мониторинг соединения для отображения пользователю
+            const monitorInterval = setInterval(() => {
+                const timeSinceLastActivity = Date.now() - lastActivity;
+                if (timeSinceLastActivity > 10000 && !connectionLostWarningShown) {
+                    connectionLostWarningShown = true;
+                    document.getElementById('progressDetails').innerHTML = 
+                        '<span class="text-yellow-600"><i class="fas fa-exclamation-triangle"></i> Соединение нестабильно, ожидаем восстановления...</span>';
+                }
+            }, 5000);
         
         // Обработка heartbeat комментариев
         eventSource.addEventListener('message', function(event) {
             lastActivity = Date.now();
             reconnectAttempts = 0; // Сбрасываем счетчик при успешном получении сообщения
+            
+            // Если было предупреждение о потере соединения, убираем его
+            if (connectionLostWarningShown) {
+                connectionLostWarningShown = false;
+                console.log('Connection restored');
+            }
             
             try {
                 const data = JSON.parse(event.data);
@@ -517,7 +531,7 @@
                     
                 case 'complete':
                     // Анализ завершен
-                    clearInterval(activityTimeout);
+                    clearInterval(monitorInterval);
                     eventSource.close();
                     currentEventSource = null;
                     analysisInProgress = false;
@@ -529,7 +543,7 @@
                     
                 case 'error':
                     // Ошибка
-                    clearInterval(activityTimeout);
+                    clearInterval(monitorInterval);
                     eventSource.close();
                     currentEventSource = null;
                     analysisInProgress = false;
@@ -549,28 +563,36 @@
         
         eventSource.onerror = function(error) {
             // SSE автоматически переподключается при разрыве соединения
-            // Не нужно вручную переподключаться, это создает дубликаты
-            console.log('SSE connection error (will auto-reconnect):', error);
+            console.log('SSE connection interrupted, auto-reconnecting...');
             
-            // Только если это критическая ошибка (readyState === 2 означает CLOSED)
+            // readyState: 0=connecting, 1=open, 2=closed
+            // SSE будет автоматически переподключаться при readyState 0 и 1
+            // Вмешиваемся только если соединение окончательно закрыто
             if (eventSource.readyState === 2) {
+                clearInterval(monitorInterval);
                 console.error('SSE connection closed permanently');
                 
                 if (!isReconnecting && reconnectAttempts < maxReconnectAttempts) {
                     isReconnecting = true;
                     reconnectAttempts++;
-                    console.log(`Manual reconnect attempt ${reconnectAttempts}/${maxReconnectAttempts}`);
                     
-                    // Ждем немного перед переподключением
+                    document.getElementById('progressDetails').innerHTML = 
+                        `<span class="text-yellow-600"><i class="fas fa-sync fa-spin"></i> Переподключение (попытка ${reconnectAttempts}/${maxReconnectAttempts})...</span>`;
+                    
+                    // Ждем перед переподключением с экспоненциальной задержкой
+                    const delay = Math.min(3000 * Math.pow(1.5, reconnectAttempts - 1), 30000);
+                    
                     setTimeout(() => {
                         if (analysisInProgress) {
+                            console.log(`Attempting manual reconnect after ${delay}ms delay`);
                             createEventSource();
                         }
                         isReconnecting = false;
-                    }, 3000);
+                    }, delay);
                 } else if (reconnectAttempts >= maxReconnectAttempts) {
+                    clearInterval(monitorInterval);
                     cleanupConnection();
-                    showNotification('Превышено количество попыток переподключения', 'error');
+                    showNotification('Не удалось восстановить соединение. Пожалуйста, запустите анализ заново.', 'error');
                     resetAnalysisButton();
                 }
             }
