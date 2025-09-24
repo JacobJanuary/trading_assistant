@@ -92,21 +92,32 @@ class Database:
             self._initialize_pool()
 
     def _initialize_pool(self):
-        """Инициализация пула подключений с проверкой здоровья"""
+        """Инициализация пула подключений"""
         try:
-            self.connection_pool = ConnectionPool(
-                conninfo=self.database_url,
-                min_size=2,
-                max_size=10,
-                timeout=30.0,
-                max_idle=180.0,  # Уменьшаем до 3 минут для предотвращения EOF
-                max_lifetime=1800.0,  # 30 минут максимум
-                max_waiting=20,  # Максимум ожидающих клиентов
-                check=self._check_connection,  # Проверка перед выдачей
-                configure=self._configure_connection,  # Настройка новых соединений
-                reset=False
-            )
-            logger.info("Пул подключений инициализирован с проверкой здоровья")
+            # Базовые параметры, поддерживаемые всеми версиями
+            pool_params = {
+                "conninfo": self.database_url,
+                "min_size": 2,
+                "max_size": 10,
+                "timeout": 30.0,
+                "reset": False
+            }
+            
+            # Добавляем дополнительные параметры если поддерживаются
+            try:
+                # Пробуем создать с расширенными параметрами
+                self.connection_pool = ConnectionPool(
+                    **pool_params,
+                    max_idle=180.0,
+                    max_lifetime=1800.0,
+                    max_waiting=20
+                )
+                logger.info("Пул подключений инициализирован с расширенными параметрами")
+            except TypeError:
+                # Если не поддерживаются, создаем с базовыми
+                self.connection_pool = ConnectionPool(**pool_params)
+                logger.info("Пул подключений инициализирован с базовыми параметрами")
+                
         except Exception as e:
             logger.error(f"Ошибка при инициализации пула подключений: {e}")
             raise
@@ -171,6 +182,18 @@ class Database:
                     logger.warning("Получено закрытое соединение из пула, создаем новое")
                     self.connection_pool.putconn(connection, close=True)
                     connection = self.connection_pool.getconn()
+                
+                # Дополнительная проверка здоровья соединения
+                if connection and not connection.closed:
+                    try:
+                        # Быстрая проверка соединения
+                        with connection.cursor() as cur:
+                            cur.execute("SELECT 1")
+                            cur.fetchone()
+                    except Exception as e:
+                        logger.warning(f"Соединение не прошло проверку: {e}")
+                        self.connection_pool.putconn(connection, close=True)
+                        connection = self.connection_pool.getconn()
                 
                 # Устанавливаем autocommit (сначала проверяем состояние транзакции)
                 if connection:
