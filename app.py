@@ -2066,6 +2066,7 @@ def api_efficiency_analyze_30days_progress():
     
     def generate():
         nonlocal session_id, force_recalc  # Указываем, что используем внешние переменные
+        import gc  # Для ручной сборки мусора при больших объемах данных
         try:
             # Сначала вычисляем количество комбинаций (нужно для проверки прогресса)
             week_steps = list(range(score_week_min_param, score_week_max_param + 1, step_param))
@@ -2421,6 +2422,15 @@ def api_efficiency_analyze_30days_progress():
                             combination_result['win_rate'] = (combination_result['total_wins'] / total_closed) * 100
                         
                         results.append(combination_result)
+                        
+                        # Очищаем память при большом количестве результатов
+                        # Оставляем только топ-200 по win_rate чтобы не исчерпать память
+                        if len(results) > 200 and total_combinations > 100:
+                            # Сортируем и оставляем только лучшие
+                            results = sorted(results, key=lambda x: x.get('win_rate', 0), reverse=True)[:200]
+                            logger.info(f"Очищена память, оставлено топ-200 результатов из {current_combination}")
+                            # Принудительная сборка мусора
+                            gc.collect()
                         
                         # КРИТИЧНО: При большом количестве комбинаций сохраняем КАЖДУЮ
                         # чтобы не потерять прогресс при разрыве соединения
