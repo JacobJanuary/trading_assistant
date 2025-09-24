@@ -13,12 +13,15 @@ sleep 2
 
 # 2. Проверяем базу данных
 echo "2. Проверяем подключение к БД..."
-PGPASSWORD="" psql -h 10.8.0.1 -U elcrypto -d fox_crypto_new -c "SELECT 1" > /dev/null 2>&1
+# Используем .pgpass, не устанавливаем PGPASSWORD
+psql -h 10.8.0.1 -U elcrypto -d fox_crypto_new -c "SELECT 1" > /dev/null 2>&1
 if [ $? -eq 0 ]; then
     echo "   ✅ База данных доступна"
 else
     echo "   ❌ Проблема с базой данных!"
-    echo "   Проверьте .pgpass и VPN соединение"
+    echo "   Проверьте .pgpass файл:"
+    echo "   cat ~/.pgpass"
+    echo "   Должна быть строка: 10.8.0.1:5432:fox_crypto_new:elcrypto:ваш_пароль"
 fi
 
 # 3. Активируем виртуальное окружение
@@ -35,13 +38,15 @@ echo "5. Запуск Gunicorn..."
 echo ""
 
 # Запуск с минимальной конфигурацией для отладки
+# Проверяем версию gunicorn для совместимости
+GUNICORN_VERSION=$(gunicorn --version 2>&1 | cut -d' ' -f2)
+echo "   Версия Gunicorn: $GUNICORN_VERSION"
+
+# Базовые параметры, поддерживаемые всеми версиями
 gunicorn \
     --bind 0.0.0.0:5000 \
     --workers 2 \
     --timeout 300 \
-    --keepalive 75 \
-    --max-requests 1000 \
-    --max-requests-jitter 50 \
     --access-logfile logs/gunicorn_access.log \
     --error-logfile logs/gunicorn_error.log \
     --log-level info \
