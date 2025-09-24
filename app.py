@@ -2067,9 +2067,15 @@ def api_efficiency_analyze_30days_progress():
     def generate():
         nonlocal session_id, force_recalc  # Указываем, что используем внешние переменные
         try:
+            # Сначала вычисляем количество комбинаций (нужно для проверки прогресса)
+            week_steps = list(range(score_week_min_param, score_week_max_param + 1, step_param))
+            month_steps = list(range(score_month_min_param, score_month_max_param + 1, step_param))
+            total_combinations = len(week_steps) * len(month_steps)
+            
             # Проверяем, есть ли сохраненные промежуточные результаты в БД
             start_from_combination = 0
             results = []
+            current_combination = 0
             
             if not force_recalc:
                 # Проверяем прогресс в БД
@@ -2163,12 +2169,6 @@ def api_efficiency_analyze_30days_progress():
             # Определяем период анализа (исключаем последние 2 дня)
             end_date = datetime.now().date() - timedelta(days=2)
             start_date = end_date - timedelta(days=29)
-            
-            # Вычисляем количество комбинаций на основе параметров
-            week_steps = list(range(score_week_min_param, score_week_max_param + 1, step_param))
-            month_steps = list(range(score_month_min_param, score_month_max_param + 1, step_param))
-            total_combinations = len(week_steps) * len(month_steps)
-            current_combination = 0
             
             # Создаем или обновляем запись прогресса в БД
             if start_from_combination == 0:  # Новый анализ
