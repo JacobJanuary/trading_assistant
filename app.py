@@ -2140,6 +2140,7 @@ def api_efficiency_analyze_30days_progress():
             last_heartbeat = time.time()
             last_yield = time.time()
             processed_combinations = 0
+            HEARTBEAT_INTERVAL = 10  # Отправлять heartbeat каждые 10 секунд
             
             # Получаем настройки пользователя
             settings_query = """
@@ -2235,10 +2236,14 @@ def api_efficiency_analyze_30days_progress():
                         
                     processed_combinations += 1
                     
-                    # Отправляем keepalive для поддержания соединения
-                    # Важно: отправляем ПЕРЕД началом обработки
+                    # Отправляем heartbeat для поддержания соединения
                     current_time = time.time()
-                    if current_time - last_yield > 1:  # Каждую секунду
+                    if current_time - last_heartbeat > HEARTBEAT_INTERVAL:
+                        yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': current_time})}\n\n"
+                        last_heartbeat = current_time
+                    
+                    # Также отправляем keepalive чаще для предотвращения таймаута
+                    if current_time - last_yield > 2:  # Каждые 2 секунды
                         yield f": keepalive\n\n"
                         last_yield = current_time
                     
@@ -2277,10 +2282,14 @@ def api_efficiency_analyze_30days_progress():
                         days_processed += 1
                         date_str = current_date.strftime('%Y-%m-%d')
                         
-                        # Отправляем heartbeat чаще при большом количестве комбинаций
+                        # Отправляем heartbeat регулярно
                         current_time = time.time()
-                        heartbeat_interval = 1 if total_combinations > 100 else 3
-                        if current_time - last_yield > heartbeat_interval:
+                        if current_time - last_heartbeat > HEARTBEAT_INTERVAL:
+                            yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': current_time})}\n\n"
+                            last_heartbeat = current_time
+                        
+                        # Также отправляем keepalive чаще для предотвращения таймаута
+                        if current_time - last_yield > 2:
                             yield f": keepalive\n\n"
                             last_yield = current_time
                         

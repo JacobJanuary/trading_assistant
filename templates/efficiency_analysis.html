@@ -375,6 +375,8 @@
 
     let analysisInProgress = false;
     let currentEventSource = null;
+    let heartbeatTimeout = null;
+    const HEARTBEAT_TIMEOUT = 30000; // 30 секунд без heartbeat = переподключение
     
     // Запуск анализа с SSE для отслеживания прогресса
     function startAnalysis() {
@@ -435,6 +437,22 @@
                 currentEventSource.close();
                 currentEventSource = null;
             }
+            clearTimeout(heartbeatTimeout);
+        }
+        
+        // Функция для сброса таймера heartbeat
+        function resetHeartbeatTimeout() {
+            clearTimeout(heartbeatTimeout);
+            heartbeatTimeout = setTimeout(() => {
+                console.log('No heartbeat received for 30 seconds, reconnecting...');
+                if (currentEventSource && analysisInProgress) {
+                    document.getElementById('progressDetails').innerHTML = 
+                        `<span class="text-yellow-600">Нет ответа от сервера. Переподключение...</span>`;
+                    currentEventSource.close();
+                    // Запускаем переподключение
+                    createEventSource();
+                }
+            }, HEARTBEAT_TIMEOUT);
         }
         
         function createEventSource() {
@@ -462,12 +480,14 @@
         eventSource.onopen = function() {
             console.log('SSE connection opened successfully');
             lastActivity = Date.now();
+            resetHeartbeatTimeout();
         };
         
         // Обработка сообщений SSE
         eventSource.onmessage = function(event) {
             lastActivity = Date.now();
             reconnectAttempts = 0; // Сбрасываем счетчик при успешном получении сообщения
+            resetHeartbeatTimeout(); // Сбрасываем таймер heartbeat при любом сообщении
             
             // Если было предупреждение о потере соединения, убираем его
             if (connectionLostWarningShown) {
@@ -548,7 +568,10 @@
                     
                 case 'heartbeat':
                     // Heartbeat сообщение для поддержания соединения
-                    console.log('Heartbeat received');
+                    const timestamp = data.timestamp ? new Date(data.timestamp * 1000).toLocaleTimeString() : 'now';
+                    console.log('Heartbeat received at', timestamp);
+                    // heartbeat уже сбрасывается в onmessage, но можно дополнительно вызвать здесь
+                    resetHeartbeatTimeout();
                     break;
             }
             } catch (error) {
