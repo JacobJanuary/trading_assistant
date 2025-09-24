@@ -149,7 +149,7 @@ class Database:
                             logger.error("Failed to get connection from pool after retries")
                             raise
                 
-                # Проверяем, что соединение живо
+                # Проверяем,  что соединение живо
                 if connection and connection.closed:
                     logger.warning("Получено закрытое соединение из пула, создаем новое")
                     self.connection_pool.putconn(connection)  # БЕЗ close=True!

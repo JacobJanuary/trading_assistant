@@ -1634,7 +1634,7 @@ def api_scoring_save_filters():
         """
 
         import json
-        # Сохраняем параметры в JSON для обратной совместимости
+        # Сохраняем параметры  в JSON для обратной совместимости
         filter_data = {
             'score_week_min': score_week_min,
             'score_month_min': score_month_min
