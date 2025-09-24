@@ -457,9 +457,15 @@
             // Не создаем таймеры для проверки активности - SSE сам переподключается
             // Используем только отслеживание состояния
             let isReconnecting = false;
+            
+        // Обработчик открытия соединения
+        eventSource.onopen = function() {
+            console.log('SSE connection opened successfully');
+            lastActivity = Date.now();
+        };
         
-        // Обработка heartbeat комментариев
-        eventSource.addEventListener('message', function(event) {
+        // Обработка сообщений SSE
+        eventSource.onmessage = function(event) {
             lastActivity = Date.now();
             reconnectAttempts = 0; // Сбрасываем счетчик при успешном получении сообщения
             
@@ -548,7 +554,7 @@
             } catch (error) {
                 console.error('Error parsing SSE message:', error, event.data);
             }
-        });
+        };
         
         eventSource.onerror = function(error) {
             // SSE автоматически переподключается при разрыве соединения
