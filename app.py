@@ -98,6 +98,10 @@ try:
 except Exception as e:
     logger.error(f"Ошибка при инициализации схемы: {e}")
 
+# Глобальный счетчик критических ошибок БД
+database_critical_errors = 0
+last_db_recovery_attempt = 0
+
 # Глобальные переменные для хранения результатов анализа
 # Ключ - user_id, значение - словарь с результатами различных анализов
 analysis_results_cache = {
@@ -109,7 +113,49 @@ analysis_results_cache = {
 @login_manager.user_loader
 def load_user(user_id):
     """Загрузка пользователя для Flask-Login"""
-    return User.get_by_id(db, int(user_id))
+    try:
+        return User.get_by_id(db, int(user_id))
+    except Exception as e:
+        # При критической ошибке БД пытаемся восстановить соединение
+        if 'consuming input failed' in str(e).lower() or 'eof detected' in str(e).lower():
+            logger.error(f"Critical DB error in load_user: {e}")
+            handle_database_critical_error()
+        return None
+
+def handle_database_critical_error():
+    """Обработка критических ошибок БД с автоматическим восстановлением"""
+    global database_critical_errors, last_db_recovery_attempt
+    import time
+    
+    current_time = time.time()
+    database_critical_errors += 1
+    
+    # Если прошло меньше 30 секунд с последней попытки, не пытаемся снова
+    if current_time - last_db_recovery_attempt < 30:
+        logger.warning("Skipping recovery attempt (too soon)")
+        return False
+    
+    logger.critical(f"Database critical error #{database_critical_errors}, attempting recovery")
+    last_db_recovery_attempt = current_time
+    
+    try:
+        # Пытаемся восстановить пул
+        if database_critical_errors >= 3:
+            # После 3 ошибок используем emergency recovery
+            logger.critical("Using emergency recovery after 3 failures")
+            success = db.emergency_recovery()
+            if success:
+                database_critical_errors = 0
+                logger.info("Emergency recovery successful")
+                return True
+        else:
+            # Обычная переинициализация
+            db.reinitialize_pool()
+            logger.info("Pool reinitialized successfully")
+            return True
+    except Exception as e:
+        logger.critical(f"Failed to recover database: {e}")
+        return False
 
 # Проверка доступа для неподтвержденных пользователей
 @app.before_request
@@ -249,6 +295,74 @@ def register():
     return render_template('register.html')
 
 # Выход из системы
+@app.route('/api/admin/db_health')
+@login_required
+def check_database_health():
+    """Endpoint для проверки и восстановления состояния БД (только для админов)"""
+    if not current_user.is_admin:
+        return jsonify({'status': 'error', 'message': 'Access denied'}), 403
+    
+    try:
+        # Проверяем состояние пула
+        pool_healthy = db.check_pool_health()
+        
+        # Пробуем выполнить тестовый запрос
+        test_result = db.execute_query("SELECT 1 as test", fetch=True)
+        
+        return jsonify({
+            'status': 'success',
+            'pool_healthy': pool_healthy,
+            'test_query': 'success' if test_result else 'failed',
+            'critical_errors': database_critical_errors,
+            'message': 'Database is healthy'
+        })
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'critical_errors': database_critical_errors
+        }), 500
+
+@app.route('/api/admin/db_recover', methods=['POST'])
+@login_required
+def recover_database():
+    """Endpoint для принудительного восстановления БД (только для админов)"""
+    if not current_user.is_admin:
+        return jsonify({'status': 'error', 'message': 'Access denied'}), 403
+    
+    try:
+        # Принудительное восстановление
+        recovery_type = request.json.get('type', 'normal')
+        
+        if recovery_type == 'emergency':
+            logger.warning("Admin requested emergency recovery")
+            success = db.emergency_recovery()
+        else:
+            logger.warning("Admin requested pool reinitialization")
+            db.reinitialize_pool()
+            success = True
+        
+        if success:
+            global database_critical_errors
+            database_critical_errors = 0
+            return jsonify({
+                'status': 'success',
+                'message': 'Database recovered successfully'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Recovery failed'
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Manual recovery failed: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
 @app.route('/logout')
 @login_required
 def logout():
