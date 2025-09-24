@@ -2225,6 +2225,10 @@ def api_efficiency_analyze_30days_progress():
                         
                     processed_combinations += 1
                     
+                    # Отправляем heartbeat в начале каждой комбинации для поддержания соединения
+                    if processed_combinations == 1 or processed_combinations % 5 == 0:
+                        yield f": processing combination {current_combination}\n\n"
+                    
                     combination_result = {
                         'score_week': score_week_min,
                         'score_month': score_month_min,
@@ -2242,9 +2246,13 @@ def api_efficiency_analyze_30days_progress():
                     progress_percent = int((current_combination - 0.5) / total_combinations * 100)
                     
                     # Отправляем прогресс реже для большого количества комбинаций
-                    # Это предотвращает перегрузку и разрывы соединения
+                    # Но ВСЕГДА отправляем для первой комбинации чтобы показать начало работы
                     progress_interval = 1 if total_combinations <= 20 else (5 if total_combinations <= 100 else 10)
-                    if current_combination % progress_interval == 0 or current_combination == total_combinations:
+                    should_send_progress = (current_combination == start_from_combination + 1) or \
+                                         (current_combination % progress_interval == 0) or \
+                                         (current_combination == total_combinations)
+                    
+                    if should_send_progress:
                         yield f"data: {json.dumps({'type': 'progress', 'percent': progress_percent, 'message': f'Обработка {current_combination}/{total_combinations}', 'current_combination': current_combination, 'total_combinations': total_combinations})}\n\n"
                         yield f": heartbeat\n\n"
                         last_yield = time.time()
@@ -2473,7 +2481,7 @@ def api_efficiency_analyze_30days_progress():
             logger.error(traceback.format_exc())
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
-    return Response(
+    response = Response(
         generate(), 
         mimetype='text/event-stream',
         headers={
@@ -2482,6 +2490,8 @@ def api_efficiency_analyze_30days_progress():
             'X-Accel-Buffering': 'no'  # Для nginx
         }
     )
+    response.implicit_sequence_conversion = False
+    return response
 
 
 @app.route('/api/tpsl/analyze_progress')
@@ -2735,7 +2745,7 @@ def api_tpsl_analyze_progress():
             logger.error(traceback.format_exc())
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
-    return Response(
+    response = Response(
         generate(),
         mimetype='text/event-stream',
         headers={
@@ -2744,6 +2754,8 @@ def api_tpsl_analyze_progress():
             'X-Accel-Buffering': 'no'
         }
     )
+    response.implicit_sequence_conversion = False
+    return response
 
 
 @app.route('/api/trailing/analyze_progress')
@@ -3021,7 +3033,7 @@ def api_trailing_analyze_progress():
             logger.error(traceback.format_exc())
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
-    return Response(
+    response = Response(
         generate(),
         mimetype='text/event-stream',
         headers={
@@ -3030,6 +3042,8 @@ def api_trailing_analyze_progress():
             'X-Accel-Buffering': 'no'
         }
     )
+    response.implicit_sequence_conversion = False
+    return response
 
 
 @app.route('/api/efficiency/analyze_30days', methods=['POST'])
@@ -4077,7 +4091,7 @@ def api_ab_test_run():
             logger.error(traceback.format_exc())
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
-    return Response(
+    response = Response(
         generate(), 
         mimetype='text/event-stream',
         headers={
@@ -4087,6 +4101,8 @@ def api_ab_test_run():
             'Content-Type': 'text/event-stream'
         }
     )
+    response.implicit_sequence_conversion = False
+    return response
 
 # Обработка ошибок
 @app.errorhandler(404)
