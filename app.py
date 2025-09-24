@@ -7,7 +7,7 @@ import requests
 from decimal import Decimal
 from datetime import datetime, timedelta
 from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, stream_with_context
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from dotenv import load_dotenv
 import logging
@@ -2066,6 +2066,26 @@ def api_efficiency_analyze_30days_progress():
     
     def generate():
         nonlocal session_id, force_recalc  # Указываем, что используем внешние переменные
+        
+        # Вспомогательная функция для отправки SSE сообщений
+        def send_sse(data=None, event=None, id=None, retry=None):
+            """Отправляет SSE сообщение в правильном формате"""
+            msg = ''
+            if event:
+                msg += f'event: {event}\n'
+            if id:
+                msg += f'id: {id}\n'
+            if retry:
+                msg += f'retry: {retry}\n'
+            if data:
+                # Для JSON данных
+                if isinstance(data, dict):
+                    msg += f'data: {json.dumps(data)}\n'
+                else:
+                    msg += f'data: {data}\n'
+            msg += '\n'  # Обязательная пустая строка в конце
+            return msg
+        
         try:
             # Проверяем, есть ли сохраненные промежуточные результаты в БД
             start_from_combination = 0
@@ -2123,8 +2143,8 @@ def api_efficiency_analyze_30days_progress():
                     db.execute_query(clear_old_cache_query, (user_id,))
             
             # Отправляем немедленный heartbeat для проверки соединения
-            yield f": heartbeat\n\n"
-            yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+            yield send_sse(event='ping')
+            yield send_sse(data={'type': 'heartbeat'})
             
             # Переменные для отслеживания времени и обработки
             last_heartbeat = time.time()
@@ -2225,9 +2245,12 @@ def api_efficiency_analyze_30days_progress():
                         
                     processed_combinations += 1
                     
-                    # Отправляем heartbeat в начале каждой комбинации для поддержания соединения
-                    if processed_combinations == 1 or processed_combinations % 5 == 0:
-                        yield f": processing combination {current_combination}\n\n"
+                    # Отправляем keepalive для поддержания соединения
+                    # Важно: отправляем ПЕРЕД началом обработки
+                    current_time = time.time()
+                    if current_time - last_yield > 1:  # Каждую секунду
+                        yield f": keepalive\n\n"
+                        last_yield = current_time
                     
                     combination_result = {
                         'score_week': score_week_min,
@@ -2245,17 +2268,16 @@ def api_efficiency_analyze_30days_progress():
                     # Вычисляем прогресс для текущей комбинации
                     progress_percent = int((current_combination - 0.5) / total_combinations * 100)
                     
-                    # Отправляем прогресс реже для большого количества комбинаций
-                    # Но ВСЕГДА отправляем для первой комбинации чтобы показать начало работы
-                    progress_interval = 1 if total_combinations <= 20 else (5 if total_combinations <= 100 else 10)
-                    should_send_progress = (current_combination == start_from_combination + 1) or \
-                                         (current_combination % progress_interval == 0) or \
-                                         (current_combination == total_combinations)
-                    
-                    if should_send_progress:
-                        yield f"data: {json.dumps({'type': 'progress', 'percent': progress_percent, 'message': f'Обработка {current_combination}/{total_combinations}', 'current_combination': current_combination, 'total_combinations': total_combinations})}\n\n"
-                        yield f": heartbeat\n\n"
-                        last_yield = time.time()
+                    # Упрощенная логика отправки прогресса
+                    # Отправляем прогресс в начале обработки каждой комбинации
+                    yield send_sse(data={
+                        'type': 'progress', 
+                        'percent': progress_percent, 
+                        'message': f'Обработка {current_combination}/{total_combinations}', 
+                        'current_combination': current_combination, 
+                        'total_combinations': total_combinations
+                    })
+                    last_yield = time.time()
                     
                     # Обрабатываем каждый день
                     current_date = start_date
@@ -2481,16 +2503,25 @@ def api_efficiency_analyze_30days_progress():
             logger.error(traceback.format_exc())
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
+    # Создаем Response с правильными настройками для SSE
+    # stream_with_context сохраняет Flask контекст в генераторе
     response = Response(
-        generate(), 
+        stream_with_context(generate()), 
         mimetype='text/event-stream',
         headers={
-            'Cache-Control': 'no-cache',
+            'Cache-Control': 'no-cache, no-transform',
             'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no'  # Для nginx
+            'X-Accel-Buffering': 'no',  # Отключает буферизацию в Nginx
+            'Content-Encoding': 'none',  # Важно! Предотвращает сжатие
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET',
         }
     )
+    # Критически важные настройки для стриминга
     response.implicit_sequence_conversion = False
+    response.direct_passthrough = True  # Передаем данные напрямую без буферизации
+    response.automatically_set_content_length = False  # SSE не имеет заранее известной длины
+    
     return response
 
 
@@ -2746,15 +2777,20 @@ def api_tpsl_analyze_progress():
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
     response = Response(
-        generate(),
+        stream_with_context(generate()),
         mimetype='text/event-stream',
         headers={
-            'Cache-Control': 'no-cache',
+            'Cache-Control': 'no-cache, no-transform',
             'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no'
+            'X-Accel-Buffering': 'no',
+            'Content-Encoding': 'none',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET'
         }
     )
     response.implicit_sequence_conversion = False
+    response.direct_passthrough = True
+    response.automatically_set_content_length = False
     return response
 
 
@@ -3034,15 +3070,20 @@ def api_trailing_analyze_progress():
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
     response = Response(
-        generate(),
+        stream_with_context(generate()),
         mimetype='text/event-stream',
         headers={
-            'Cache-Control': 'no-cache',
+            'Cache-Control': 'no-cache, no-transform',
             'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no'
+            'X-Accel-Buffering': 'no',
+            'Content-Encoding': 'none',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET'
         }
     )
     response.implicit_sequence_conversion = False
+    response.direct_passthrough = True
+    response.automatically_set_content_length = False
     return response
 
 
@@ -4092,16 +4133,19 @@ def api_ab_test_run():
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
     response = Response(
-        generate(), 
+        stream_with_context(generate()), 
         mimetype='text/event-stream',
         headers={
-            'Cache-Control': 'no-cache',
+            'Cache-Control': 'no-cache, no-transform',
             'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no',  # Для nginx
+            'X-Accel-Buffering': 'no',
+            'Content-Encoding': 'none',
             'Content-Type': 'text/event-stream'
         }
     )
     response.implicit_sequence_conversion = False
+    response.direct_passthrough = True
+    response.automatically_set_content_length = False
     return response
 
 # Обработка ошибок
