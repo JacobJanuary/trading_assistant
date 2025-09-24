@@ -466,11 +466,11 @@ def initialize_signals_with_params(db, hours_back=48, tp_percent=4.0, sl_percent
                     sl_percent=sl_percent
                 )
 
-                if result['success']:
+                if result.get('success'):
                     stats['initialized'] += 1
                     stats['by_exchange'][signal['exchange_name']] += 1
 
-                    if result['is_closed']:
+                    if result.get('is_closed'):
                         if result['close_reason'] == 'take_profit':
                             stats['closed_tp'] += 1
                             stats['total_realized_profit'] += result.get('realized_pnl', 0)
@@ -482,6 +482,12 @@ def initialize_signals_with_params(db, hours_back=48, tp_percent=4.0, sl_percent
                         stats['open'] += 1
 
                     stats['total_max_profit'] += result.get('max_profit', 0)
+                elif result.get('reason') == 'duplicate_position':
+                    # Учитываем пропущенные дубликаты
+                    if 'duplicates_skipped' not in stats:
+                        stats['duplicates_skipped'] = 0
+                    stats['duplicates_skipped'] += 1
+                    print(f"[INIT] Пропущен дубликат для {signal['pair_symbol']} - уже есть открытая позиция")
                 else:
                     stats['errors'] += 1
 
@@ -503,6 +509,7 @@ def initialize_signals_with_params(db, hours_back=48, tp_percent=4.0, sl_percent
         print(f"[INIT] Инициализировано: {stats['initialized']}")
         print(f"[INIT]   - Binance: {stats['by_exchange']['Binance']}")
         print(f"[INIT]   - Bybit: {stats['by_exchange']['Bybit']}")
+        print(f"[INIT] Пропущено дубликатов: {stats.get('duplicates_skipped', 0)}")
         print(f"[INIT] Закрыто по TP: {stats['closed_tp']}")
         print(f"[INIT] Закрыто по SL: {stats['closed_sl']}")
         print(f"[INIT] Остались открытыми: {stats['open']}")
@@ -522,6 +529,49 @@ def initialize_signals_with_params(db, hours_back=48, tp_percent=4.0, sl_percent
         return {'initialized': 0, 'closed_tp': 0, 'closed_sl': 0, 'open': 0, 'errors': 1}
 
 
+def has_open_position(db, pair_symbol):
+    """
+    Проверяет наличие открытых позиций по символу пары
+    
+    Args:
+        db: объект базы данных
+        pair_symbol: символ торговой пары
+    
+    Returns:
+        dict с информацией об открытой позиции или None
+    """
+    try:
+        query = """
+            SELECT 
+                signal_id,
+                pair_symbol,
+                entry_price,
+                signal_timestamp,
+                position_size_usd,
+                leverage,
+                use_trailing_stop,
+                score_week,
+                score_month
+            FROM web.web_signals
+            WHERE pair_symbol = %s 
+                AND is_closed = FALSE
+            ORDER BY signal_timestamp DESC
+            LIMIT 1
+        """
+        
+        result = db.execute_query(query, (pair_symbol,), fetch=True)
+        
+        if result and len(result) > 0:
+            logger.info(f"[DUPLICATE CHECK] Найдена открытая позиция по {pair_symbol}: signal_id={result[0]['signal_id']}")
+            return result[0]
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"[DUPLICATE CHECK] Ошибка проверки открытых позиций для {pair_symbol}: {e}")
+        return None
+
+
 def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
                             position_size=100.0, leverage=5,
                             use_trailing_stop=False, trailing_distance_pct=2.0,
@@ -538,6 +588,12 @@ def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
         signal_action = signal['signal_action']
         signal_timestamp = signal['signal_timestamp']
         exchange_name = signal.get('exchange_name', 'Unknown')
+        
+        # Проверяем наличие открытых позиций по этой паре
+        open_position = has_open_position(db, pair_symbol)
+        if open_position:
+            logger.warning(f"[DUPLICATE SKIPPED] Пропускаем сигнал {signal_id} для {pair_symbol} - уже есть открытая позиция (signal_id={open_position['signal_id']})")
+            return {'success': False, 'reason': 'duplicate_position', 'existing_signal_id': open_position['signal_id']}
 
         # Инициализируем last_price значением по умолчанию
         last_price = None
@@ -1034,6 +1090,12 @@ def process_signal_with_trailing(db, signal, user_settings):
         signal_timestamp = signal['signal_timestamp']
         exchange_name = signal.get('exchange_name', 'Unknown')
         signal_timestamp = make_aware(signal_timestamp)
+        
+        # Проверяем наличие открытых позиций по этой паре
+        open_position = has_open_position(db, pair_symbol)
+        if open_position:
+            logger.warning(f"[DUPLICATE SKIPPED] Пропускаем сигнал {signal_id} для {pair_symbol} - уже есть открытая позиция (signal_id={open_position['signal_id']})")
+            return {'success': False, 'reason': 'duplicate_position', 'existing_signal_id': open_position['signal_id']}
 
         # Извлекаем настройки
         use_trailing = user_settings.get('use_trailing_stop', False)
@@ -1356,11 +1418,11 @@ def initialize_signals_with_trailing(db, hours_back=48, user_id=None):
 
                 result = process_signal_with_trailing(db, signal, user_settings)
 
-                if result['success']:
+                if result.get('success'):
                     stats['initialized'] += 1
                     stats['by_exchange'][signal.get('exchange_name', 'Unknown')] += 1
 
-                    if result['is_closed']:
+                    if result.get('is_closed'):
                         if result['close_reason'] == 'take_profit':
                             stats['closed_tp'] += 1
                         elif result['close_reason'] == 'stop_loss':
@@ -1376,6 +1438,12 @@ def initialize_signals_with_trailing(db, hours_back=48, user_id=None):
                     # Для trailing mode считаем активации
                     if user_settings['use_trailing_stop'] and result.get('trailing_activated'):
                         stats['trailing_activated'] += 1
+                elif result.get('reason') == 'duplicate_position':
+                    # Учитываем пропущенные дубликаты
+                    if 'duplicates_skipped' not in stats:
+                        stats['duplicates_skipped'] = 0
+                    stats['duplicates_skipped'] += 1
+                    print(f"[INIT] Пропущен дубликат для {signal.get('pair_symbol', 'unknown')} - уже есть открытая позиция")
                 else:
                     stats['errors'] += 1
 
@@ -1391,6 +1459,7 @@ def initialize_signals_with_trailing(db, hours_back=48, user_id=None):
         print(f"[INIT] Инициализировано: {stats['initialized']}")
         print(f"[INIT]   - Binance: {stats['by_exchange']['Binance']}")
         print(f"[INIT]   - Bybit: {stats['by_exchange']['Bybit']}")
+        print(f"[INIT] Пропущено дубликатов: {stats.get('duplicates_skipped', 0)}")
         if user_settings['use_trailing_stop']:
             print(f"[INIT] Trailing активирован: {stats['trailing_activated']}")
             print(f"[INIT] Закрыто по trailing: {stats['closed_trailing']}")
