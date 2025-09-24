@@ -9,6 +9,7 @@ elif [ -d ".venv" ]; then
     source .venv/bin/activate
 fi
 
+
 # Экспорт переменных окружения
 export FLASK_APP=app.py
 export FLASK_ENV=production
