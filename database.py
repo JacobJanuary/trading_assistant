@@ -60,10 +60,11 @@ class Database:
         else:
             # Формируем строку подключения из отдельных параметров в формате key=value
             # Если пароль не указан, psycopg автоматически использует .pgpass
+            # Добавляем sslmode=prefer для автоматического выбора режима SSL
             if password:
-                self.database_url = f"host={host} port={port} dbname={database} user={user} password={password}"
+                self.database_url = f"host={host} port={port} dbname={database} user={user} password={password} sslmode=prefer"
             else:
-                self.database_url = f"host={host} port={port} dbname={database} user={user}"
+                self.database_url = f"host={host} port={port} dbname={database} user={user} sslmode=prefer"
 
         self.use_pool = use_pool
         self.connection_pool = None
@@ -78,6 +79,7 @@ class Database:
                 min_size=1,
                 max_size=5,  # Уменьшаем максимальное количество подключений
                 timeout=10.0,  # Таймаут для получения подключения
+                max_idle=300.0,  # Максимальное время простоя подключения (5 минут)
                 # Важно! Настраиваем пул так, чтобы он не откатывал транзакции автоматически
                 reset=False  # Отключаем автоматический сброс соединения
             )
@@ -93,26 +95,69 @@ class Database:
         try:
             if self.use_pool:
                 connection = self.connection_pool.getconn()
+                # Проверяем, что соединение живо
+                if connection.closed:
+                    logger.warning("Получено закрытое соединение из пула, создаем новое")
+                    self.connection_pool.putconn(connection)
+                    connection = self.connection_pool.getconn()
                 # Устанавливаем autocommit для правильной работы транзакций
                 connection.autocommit = False
             else:
                 # Создаем новое подключение без пула
                 connection = psycopg.connect(self.database_url, autocommit=False)
             yield connection
+        except psycopg.OperationalError as e:
+            # Специальная обработка ошибок соединения
+            if connection:
+                try:
+                    connection.rollback()
+                except:
+                    pass  # Игнорируем ошибки при откате
+            logger.error(f"Ошибка соединения с базой данных: {e}")
+            # Помечаем соединение как плохое для удаления из пула
+            if self.use_pool and connection:
+                try:
+                    self.connection_pool.putconn(connection, close=True)
+                except:
+                    pass
+            raise
         except Exception as e:
             if connection:
-                connection.rollback()
+                try:
+                    connection.rollback()
+                except:
+                    pass  # Игнорируем ошибки при откате
             logger.error(f"Ошибка при работе с базой данных: {e}")
             raise
         finally:
-            if connection:
+            if connection and not connection.closed:
                 if self.use_pool:
                     # Перед возвратом в пул убеждаемся, что транзакция завершена
-                    if connection.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
-                        connection.rollback()
-                    self.connection_pool.putconn(connection)
+                    try:
+                        if connection.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+                            connection.rollback()
+                        self.connection_pool.putconn(connection)
+                    except:
+                        # Если не можем вернуть в пул, закрываем соединение
+                        try:
+                            connection.close()
+                        except:
+                            pass
                 else:
                     connection.close()
+
+    def close(self):
+        """Закрытие пула соединений"""
+        if self.connection_pool:
+            try:
+                self.connection_pool.close()
+                logger.info("Пул подключений закрыт")
+            except Exception as e:
+                logger.error(f"Ошибка при закрытии пула: {e}")
+
+    def __del__(self):
+        """Деструктор для автоматического закрытия пула"""
+        self.close()
 
     def execute_query(self, query, params=None, fetch=False):
         """

@@ -3,10 +3,12 @@
 """
 import multiprocessing
 import os
+import time
 
 # Основные настройки
 bind = "0.0.0.0:5000"
-workers = multiprocessing.cpu_count() * 2 + 1
+# Уменьшаем количество воркеров для стабильности SSL соединений
+workers = min(multiprocessing.cpu_count() + 1, 4)  # Максимум 4 воркера
 
 # КРИТИЧНО: Увеличиваем таймаут для длительных операций анализа
 timeout = 300  # 5 минут вместо стандартных 30 секунд
@@ -46,7 +48,11 @@ def worker_int(worker):
     worker.log.info("Worker received INT or QUIT signal")
 
 def pre_fork(server, worker):
+    """Вызывается перед форком каждого воркера"""
     server.log.info("Worker spawned (pid: %s)", worker.pid)
+    # Небольшая задержка между запуском воркеров для предотвращения
+    # одновременного создания множества SSL соединений
+    time.sleep(0.5)
 
 def pre_exec(server):
     server.log.info("Forked child, re-executing.")
