@@ -894,13 +894,23 @@ def signal_performance():
                 efficiency_metrics['closed_timeout'] = raw_stats['closed_timeout'] or 0
                 efficiency_metrics['trailing_wins'] = raw_stats['trailing_wins'] or 0
                 efficiency_metrics['trailing_losses'] = raw_stats['trailing_losses'] or 0
-                efficiency_metrics['net_realized_pnl'] = float(raw_stats['total_realized'] or 0)
-                efficiency_metrics['unrealized_pnl'] = float(raw_stats['total_unrealized'] or 0)
+                # Пересчитываем PnL с учетом display параметров если они отличаются от сохраненных
+                original_position_size = float(filters.get('position_size_usd', 100))
+                original_leverage = int(filters.get('leverage', 5))
+                
+                # Коэффициент пересчета PnL
+                if original_position_size > 0 and original_leverage > 0:
+                    pnl_multiplier = (display_position_size * display_leverage) / (original_position_size * original_leverage)
+                else:
+                    pnl_multiplier = 1.0
+                
+                efficiency_metrics['net_realized_pnl'] = float(raw_stats['total_realized'] or 0) * pnl_multiplier
+                efficiency_metrics['unrealized_pnl'] = float(raw_stats['total_unrealized'] or 0) * pnl_multiplier
                 efficiency_metrics['total_pnl'] = efficiency_metrics['net_realized_pnl'] + efficiency_metrics['unrealized_pnl']
-                efficiency_metrics['total_max_potential'] = float(raw_stats['total_max_potential'] or 0)
-                efficiency_metrics['tp_realized_profit'] = float(raw_stats['tp_realized_profit'] or 0)
-                efficiency_metrics['sl_realized_loss'] = float(raw_stats['sl_realized_loss'] or 0)
-                efficiency_metrics['tp_max_potential'] = float(raw_stats['tp_max_potential'] or 0)
+                efficiency_metrics['total_max_potential'] = float(raw_stats['total_max_potential'] or 0) * pnl_multiplier
+                efficiency_metrics['tp_realized_profit'] = float(raw_stats['tp_realized_profit'] or 0) * pnl_multiplier
+                efficiency_metrics['sl_realized_loss'] = float(raw_stats['sl_realized_loss'] or 0) * pnl_multiplier
+                efficiency_metrics['tp_max_potential'] = float(raw_stats['tp_max_potential'] or 0) * pnl_multiplier
                 efficiency_metrics['missed_profit'] = efficiency_metrics['tp_max_potential'] - efficiency_metrics['tp_realized_profit'] if efficiency_metrics['tp_max_potential'] > 0 else 0
                 
                 # Средние проценты
@@ -1026,14 +1036,20 @@ def signal_performance():
         total_stats = db.execute_query(total_stats_query, fetch=True)[0]
 
         # Простая статистика для отображения
+        # Также пересчитываем сумму отдельных PnL для проверки
+        calculated_total_pnl = sum(signal.get('pnl_usd', 0) for signal in signals_data)
+        
         stats = {
             'total': len(signals_data),
             'open': efficiency_metrics['open_positions'],
             'closed_tp': efficiency_metrics['closed_tp'],
             'closed_sl': efficiency_metrics['closed_sl'],
-            'total_pnl': efficiency_metrics['total_pnl'],
+            'total_pnl': calculated_total_pnl,  # Используем сумму из отображаемых значений
             'win_rate': efficiency_metrics['win_rate']
         }
+        
+        # Обновляем efficiency_metrics для согласованности
+        efficiency_metrics['total_pnl'] = calculated_total_pnl
 
         return render_template(
             'signal_performance.html',
