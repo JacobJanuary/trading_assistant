@@ -51,7 +51,7 @@ class Database:
             port: порт базы данных
             database: имя базы данных
             user: имя пользователя
-            password: пароль
+            password: пароль (опционально, если используется .pgpass)
             database_url: полная строка подключения (используется если не переданы отдельные параметры)
             use_pool: использовать пул подключений (по умолчанию True)
         """
@@ -59,7 +59,11 @@ class Database:
             self.database_url = database_url
         else:
             # Формируем строку подключения из отдельных параметров в формате key=value
-            self.database_url = f"host={host} port={port} dbname={database} user={user} password={password}"
+            # Если пароль не указан, psycopg автоматически использует .pgpass
+            if password:
+                self.database_url = f"host={host} port={port} dbname={database} user={user} password={password}"
+            else:
+                self.database_url = f"host={host} port={port} dbname={database} user={user}"
 
         self.use_pool = use_pool
         self.connection_pool = None

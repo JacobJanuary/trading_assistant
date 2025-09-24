@@ -50,8 +50,8 @@ class TradingCalculationsAuditor:
                     host=os.getenv('DB_HOST'),
                     port=os.getenv('DB_PORT', '5432'),
                     database=os.getenv('DB_NAME'),
-                    user=os.getenv('DB_USER'),
-                    password=os.getenv('DB_PASSWORD')
+                    user=os.getenv('DB_USER')
+                    # password не указываем, используется .pgpass
                 )
             self.cursor = self.connection.cursor()
             print("✅ Успешное подключение к базе данных")

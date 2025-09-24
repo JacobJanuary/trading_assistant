@@ -16,8 +16,8 @@ DB_CONFIG = {
     'host': os.getenv('DB_HOST', '10.8.0.1'),
     'port': os.getenv('DB_PORT', 5432),
     'database': os.getenv('DB_NAME', 'fox_crypto'),
-    'user': os.getenv('DB_USER', 'elcrypto'),
-    'password': os.getenv('DB_PASSWORD', 'LohNeMamont@!21')
+    'user': os.getenv('DB_USER', 'elcrypto')
+    # password не указываем, используется .pgpass
 }
 
 def clear_trailing_cache():

@@ -15,8 +15,8 @@ has_database_url = bool(os.getenv('DATABASE_URL'))
 has_separate_db_params = all([
     os.getenv('DB_HOST'),
     os.getenv('DB_NAME'), 
-    os.getenv('DB_USER'),
-    os.getenv('DB_PASSWORD')
+    os.getenv('DB_USER')
+    # DB_PASSWORD не обязателен, если используется .pgpass
 ])
 
 if not has_database_url and not has_separate_db_params:
@@ -27,7 +27,7 @@ if not has_database_url and not has_separate_db_params:
     print("   - DB_PORT (опционально, по умолчанию 5432)")
     print("   - DB_NAME")
     print("   - DB_USER")
-    print("   - DB_PASSWORD")
+    print("   - DB_PASSWORD (опционально, если используется .pgpass)")
     print("\n2. Единая строка подключения:")
     print("   - DATABASE_URL")
     print("\nСкопируйте .env.example в .env и настройте параметры.")

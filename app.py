@@ -71,16 +71,16 @@ db_host = os.getenv('DB_HOST')
 db_port = os.getenv('DB_PORT', '5432')  # По умолчанию порт PostgreSQL
 db_name = os.getenv('DB_NAME')
 db_user = os.getenv('DB_USER')
-db_password = os.getenv('DB_PASSWORD')
+db_password = os.getenv('DB_PASSWORD')  # Опционально, если используется .pgpass
 
-if db_host and db_name and db_user and db_password:
+if db_host and db_name and db_user:
     # Используем отдельные параметры
     db = Database(
         host=db_host,
         port=db_port,
         database=db_name,
         user=db_user,
-        password=db_password
+        password=db_password  # Может быть None, тогда используется .pgpass
     )
     logger.info("База данных инициализирована с отдельными параметрами")
 elif database_url:
@@ -88,7 +88,7 @@ elif database_url:
     db = Database(database_url=database_url)
     logger.info("База данных инициализирована с DATABASE_URL")
 else:
-    logger.error("Не установлены параметры подключения к базе данных. Установите либо DATABASE_URL, либо DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD")
+    logger.error("Не установлены параметры подключения к базе данных. Установите либо DATABASE_URL, либо DB_HOST, DB_PORT, DB_NAME, DB_USER")
     exit(1)
 
 # Инициализация схемы при первом запуске
