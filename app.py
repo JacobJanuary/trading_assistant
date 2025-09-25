@@ -2198,11 +2198,15 @@ def api_efficiency_analyze_30days_progress():
     # Проверяем, использовать ли Celery
     use_celery = request.args.get('use_celery', Config.USE_CELERY and 'true' or 'false').lower() == 'true'
     
+    app.logger.info(f"Efficiency analysis: Config.USE_CELERY={Config.USE_CELERY}, use_celery param={use_celery}")
+    
     if use_celery and Config.USE_CELERY:
         # Используем Celery версию
+        app.logger.info("Using Celery version for efficiency analysis")
         return analyze_efficiency_celery()
     
     # Оригинальная версия без Celery
+    app.logger.info("Using synchronous version for efficiency analysis (Celery disabled)")
     from flask import Response, request
     from database import get_scoring_signals_v2, process_scoring_signals_batch
     from datetime import datetime, timedelta
@@ -4411,6 +4415,38 @@ def api_reinitialize_signals():
             'status': 'error',
             'message': str(e)
         }), 500
+
+@app.route('/api/config/celery_status')
+@login_required
+def api_celery_status():
+    """Проверка статуса Celery"""
+    status = {
+        'USE_CELERY': Config.USE_CELERY,
+        'CELERY_BROKER_URL': Config.CELERY_BROKER_URL if Config.USE_CELERY else None,
+        'celery_tasks_loaded': False,
+        'celery_workers_online': False
+    }
+    
+    if Config.USE_CELERY:
+        try:
+            from celery_app import celery_app
+            from celery_tasks import analyze_efficiency_combination
+            
+            # Проверяем загрузку задач
+            tasks = [t for t in celery_app.tasks.keys() if 'analyze' in t]
+            status['celery_tasks_loaded'] = len(tasks) > 0
+            status['celery_tasks'] = tasks
+            
+            # Проверяем воркеров
+            i = celery_app.control.inspect()
+            stats = i.stats()
+            if stats:
+                status['celery_workers_online'] = True
+                status['celery_workers'] = list(stats.keys())
+        except Exception as e:
+            status['error'] = str(e)
+    
+    return jsonify(status)
 
 # Запуск приложения
 if __name__ == '__main__':
