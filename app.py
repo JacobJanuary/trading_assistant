@@ -3141,42 +3141,42 @@ def api_trailing_analyze_progress():
                                         trailing_activation_pct=activation_pct,
                                         trailing_distance_pct=distance_pct
                                     )
-                                
-                                stats = result['stats']
-                                daily_stats['signal_count'] = int(stats.get('total', 0))
-                                daily_stats['tp_count'] = int(stats.get('tp_count', 0))
-                                daily_stats['trailing_count'] = int(stats.get('trailing_count', 0))
-                                daily_stats['trailing_wins'] = int(stats.get('trailing_wins', 0))
-                                daily_stats['trailing_losses'] = int(stats.get('trailing_losses', 0))
-                                daily_stats['sl_count'] = int(stats.get('sl_count', 0))
-                                daily_stats['timeout_count'] = int(stats.get('timeout_count', 0))
-                                daily_stats['daily_pnl'] = float(stats.get('total_pnl', 0))
-                                
-                                # Сохраняем в кэш
-                                cache_insert = """
-                                    INSERT INTO web.efficiency_cache 
-                                    (cache_key, user_id, signal_count, tp_count, sl_count, timeout_count, daily_pnl)
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                """
-                                try:
-                                    db.execute_query(cache_insert, (
-                                        cache_key, user_id,
-                                        daily_stats['signal_count'],
-                                        daily_stats['trailing_count'],  # Сохраняем trailing_count для trailing stop анализа
-                                        daily_stats['sl_count'],
-                                        daily_stats['timeout_count'],
-                                        daily_stats['daily_pnl']
-                                    ))
-                                except:
-                                    pass
-                                
-                                # Очищаем временные данные из правильной таблицы
-                                cleanup_query = """
-                                    DELETE FROM web.scoring_analysis_results
-                                    WHERE session_id = %s AND user_id = %s
-                                """
-                                # Очищаем после обработки дня
-                                db.execute_query(cleanup_query, (session_id, user_id))
+                                    
+                                    stats = result['stats']
+                                    daily_stats['signal_count'] = int(stats.get('total', 0))
+                                    daily_stats['tp_count'] = int(stats.get('tp_count', 0))
+                                    daily_stats['trailing_count'] = int(stats.get('trailing_count', 0))
+                                    daily_stats['trailing_wins'] = int(stats.get('trailing_wins', 0))
+                                    daily_stats['trailing_losses'] = int(stats.get('trailing_losses', 0))
+                                    daily_stats['sl_count'] = int(stats.get('sl_count', 0))
+                                    daily_stats['timeout_count'] = int(stats.get('timeout_count', 0))
+                                    daily_stats['daily_pnl'] = float(stats.get('total_pnl', 0))
+                                    
+                                    # Сохраняем в кэш
+                                    cache_insert = """
+                                        INSERT INTO web.efficiency_cache 
+                                        (cache_key, user_id, signal_count, tp_count, sl_count, timeout_count, daily_pnl)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                    """
+                                    try:
+                                        db.execute_query(cache_insert, (
+                                            cache_key, user_id,
+                                            daily_stats['signal_count'],
+                                            daily_stats['trailing_count'],  # Сохраняем trailing_count для trailing stop анализа
+                                            daily_stats['sl_count'],
+                                            daily_stats['timeout_count'],
+                                            daily_stats['daily_pnl']
+                                        ))
+                                    except:
+                                        pass
+                                    
+                                    # Очищаем временные данные из правильной таблицы
+                                    cleanup_query = """
+                                        DELETE FROM web.scoring_analysis_results
+                                        WHERE session_id = %s AND user_id = %s
+                                    """
+                                    # Очищаем после обработки дня
+                                    db.execute_query(cleanup_query, (session_id, user_id))
                             
                             # Обновляем статистику
                             combination_result['total_signals'] += daily_stats['signal_count']
