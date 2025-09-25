@@ -13,6 +13,7 @@ import time
 from typing import Optional
 from datetime import datetime, timezone
 import pytz
+from config import Config
 
 
 def make_aware(dt):
@@ -46,8 +47,8 @@ class Database:
     # Счетчик ошибок соединения для автоматической переинициализации
     _connection_error_count = 0
     _last_error_reset = time.time()
-    _max_errors_before_reinit = 5
-    _error_reset_interval = 60  # Сброс счетчика каждые 60 секунд
+    _max_errors_before_reinit = Config.DB_MAX_ERRORS_BEFORE_REINIT
+    _error_reset_interval = Config.DB_ERROR_RESET_INTERVAL
 
     def __init__(self, host=None, port=None, database=None, user=None, password=None, database_url=None, use_pool=True):
         """
@@ -78,15 +79,15 @@ class Database:
             if password:
                 params.append(f"password={password}")
             
-            # Добавляем параметры для стабильности соединения
+            # Добавляем параметры для стабильности соединения из конфигурации
             params.extend([
                 "sslmode=disable",  # Отключаем SSL для стабильности
-                "connect_timeout=10",
-                "keepalives=1",  # Включаем TCP keepalive
-                "keepalives_idle=30",  # Время простоя до первой проверки (30 секунд)
-                "keepalives_interval=5",  # Интервал между проверками (5 секунд)
-                "keepalives_count=5",  # Количество проверок перед разрывом
-                "tcp_user_timeout=60000"  # Общий таймаут TCP (60 секунд)
+                f"connect_timeout={Config.DB_CONNECT_TIMEOUT}",
+                f"keepalives={Config.DB_KEEPALIVES}",
+                f"keepalives_idle={Config.DB_KEEPALIVES_IDLE}",
+                f"keepalives_interval={Config.DB_KEEPALIVES_INTERVAL}",
+                f"keepalives_count={Config.DB_KEEPALIVES_COUNT}",
+                f"tcp_user_timeout={Config.DB_TCP_USER_TIMEOUT}"
             ])
             
             self.database_url = " ".join(params)
@@ -126,9 +127,9 @@ class Database:
             # Вместо этого используем check для проверки перед выдачей
             pool_params = {
                 "conninfo": self.database_url,
-                "min_size": 4,   # Минимальное количество соединений (1 на воркер)
-                "max_size": 20,  # Максимум соединений (4 воркера * 5 соединений на воркер)
-                "timeout": 30.0
+                "min_size": Config.DB_POOL_MIN_SIZE,
+                "max_size": Config.DB_POOL_MAX_SIZE,
+                "timeout": Config.DB_POOL_TIMEOUT
                 # НЕ используем reset - вызывает INERROR
             }
             
@@ -138,9 +139,9 @@ class Database:
                 # Добавляем check если поддерживается
                 extended_params = pool_params.copy()
                 extended_params.update({
-                    "max_idle": 300.0,      # Закрывать соединения после 5 мин простоя  
-                    "max_lifetime": 3600.0,  # Максимальное время жизни соединения 1 час
-                    "max_waiting": 20,       # Максимум ожидающих (5 на воркер)
+                    "max_idle": Config.DB_POOL_MAX_IDLE,
+                    "max_lifetime": Config.DB_POOL_MAX_LIFETIME,
+                    "max_waiting": Config.DB_POOL_MAX_WAITING,
                     "check": self._check_connection  # Проверка соединения перед выдачей
                 })
                 self.connection_pool = ConnectionPool(**extended_params)
@@ -164,7 +165,7 @@ class Database:
             if self.use_pool:
                 # Пытаемся получить соединение из пула с retry логикой
                 retry_count = 0
-                max_retries = 3
+                max_retries = Config.DB_MAX_RETRIES
                 
                 while retry_count < max_retries:
                     try:
@@ -344,7 +345,7 @@ class Database:
         time.sleep(2)
         
         # Создаем новый пул с нуля
-        max_attempts = 3
+        max_attempts = Config.DB_MAX_RETRIES
         for attempt in range(max_attempts):
             try:
                 self._initialize_pool()
@@ -433,7 +434,7 @@ class Database:
         Returns:
             list: Результат запроса, если fetch=True
         """
-        max_retries = 3 if retry_on_error else 1
+        max_retries = Config.DB_MAX_RETRIES if retry_on_error else 1
         last_error = None
         
         for attempt in range(max_retries):
@@ -927,13 +928,24 @@ def has_open_position(db, pair_symbol):
         return None
 
 
-def process_signal_complete(db, signal, tp_percent=4.0, sl_percent=3.0,
-                            position_size=100.0, leverage=5,
-                            use_trailing_stop=False, trailing_distance_pct=2.0,
-                            trailing_activation_pct=1.0):
+def process_signal_complete(db, signal, 
+                            tp_percent=None, sl_percent=None,
+                            position_size=None, leverage=None,
+                            use_trailing_stop=None, 
+                            trailing_distance_pct=None,
+                            trailing_activation_pct=None):
     """
     Обработка сигнала с поддержкой Trailing Stop
+    Использует дефолтные значения из Config если параметры не переданы
     """
+    # Использовать значения из Config если не переданы
+    tp_percent = tp_percent if tp_percent is not None else Config.DEFAULT_TAKE_PROFIT_PERCENT
+    sl_percent = sl_percent if sl_percent is not None else Config.DEFAULT_STOP_LOSS_PERCENT
+    position_size = position_size if position_size is not None else Config.DEFAULT_POSITION_SIZE
+    leverage = leverage if leverage is not None else Config.DEFAULT_LEVERAGE
+    use_trailing_stop = use_trailing_stop if use_trailing_stop is not None else Config.DEFAULT_USE_TRAILING_STOP
+    trailing_distance_pct = trailing_distance_pct if trailing_distance_pct is not None else Config.DEFAULT_TRAILING_DISTANCE_PCT
+    trailing_activation_pct = trailing_activation_pct if trailing_activation_pct is not None else Config.DEFAULT_TRAILING_ACTIVATION_PCT
     try:
         signal_id = signal['signal_id']
         trading_pair_id = signal['trading_pair_id']
@@ -1454,12 +1466,12 @@ def process_signal_with_trailing(db, signal, user_settings):
 
         # Извлекаем настройки
         use_trailing = user_settings.get('use_trailing_stop', False)
-        tp_percent = float(user_settings.get('take_profit_percent', 4.0))
-        sl_percent = float(user_settings.get('stop_loss_percent', 3.0))
-        trailing_distance = float(user_settings.get('trailing_distance_pct', 2.0))
-        trailing_activation = float(user_settings.get('trailing_activation_pct', 1.0))
-        position_size = float(user_settings.get('position_size_usd', 100.0))
-        leverage = int(user_settings.get('leverage', 5))
+        tp_percent = float(user_settings.get('take_profit_percent', Config.DEFAULT_TAKE_PROFIT_PERCENT))
+        sl_percent = float(user_settings.get('stop_loss_percent', Config.DEFAULT_STOP_LOSS_PERCENT))
+        trailing_distance = float(user_settings.get('trailing_distance_pct', Config.DEFAULT_TRAILING_DISTANCE_PCT))
+        trailing_activation = float(user_settings.get('trailing_activation_pct', Config.DEFAULT_TRAILING_ACTIVATION_PCT))
+        position_size = float(user_settings.get('position_size_usd', Config.DEFAULT_POSITION_SIZE))
+        leverage = int(user_settings.get('leverage', Config.DEFAULT_LEVERAGE))
 
         # Получаем цену входа
         entry_price_query = """
@@ -1677,10 +1689,13 @@ def process_signal_with_trailing(db, signal, user_settings):
         return {'success': False, 'error': str(e)}
 
 
-def initialize_signals_with_trailing(db, hours_back=48, user_id=None):
+def initialize_signals_with_trailing(db, hours_back=None, user_id=None):
     """
-    Инициализация сигналов с учетом выбранного режима пользователя
+    Инициализация сигналов с учетом выбранного режима пользователя.
+    Использует Config для дефолтных значений
     """
+    if hours_back is None:
+        hours_back = Config.DEFAULT_HIDE_OLDER_HOURS
     try:
         # Получаем настройки пользователя
         settings_query = """
@@ -1692,12 +1707,12 @@ def initialize_signals_with_trailing(db, hours_back=48, user_id=None):
             # Настройки по умолчанию
             user_settings = {
                 'use_trailing_stop': False,
-                'take_profit_percent': 4.0,
-                'stop_loss_percent': 3.0,
-                'trailing_distance_pct': 2.0,
-                'trailing_activation_pct': 1.0,
-                'position_size_usd': 100.0,
-                'leverage': 5
+                'take_profit_percent': Config.DEFAULT_TAKE_PROFIT_PERCENT,
+                'stop_loss_percent': Config.DEFAULT_STOP_LOSS_PERCENT,
+                'trailing_distance_pct': Config.DEFAULT_TRAILING_DISTANCE_PCT,
+                'trailing_activation_pct': Config.DEFAULT_TRAILING_ACTIVATION_PCT,
+                'position_size_usd': Config.DEFAULT_POSITION_SIZE,
+                'leverage': Config.DEFAULT_LEVERAGE
             }
         else:
             s = settings[0]
@@ -2054,15 +2069,25 @@ def get_scoring_date_info(db, date, score_week_min=None, score_month_min=None, a
 
 
 def process_scoring_signals_batch(db, signals, session_id, user_id,
-                                  tp_percent=4.0, sl_percent=3.0,
-                                  position_size=100.0, leverage=5,
-                                  use_trailing_stop=False,
-                                  trailing_distance_pct=2.0,
-                                  trailing_activation_pct=1.0):
+                                  tp_percent=None, sl_percent=None,
+                                  position_size=None, leverage=None,
+                                  use_trailing_stop=None,
+                                  trailing_distance_pct=None,
+                                  trailing_activation_pct=None):
     """
-    Пакетная обработка сигналов скоринга с поддержкой Trailing Stop
-    ИСПРАВЛЕНО: Корректная обработка имен полей
+    Обработка пакета сигналов для scoring анализа
+    Использует дефолтные значения из Config если параметры не переданы
     """
+    # Использовать значения из Config если не переданы  
+    tp_percent = tp_percent if tp_percent is not None else Config.DEFAULT_TAKE_PROFIT_PERCENT
+    sl_percent = sl_percent if sl_percent is not None else Config.DEFAULT_STOP_LOSS_PERCENT
+    position_size = position_size if position_size is not None else Config.DEFAULT_POSITION_SIZE
+    leverage = leverage if leverage is not None else Config.DEFAULT_LEVERAGE
+    use_trailing_stop = use_trailing_stop if use_trailing_stop is not None else Config.DEFAULT_USE_TRAILING_STOP
+    trailing_distance_pct = trailing_distance_pct if trailing_distance_pct is not None else Config.DEFAULT_TRAILING_DISTANCE_PCT
+    trailing_activation_pct = trailing_activation_pct if trailing_activation_pct is not None else Config.DEFAULT_TRAILING_ACTIVATION_PCT
+    
+    # Пакетная обработка сигналов скоринга с поддержкой Trailing Stop
 
     # Очищаем предыдущие результаты для этой сессии
     clear_query = """
@@ -2530,11 +2555,15 @@ def get_scoring_analysis_results(db, session_id, user_id):
 
 
 def get_scoring_signals_v2(db, date_filter, score_week_min=None, score_month_min=None, 
-                          allowed_hours=None, max_trades_per_15min=3):
+                          allowed_hours=None, max_trades_per_15min=None):
     """
-    Получение сигналов с фильтром по максимальному количеству сделок за 15 минут.
-    Выбираются топ N сигналов с максимальным score_week каждые 15 минут.
+    Фильтрация сигналов с учетом временных ограничений.
+    Использует Config для дефолтных значений
     """
+    if max_trades_per_15min is None:
+        max_trades_per_15min = Config.DEFAULT_MAX_TRADES_PER_15MIN
+    
+    # Получение сигналов с фильтром по максимальному количеству сделок за 15 минут
     
     print(f"\n[SCORING V2] ========== ПОЛУЧЕНИЕ СИГНАЛОВ С ФИЛЬТРОМ 15 МИН ==========")
     print(f"[SCORING V2] Дата: {date_filter}")

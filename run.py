@@ -5,52 +5,42 @@
 import os
 import sys
 from dotenv import load_dotenv
+from config import Config
 
 # Загрузка переменных окружения
 load_dotenv()
 
-# Проверка наличия обязательных переменных окружения
-# Проверяем либо DATABASE_URL, либо набор отдельных параметров DB_*
-has_database_url = bool(os.getenv('DATABASE_URL'))
-has_separate_db_params = all([
-    os.getenv('DB_HOST'),
-    os.getenv('DB_NAME'), 
-    os.getenv('DB_USER')
-    # DB_PASSWORD не обязателен, если используется .pgpass
-])
+# Проверка наличия обязательных параметров через Config
+if not (Config.DB_HOST and Config.DB_NAME and Config.DB_USER):
+    # Проверяем fallback на DATABASE_URL
+    if not os.getenv('DATABASE_URL'):
+        print("❌ Ошибка: Не установлены параметры подключения к базе данных.")
+        print("\nВы должны установить в .env файле:")
+        print("   - DB_HOST")
+        print("   - DB_PORT (опционально, по умолчанию 5432)")
+        print("   - DB_NAME")
+        print("   - DB_USER")
+        print("   - DB_PASSWORD (опционально, если используется .pgpass)")
+        print("\nИли использовать DATABASE_URL для единой строки подключения.")
+        print("\nСкопируйте .env.example в .env и настройте параметры.")
+        sys.exit(1)
 
-if not has_database_url and not has_separate_db_params:
-    print("❌ Ошибка: Не установлены параметры подключения к базе данных.")
-    print("\nВы должны установить один из вариантов:")
-    print("\n1. Отдельные параметры (рекомендуется):")
-    print("   - DB_HOST")
-    print("   - DB_PORT (опционально, по умолчанию 5432)")
-    print("   - DB_NAME")
-    print("   - DB_USER")
-    print("   - DB_PASSWORD (опционально, если используется .pgpass)")
-    print("\n2. Единая строка подключения:")
-    print("   - DATABASE_URL")
-    print("\nСкопируйте .env.example в .env и настройте параметры.")
-    sys.exit(1)
-
-if not os.getenv('SECRET_KEY'):
-    print("❌ Ошибка: Не установлена переменная окружения SECRET_KEY")
-    print("\nСкопируйте .env.example в .env и настройте параметры.")
-    sys.exit(1)
+if Config.SECRET_KEY == 'dev-secret-key-change-in-production':
+    print("⚠️  Внимание: SECRET_KEY не установлен, используется значение по умолчанию!")
+    print("   Для production обязательно установите SECRET_KEY в .env файле.")
 
 # Импорт и запуск приложения
 try:
     from app import app
     
-    port = int(os.getenv('PORT', 5000))
-    debug = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
-    
     print("🚀 Запуск приложения 'Помощник Трейдера'")
-    print(f"📍 Адрес: http://localhost:{port}")
-    print(f"🔧 Режим отладки: {'включен' if debug else 'выключен'}")
+    print(f"📍 Адрес: http://localhost:{Config.PORT}")
+    print(f"🔧 Режим отладки: {'включен' if Config.FLASK_DEBUG else 'выключен'}")
+    print(f"💾 База данных: {Config.DB_HOST}:{Config.DB_PORT}/{Config.DB_NAME}")
+    print(f"🔌 Пул соединений: min={Config.DB_POOL_MIN_SIZE}, max={Config.DB_POOL_MAX_SIZE}")
     print("=" * 50)
     
-    app.run(host='0.0.0.0', port=port, debug=debug)
+    app.run(host=Config.HOST, port=Config.PORT, debug=Config.FLASK_DEBUG)
     
 except ImportError as e:
     print(f"❌ Ошибка импорта: {e}")

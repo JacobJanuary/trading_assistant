@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+
+{% block title %}Анализ эффективности - Помощник Трейдера{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <h1 class="text-2xl font-bold text-gray-800 mb-6">
+        <i class="fas fa-chart-line mr-2 text-blue-600"></i>
+        Анализ эффективности за 30 дней (Исправленная версия)
+    </h1>
+
+    <!-- Форма параметров -->
+    <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 class="text-lg font-semibold mb-4">Параметры анализа</h2>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <!-- Score Week Range -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Score Week (мин - макс)</label>
+                <div class="flex space-x-2">
+                    <input type="number" id="scoreWeekMin" value="60" min="0" max="100" step="10"
+                        class="w-1/2 px-3 py-2 border border-gray-300 rounded-md">
+                    <span class="py-2">-</span>
+                    <input type="number" id="scoreWeekMax" value="80" min="0" max="100" step="10"
+                        class="w-1/2 px-3 py-2 border border-gray-300 rounded-md">
+                </div>
+            </div>
+            
+            <!-- Score Month Range -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Score Month (мин - макс)</label>
+                <div class="flex space-x-2">
+                    <input type="number" id="scoreMonthMin" value="60" min="0" max="100" step="10"
+                        class="w-1/2 px-3 py-2 border border-gray-300 rounded-md">
+                    <span class="py-2">-</span>
+                    <input type="number" id="scoreMonthMax" value="80" min="0" max="100" step="10"
+                        class="w-1/2 px-3 py-2 border border-gray-300 rounded-md">
+                </div>
+            </div>
+            
+            <!-- Step -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Шаг анализа</label>
+                <select id="analysisStep" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    <option value="5">5%</option>
+                    <option value="10" selected>10%</option>
+                    <option value="20">20%</option>
+                </select>
+            </div>
+            
+            <!-- Max trades -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                    Макс. сделок за 15 мин
+                    <i class="fas fa-info-circle text-gray-400 text-xs" title="Ограничение количества одновременных сделок"></i>
+                </label>
+                <input type="number" id="maxTradesPer15Min" value="3" min="1" max="10"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-md">
+            </div>
+        </div>
+        
+        <!-- Информация о комбинациях -->
+        <div id="combinationsInfo" class="mt-4 text-sm text-gray-600">
+            <!-- Динамически обновляется -->
+        </div>
+        
+        <!-- Кнопки управления -->
+        <div class="flex justify-between mt-4">
+            <button onclick="startAnalysis()" id="startBtn"
+                class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-md transition duration-200">
+                <i class="fas fa-play mr-2"></i>Запустить анализ
+            </button>
+        </div>
+    </div>
+
+    <!-- Прогресс -->
+    <div id="progressContainer" class="bg-white rounded-lg shadow-md p-6 mb-6" style="display: none;">
+        <h3 class="text-lg font-semibold mb-4">Прогресс анализа</h3>
+        <div class="w-full bg-gray-200 rounded-full h-4 mb-2">
+            <div id="progressBar" class="bg-blue-600 h-4 rounded-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+        <p id="currentProgress" class="text-sm text-gray-600">Инициализация...</p>
+        <p id="progressDetails" class="text-sm text-gray-500 mt-1"></p>
+    </div>
+
+    <!-- Результаты -->
+    <div id="resultsContainer" class="space-y-4" style="display: none;">
+        <!-- Топ-3 результаты -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- Будут добавлены динамически -->
+        </div>
+        
+        <!-- Таблица всех результатов -->
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h3 class="text-lg font-semibold mb-4">Все комбинации</h3>
+            <div class="overflow-x-auto">
+                <table id="resultsTable" class="min-w-full table-auto">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-2 text-left text-sm font-medium text-gray-700">Фильтры</th>
+                            <th class="px-4 py-2 text-right text-sm font-medium text-gray-700">P&L ($)</th>
+                            <th class="px-4 py-2 text-right text-sm font-medium text-gray-700">Win Rate</th>
+                            <th class="px-4 py-2 text-right text-sm font-medium text-gray-700">Сигналов</th>
+                            <th class="px-4 py-2 text-right text-sm font-medium text-gray-700">Выиграно</th>
+                            <th class="px-4 py-2 text-right text-sm font-medium text-gray-700">Проиграно</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsTableBody">
+                        <!-- Динамически заполняется -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let sseConnection = null;
+    let isAnalyzing = false;
+    
+    function startAnalysis() {
+        if (isAnalyzing) {
+            showNotification('Анализ уже выполняется', 'warning');
+            return;
+        }
+        
+        // Закрываем предыдущее соединение если есть
+        if (sseConnection) {
+            sseConnection.close();
+            sseConnection = null;
+        }
+        
+        isAnalyzing = true;
+        const button = document.getElementById('startBtn');
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Анализ запущен...';
+        
+        // Показываем прогресс
+        document.getElementById('progressContainer').style.display = 'block';
+        document.getElementById('resultsContainer').style.display = 'none';
+        updateProgress(0, 'Подключение к серверу...');
+        
+        // Получаем параметры
+        const params = new URLSearchParams({
+            score_week_min: document.getElementById('scoreWeekMin').value,
+            score_week_max: document.getElementById('scoreWeekMax').value,
+            score_month_min: document.getElementById('scoreMonthMin').value,
+            score_month_max: document.getElementById('scoreMonthMax').value,
+            step: document.getElementById('analysisStep').value,
+            max_trades_per_15min: document.getElementById('maxTradesPer15Min').value,
+            session_id: 'eff_' + Date.now()
+        });
+        
+        // Создаем SSE соединение
+        sseConnection = new EventSource(`/api/efficiency/analyze_30days_progress?${params}`);
+        
+        // Обработка сообщений
+        sseConnection.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                console.log('SSE:', data.type);
+                
+                switch(data.type) {
+                    case 'start':
+                        updateProgress(0, data.message);
+                        if (data.total_combinations) {
+                            document.getElementById('progressDetails').textContent = 
+                                `Всего комбинаций: ${data.total_combinations}`;
+                        }
+                        break;
+                        
+                    case 'progress':
+                        updateProgress(data.percent, data.message);
+                        if (data.current_combination && data.total_combinations) {
+                            document.getElementById('progressDetails').textContent = 
+                                `Обработано: ${data.current_combination} из ${data.total_combinations}`;
+                        }
+                        break;
+                        
+                    case 'complete':
+                        // Анализ завершен
+                        sseConnection.close();
+                        sseConnection = null;
+                        isAnalyzing = false;
+                        displayResults(data.data);
+                        resetButton();
+                        showNotification('Анализ успешно завершен', 'success');
+                        break;
+                        
+                    case 'error':
+                        // Ошибка
+                        sseConnection.close();
+                        sseConnection = null;
+                        isAnalyzing = false;
+                        resetButton();
+                        showNotification('Ошибка: ' + data.message, 'error');
+                        break;
+                        
+                    case 'heartbeat':
+                        // Игнорируем heartbeat
+                        break;
+                }
+            } catch (error) {
+                console.error('Ошибка обработки SSE:', error);
+            }
+        };
+        
+        // Обработка ошибок соединения
+        sseConnection.onerror = function(error) {
+            console.log('SSE соединение прервано, браузер попытается переподключиться автоматически');
+            // НЕ закрываем соединение и НЕ создаем новое!
+            // SSE автоматически переподключается
+        };
+        
+        // Обработка открытия соединения
+        sseConnection.onopen = function() {
+            console.log('SSE соединение установлено');
+            updateProgress(0, 'Соединение установлено, начинаем анализ...');
+        };
+    }
+    
+    function resetButton() {
+        const button = document.getElementById('startBtn');
+        button.disabled = false;
+        button.innerHTML = '<i class="fas fa-play mr-2"></i>Запустить анализ';
+    }
+    
+    function updateProgress(percent, message) {
+        document.getElementById('progressBar').style.width = percent + '%';
+        document.getElementById('currentProgress').textContent = message;
+    }
+    
+    function displayResults(data) {
+        if (!data || data.length === 0) {
+            showNotification('Нет данных для отображения', 'warning');
+            return;
+        }
+        
+        // Сортируем по P&L
+        data.sort((a, b) => b.total_pnl - a.total_pnl);
+        
+        // Заполняем таблицу
+        const tbody = document.getElementById('resultsTableBody');
+        tbody.innerHTML = '';
+        
+        data.forEach(item => {
+            const row = tbody.insertRow();
+            row.innerHTML = `
+                <td class="px-4 py-2">Week≥${item.score_week}%, Month≥${item.score_month}%</td>
+                <td class="px-4 py-2 text-right font-medium ${item.total_pnl >= 0 ? 'text-green-600' : 'text-red-600'}">
+                    $${item.total_pnl.toFixed(2)}
+                </td>
+                <td class="px-4 py-2 text-right">${item.win_rate.toFixed(1)}%</td>
+                <td class="px-4 py-2 text-right">${item.total_signals}</td>
+                <td class="px-4 py-2 text-right text-green-600">${item.total_wins}</td>
+                <td class="px-4 py-2 text-right text-red-600">${item.total_losses}</td>
+            `;
+        });
+        
+        document.getElementById('resultsContainer').style.display = 'block';
+        document.getElementById('progressContainer').style.display = 'none';
+    }
+    
+    function showNotification(message, type) {
+        // Простое уведомление через alert (можно заменить на более красивое)
+        console.log(`[${type}] ${message}`);
+        if (type === 'error') {
+            alert('Ошибка: ' + message);
+        }
+    }
+    
+    // Обновляем информацию о количестве комбинаций
+    function updateCombinationsCount() {
+        const weekMin = parseInt(document.getElementById('scoreWeekMin').value);
+        const weekMax = parseInt(document.getElementById('scoreWeekMax').value);
+        const monthMin = parseInt(document.getElementById('scoreMonthMin').value);
+        const monthMax = parseInt(document.getElementById('scoreMonthMax').value);
+        const step = parseInt(document.getElementById('analysisStep').value);
+        
+        const weekSteps = Math.floor((weekMax - weekMin) / step) + 1;
+        const monthSteps = Math.floor((monthMax - monthMin) / step) + 1;
+        const total = weekSteps * monthSteps;
+        
+        document.getElementById('combinationsInfo').innerHTML = 
+            `<i class="fas fa-info-circle mr-1"></i>Будет проанализировано <strong>${total}</strong> комбинаций`;
+    }
+    
+    // Инициализация при загрузке
+    document.addEventListener('DOMContentLoaded', function() {
+        updateCombinationsCount();
+        
+        // Добавляем обработчики изменений
+        ['scoreWeekMin', 'scoreWeekMax', 'scoreMonthMin', 'scoreMonthMax', 'analysisStep'].forEach(id => {
+            document.getElementById(id).addEventListener('change', updateCombinationsCount);
+        });
+    });
+</script>
+{% endblock %}

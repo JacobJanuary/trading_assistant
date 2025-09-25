@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 # Импорт модулей приложения
 from database import Database, initialize_signals_with_params, process_signal_complete
 from models import User, TradingData, TradingStats
+from config import Config
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -26,12 +27,10 @@ logger = logging.getLogger(__name__)
 # Создание Flask приложения
 app = Flask(__name__)
 
-# Настройка SECRET_KEY с проверкой
-secret_key = os.getenv('SECRET_KEY')
-if not secret_key:
+# Настройка SECRET_KEY из Config
+app.secret_key = Config.SECRET_KEY
+if Config.SECRET_KEY == 'dev-secret-key-change-in-production':
     print("WARNING: SECRET_KEY не задан, используется значение по умолчанию!")
-    secret_key = 'dev-secret-key-change-in-production'
-app.secret_key = secret_key
 
 # Настройки сессий для сервера
 from datetime import timedelta
@@ -56,39 +55,32 @@ login_manager.login_message_category = 'info'
 login_manager.session_protection = 'strong'  # Защита от фиксации сессии
 
 # Настройка логирования для отладки аутентификации
-if os.getenv('DEBUG_AUTH', 'false').lower() == 'true':
+if Config.DEBUG_AUTH:
     import logging
     logging.basicConfig(level=logging.DEBUG)
     login_manager.logger = logging.getLogger('flask_login')
     login_manager.logger.setLevel(logging.DEBUG)
 
 # Инициализация базы данных
-# Поддерживаем оба способа: через DATABASE_URL или через отдельные параметры
-database_url = os.getenv('DATABASE_URL')
-
-# Попробуем сначала отдельные параметры
-db_host = os.getenv('DB_HOST')
-db_port = os.getenv('DB_PORT', '5432')  # По умолчанию порт PostgreSQL
-db_name = os.getenv('DB_NAME')
-db_user = os.getenv('DB_USER')
-db_password = os.getenv('DB_PASSWORD')  # Опционально, если используется .pgpass
-
-if db_host and db_name and db_user:
-    # Используем отдельные параметры
+# Инициализация базы данных с использованием Config
+if Config.DB_HOST and Config.DB_NAME and Config.DB_USER:
+    # Используем параметры из Config
     db = Database(
-        host=db_host,
-        port=db_port,
-        database=db_name,
-        user=db_user,
-        password=db_password  # Может быть None, тогда используется .pgpass
+        host=Config.DB_HOST,
+        port=Config.DB_PORT,
+        database=Config.DB_NAME,
+        user=Config.DB_USER,
+        password=Config.DB_PASSWORD,  # Может быть None, тогда используется .pgpass
+        use_pool=True
     )
-    logger.info("База данных инициализирована с отдельными параметрами")
-elif database_url:
-    # Используем DATABASE_URL
-    db = Database(database_url=database_url)
+    logger.info(f"База данных инициализирована: {Config.DB_HOST}:{Config.DB_PORT}/{Config.DB_NAME}")
+    logger.info(f"Пул соединений: min={Config.DB_POOL_MIN_SIZE}, max={Config.DB_POOL_MAX_SIZE}")
+elif os.getenv('DATABASE_URL'):
+    # Fallback на DATABASE_URL если задан
+    db = Database(database_url=os.getenv('DATABASE_URL'))
     logger.info("База данных инициализирована с DATABASE_URL")
 else:
-    logger.error("Не установлены параметры подключения к базе данных. Установите либо DATABASE_URL, либо DB_HOST, DB_PORT, DB_NAME, DB_USER")
+    logger.error("Не установлены параметры подключения к базе данных в Config или DATABASE_URL")
     exit(1)
 
 # Инициализация схемы при первом запуске
@@ -439,8 +431,8 @@ def dashboard():
         operation_type = 'both'
     
     # Валидация минимальной суммы (учитываем constraint >= 10000)
-    if min_value_usd is not None and min_value_usd < 10000:
-        min_value_usd = 10000
+    if min_value_usd is not None and min_value_usd < Config.DEFAULT_MIN_VALUE_USD:
+        min_value_usd = Config.DEFAULT_MIN_VALUE_USD
     
     try:
         # Получение данных для дашборда
@@ -456,7 +448,7 @@ def dashboard():
             trading_data=trading_data_dicts,
             trading_stats=trading_stats_dict,
             time_filter=time_filter,
-            min_value_usd=min_value_usd or 10000,
+            min_value_usd=min_value_usd or Config.DEFAULT_MIN_VALUE_USD,
             operation_type=operation_type,
             time_filter_options=[
                 ('1h', 'Последний час'),
@@ -494,8 +486,8 @@ def api_dashboard_data():
     if operation_type not in valid_operation_types:
         operation_type = 'both'
     
-    if min_value_usd is not None and min_value_usd < 10000:
-        min_value_usd = 10000
+    if min_value_usd is not None and min_value_usd < Config.DEFAULT_MIN_VALUE_USD:
+        min_value_usd = Config.DEFAULT_MIN_VALUE_USD
     
     try:
         # Получение данных
@@ -539,20 +531,8 @@ def signal_performance():
             filters = user_filters[0]
         else:
             # Если записи нет, создаем её со значениями по умолчанию
-            default_filters = {
-                'hide_younger_than_hours': 6,
-                'hide_older_than_hours': 48,
-                'stop_loss_percent': 3.00,
-                'take_profit_percent': 4.00,
-                'position_size_usd': 100.00,
-                'leverage': 5,
-                'use_trailing_stop': False,
-                'trailing_distance_pct': 2.0,
-                'trailing_activation_pct': 1.0,
-                'score_week_min': 0,
-                'score_month_min': 0,
-                'allowed_hours': list(range(24))  # По умолчанию все часы разрешены
-            }
+            # Используем дефолтные значения из Config
+            default_filters = Config.get_default_user_filters()
             
             # Создаем запись в БД для пользователя
             insert_query = """
@@ -1092,7 +1072,7 @@ def auth_status():
         'user_id': current_user.id if current_user.is_authenticated else None,
         'user_email': current_user.username if current_user.is_authenticated else None,
         'session': dict(session),
-        'secret_key_set': bool(os.getenv('SECRET_KEY'))
+        'secret_key_set': Config.SECRET_KEY != 'dev-secret-key-change-in-production'
     })
 
 @app.route('/debug_session')
@@ -4311,20 +4291,8 @@ def api_reinitialize_signals():
             filters = user_filters[0]
         else:
             # Если записи нет, создаем её со значениями по умолчанию
-            default_filters = {
-                'hide_younger_than_hours': 6,
-                'hide_older_than_hours': 48,
-                'stop_loss_percent': 3.00,
-                'take_profit_percent': 4.00,
-                'position_size_usd': 100.00,
-                'leverage': 5,
-                'use_trailing_stop': False,
-                'trailing_distance_pct': 2.0,
-                'trailing_activation_pct': 1.0,
-                'score_week_min': 0,
-                'score_month_min': 0,
-                'allowed_hours': list(range(24))  # По умолчанию все часы разрешены
-            }
+            # Используем дефолтные значения из Config
+            default_filters = Config.get_default_user_filters()
             
             # Создаем запись в БД для пользователя
             insert_query = """
@@ -4386,8 +4354,8 @@ def api_reinitialize_signals():
 
 # Запуск приложения
 if __name__ == '__main__':
-    port = int(os.getenv('PORT', 5000))
-    debug = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
+    port = Config.PORT
+    debug = Config.FLASK_DEBUG
     
     logger.info(f"Запуск приложения на порту {port}")
     app.run(host='0.0.0.0', port=port, debug=debug)
