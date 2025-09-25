@@ -475,7 +475,8 @@
             console.log('Attempting SSE connection to:', sseUrl);
             console.log('Parameters:', Object.fromEntries(params));
             
-            const eventSource = new EventSource(sseUrl);
+            // EventSource с credentials для отправки cookies
+            const eventSource = new EventSource(sseUrl, { withCredentials: true });
             currentEventSource = eventSource;
             
             // Не создаем таймеры для проверки активности - SSE сам переподключается
