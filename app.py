@@ -2203,7 +2203,16 @@ def api_efficiency_analyze_30days_progress():
     if use_celery and Config.USE_CELERY:
         # Используем Celery версию
         app.logger.info("Using Celery version for efficiency analysis")
-        return analyze_efficiency_celery()
+        try:
+            return analyze_efficiency_celery()
+        except Exception as e:
+            app.logger.error(f"Error in analyze_efficiency_celery: {e}", exc_info=True)
+            # Возвращаем ошибку как SSE событие
+            from flask import Response
+            import json
+            def error_response():
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Server error: {str(e)}'})}\n\n"
+            return Response(error_response(), mimetype='text/event-stream')
     
     # Оригинальная версия без Celery
     app.logger.info("Using synchronous version for efficiency analysis (Celery disabled)")
@@ -2978,11 +2987,24 @@ def api_trailing_analyze_progress():
     # Проверяем, использовать ли Celery
     use_celery = request.args.get('use_celery', Config.USE_CELERY and 'true' or 'false').lower() == 'true'
     
+    app.logger.info(f"Trailing Stop analysis: Config.USE_CELERY={Config.USE_CELERY}, use_celery param={use_celery}")
+    
     if use_celery and Config.USE_CELERY:
         # Используем Celery версию
-        return analyze_trailing_stop_celery()
+        app.logger.info("Using Celery version for Trailing Stop analysis")
+        try:
+            return analyze_trailing_stop_celery()
+        except Exception as e:
+            app.logger.error(f"Error in analyze_trailing_stop_celery: {e}", exc_info=True)
+            # Возвращаем ошибку как SSE событие
+            from flask import Response
+            import json
+            def error_response():
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Server error: {str(e)}'})}\n\n"
+            return Response(error_response(), mimetype='text/event-stream')
     
     # Оригинальная версия без Celery
+    app.logger.info("Using synchronous version for Trailing Stop analysis (Celery disabled)")
     from flask import Response, request
     from database import get_scoring_signals_v2, process_scoring_signals_batch
     from datetime import datetime, timedelta
