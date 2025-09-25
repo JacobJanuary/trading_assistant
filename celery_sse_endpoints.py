@@ -21,16 +21,22 @@ logger = logging.getLogger(__name__)
 
 def analyze_efficiency_celery():
     """SSE endpoint для анализа эффективности через Celery"""
-    # Получаем параметры
-    score_week_min_param = int(request.args.get('score_week_min', 60))
-    score_week_max_param = int(request.args.get('score_week_max', 80))
-    score_month_min_param = int(request.args.get('score_month_min', 60))
-    score_month_max_param = int(request.args.get('score_month_max', 80))
-    step_param = int(request.args.get('step', 10))
-    max_trades_per_15min = int(request.args.get('max_trades_per_15min', 3))
-    force_recalc = request.args.get('force_recalc', 'false').lower() == 'true'
-    
-    user_id = current_user.id
+    try:
+        # Получаем параметры
+        score_week_min_param = int(request.args.get('score_week_min', 60))
+        score_week_max_param = int(request.args.get('score_week_max', 80))
+        score_month_min_param = int(request.args.get('score_month_min', 60))
+        score_month_max_param = int(request.args.get('score_month_max', 80))
+        step_param = int(request.args.get('step', 10))
+        max_trades_per_15min = int(request.args.get('max_trades_per_15min', 3))
+        force_recalc = request.args.get('force_recalc', 'false').lower() == 'true'
+        
+        user_id = current_user.id
+        logger.info(f"Starting Celery efficiency analysis for user {user_id}")
+    except Exception as e:
+        logger.error(f"Error in analyze_efficiency_celery initialization: {e}", exc_info=True)
+        return Response(f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n", 
+                       mimetype='text/event-stream')
     
     def generate():
         try:
@@ -190,8 +196,9 @@ def analyze_efficiency_celery():
                 })}\n\n"
             
         except Exception as e:
-            logger.error(f"Error in efficiency analysis: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            logger.error(f"Error in efficiency analysis: {e}", exc_info=True)
+            error_msg = f"Ошибка анализа: {str(e)}"
+            yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
         finally:
             if 'db' in locals():
                 db.close()
