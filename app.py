@@ -612,7 +612,43 @@ def signal_performance():
 
         raw_signals = db.execute_query(signals_query, (score_week_min, score_month_min, allowed_hours), fetch=True)
 
-        print(f"[SIGNAL_PERFORMANCE] Найдено {len(raw_signals) if raw_signals else 0} сигналов из scoring_history")
+        print(f"[SIGNAL_PERFORMANCE] Найдено {len(raw_signals) if raw_signals else 0} сигналов из scoring_history до фильтрации")
+
+        # Получаем max_trades_per_15min из фильтров
+        max_trades_per_15min = filters.get('max_trades_per_15min', 3)
+        print(f"[SIGNAL_PERFORMANCE] Применяем ограничение: макс. {max_trades_per_15min} сделок за 15 минут")
+        
+        # Применяем фильтрацию по 15-минутным интервалам если есть сигналы
+        if raw_signals and max_trades_per_15min:
+            from collections import defaultdict
+            from datetime import datetime, timedelta
+            
+            # Группируем сигналы по 15-минутным интервалам
+            signals_by_interval = defaultdict(list)
+            
+            for signal in raw_signals:
+                signal_time = signal['signal_timestamp']
+                # Округляем до 15-минутного интервала
+                interval_minutes = (signal_time.minute // 15) * 15
+                interval_key = signal_time.replace(minute=interval_minutes, second=0, microsecond=0)
+                signals_by_interval[interval_key].append(signal)
+            
+            # Фильтруем: оставляем топ N по score_week в каждом интервале
+            filtered_signals = []
+            for interval, signals in signals_by_interval.items():
+                # Сортируем по score_week (убывание)
+                sorted_signals = sorted(signals, key=lambda x: float(x.get('score_week', 0)), reverse=True)
+                # Берем только первые max_trades_per_15min
+                top_signals = sorted_signals[:max_trades_per_15min]
+                filtered_signals.extend(top_signals)
+                
+                if len(signals) > max_trades_per_15min:
+                    print(f"[SIGNAL_PERFORMANCE] Интервал {interval}: {len(signals)} → {len(top_signals)} сигналов")
+            
+            # Сортируем обратно по времени
+            filtered_signals.sort(key=lambda x: x['signal_timestamp'], reverse=True)
+            raw_signals = filtered_signals
+            print(f"[SIGNAL_PERFORMANCE] После фильтрации осталось {len(raw_signals)} сигналов")
 
         # Инициализируем пустые данные
         signals_data = []
