@@ -376,6 +376,8 @@
     let analysisInProgress = false;
     let currentEventSource = null;
     let heartbeatTimeout = null;
+    let sessionId = null; // Делаем глобальной переменной
+    let intermediateResults = []; // Делаем глобальной для доступа из createEventSource
     const HEARTBEAT_TIMEOUT = 30000; // 30 секунд без heartbeat = переподключение
     
     // Запуск анализа с SSE для отслеживания прогресса
@@ -422,14 +424,14 @@
         }
         
         // Временные результаты для промежуточного отображения
-        let intermediateResults = [];
+        intermediateResults = []; // Сбрасываем глобальную переменную
         let lastActivity = Date.now();
         let reconnectAttempts = 0;
         let connectionLostWarningShown = false;
         const maxReconnectAttempts = total_combinations > 100 ? 10 : 5; // Больше попыток для больших анализов
         
         // Генерируем уникальный ID сессии для отслеживания переподключений
-        const sessionId = 'eff_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        sessionId = 'eff_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         
         // Отменяем все таймеры при закрытии
         function cleanupConnection() {
@@ -458,6 +460,13 @@
         function createEventSource() {
             // Очищаем предыдущее соединение
             cleanupConnection();
+            
+            // Получаем параметры из формы заново (так как эта функция может вызываться при переподключении)
+            const scoreWeekMin = parseInt(document.getElementById('scoreWeekMin').value);
+            const scoreWeekMax = parseInt(document.getElementById('scoreWeekMax').value);
+            const scoreMonthMin = parseInt(document.getElementById('scoreMonthMin').value);
+            const scoreMonthMax = parseInt(document.getElementById('scoreMonthMax').value);
+            const step = parseInt(document.getElementById('analysisStep').value);
             
             // Создаем SSE соединение с параметрами
             const params = new URLSearchParams({
