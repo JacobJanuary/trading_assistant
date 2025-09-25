@@ -127,8 +127,8 @@ class Database:
             # Вместо этого используем check для проверки перед выдачей
             pool_params = {
                 "conninfo": self.database_url,
-                "min_size": 10,  # Минимальное количество соединений
-                "max_size": 30,  # Максимум соединений (14 воркеров * 2 + запас)
+                "min_size": 4,   # Минимальное количество соединений (1 на воркер)
+                "max_size": 20,  # Максимум соединений (4 воркера * 5 соединений на воркер)
                 "timeout": 30.0
                 # НЕ используем reset - вызывает INERROR
             }
@@ -139,9 +139,9 @@ class Database:
                 # Добавляем check если поддерживается
                 extended_params = pool_params.copy()
                 extended_params.update({
-                    "max_idle": 60.0,       # Закрывать соединения после 60 сек простоя  
-                    "max_lifetime": 600.0,  # Максимальное время жизни соединения 10 минут
-                    "max_waiting": 50,      # Увеличиваем количество ожидающих
+                    "max_idle": 300.0,      # Закрывать соединения после 5 мин простоя  
+                    "max_lifetime": 3600.0,  # Максимальное время жизни соединения 1 час
+                    "max_waiting": 20,       # Максимум ожидающих (5 на воркер)
                     "check": self._check_connection  # Проверка соединения перед выдачей
                 })
                 self.connection_pool = ConnectionPool(**extended_params)
