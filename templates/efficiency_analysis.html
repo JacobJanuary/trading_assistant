@@ -470,7 +470,12 @@
                 use_celery: 'true',  // Явно включаем использование Celery
                 session_id: sessionId  // Передаем ID сессии для отслеживания переподключений
             });
-            const eventSource = new EventSource(`/api/efficiency/analyze_30days_progress?${params}`);
+            // Логируем URL для отладки
+            const sseUrl = `/api/efficiency/analyze_30days_progress?${params}`;
+            console.log('Attempting SSE connection to:', sseUrl);
+            console.log('Parameters:', Object.fromEntries(params));
+            
+            const eventSource = new EventSource(sseUrl);
             currentEventSource = eventSource;
             
             // Не создаем таймеры для проверки активности - SSE сам переподключается
