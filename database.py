@@ -2730,14 +2730,32 @@ def get_scoring_signals_v2(db, date_filter, score_week_min=None, score_month_min
     
     print(f"[SCORING V2] Найдено {len(all_signals)} сигналов после фильтра по часам")
     
+    # Проверяем первый сигнал для отладки
+    if all_signals:
+        first_signal = all_signals[0]
+        if isinstance(first_signal, dict):
+            print(f"[SCORING V2] Поля первого сигнала: {list(first_signal.keys())}")
+        else:
+            print(f"[SCORING V2] WARNING: Сигнал не является словарем, тип: {type(first_signal)}")
+            print(f"[SCORING V2] Содержимое: {first_signal}")
+    
     # Группируем сигналы по 15-минутным интервалам
     from datetime import datetime, timedelta
     
     signals_by_interval = {}
     
     for signal in all_signals:
+        # Проверяем, что сигнал является словарем
+        if not isinstance(signal, dict):
+            print(f"[SCORING V2] WARNING: Сигнал не является словарем, пропускаем")
+            continue
+            
         # Получаем timestamp и округляем до 15 минут
-        timestamp = signal['timestamp']
+        timestamp = signal.get('timestamp')
+        if not timestamp:
+            print(f"[SCORING V2] WARNING: Сигнал без timestamp, пропускаем: {signal.get('signal_id', 'unknown')}")
+            continue
+        
         # Округляем до 15 минут
         minutes = timestamp.minute
         rounded_minutes = (minutes // 15) * 15
