@@ -82,7 +82,6 @@ class Database:
             params.extend([
                 "sslmode=disable",  # Отключаем SSL для стабильности
                 "connect_timeout=10",
-                "prepare_threshold=0",  # ВАЖНО: отключаем prepared statements для пула
                 "keepalives=1",  # Включаем TCP keepalive
                 "keepalives_idle=30",  # Время простоя до первой проверки (30 секунд)
                 "keepalives_interval=5",  # Интервал между проверками (5 секунд)
