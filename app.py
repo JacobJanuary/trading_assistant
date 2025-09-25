@@ -2196,9 +2196,9 @@ def trailing_analysis():
 def api_efficiency_analyze_30days_progress():
     """SSE endpoint для отправки прогресса анализа эффективности в реальном времени"""
     # Проверяем, использовать ли Celery
-    use_celery = request.args.get('use_celery', 'true').lower() == 'true'
+    use_celery = request.args.get('use_celery', Config.USE_CELERY and 'true' or 'false').lower() == 'true'
     
-    if use_celery and Config.CELERY_BROKER_URL:
+    if use_celery and Config.USE_CELERY:
         # Используем Celery версию
         return analyze_efficiency_celery()
     
@@ -2972,9 +2972,9 @@ def api_tpsl_analyze_progress():
 def api_trailing_analyze_progress():
     """SSE endpoint для анализа эффективности Trailing Stop"""
     # Проверяем, использовать ли Celery
-    use_celery = request.args.get('use_celery', 'true').lower() == 'true'
+    use_celery = request.args.get('use_celery', Config.USE_CELERY and 'true' or 'false').lower() == 'true'
     
-    if use_celery and Config.CELERY_BROKER_URL:
+    if use_celery and Config.USE_CELERY:
         # Используем Celery версию
         return analyze_trailing_stop_celery()
     

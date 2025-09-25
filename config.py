@@ -167,6 +167,7 @@ class Config:
     CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/1')
     CELERY_TASK_TIME_LIMIT = int(os.getenv('CELERY_TASK_TIME_LIMIT', 3600))  # 1 час
     CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv('CELERY_TASK_SOFT_TIME_LIMIT', 3300))  # 55 минут
+    USE_CELERY = os.getenv('USE_CELERY', 'false').lower() == 'true'  # По умолчанию выключен
     
     @classmethod
     def get_database_url(cls):

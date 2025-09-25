@@ -508,15 +508,34 @@
                             document.getElementById('progressDetails').textContent = 
                                 `Обработка комбинации ${data.start_from + 1} из ${data.total_combinations}`;
                         } else {
-                            updateProgress(0, data.message);
+                            updateProgress(0, data.message || 'Инициализация анализа...');
                             document.getElementById('progressDetails').textContent = `Всего комбинаций для анализа: ${data.total_combinations}`;
                         }
                         break;
                     
+                    case 'tasks_started':
+                        // Celery задачи запущены
+                        updateProgress(1, `Запущено ${data.count} задач для обработки`);
+                        break;
+                    
                 case 'progress':
-                    updateProgress(data.percent, data.message);
-                    document.getElementById('progressDetails').textContent = 
-                        `Обработка комбинации ${data.current_combination} из ${data.total_combinations}`;
+                    updateProgress(data.percent || 0, data.status || data.message);
+                    if (data.current && data.total) {
+                        document.getElementById('progressDetails').textContent = 
+                            `Обработка комбинации ${data.current} из ${data.total}`;
+                    } else if (data.current_combination && data.total_combinations) {
+                        document.getElementById('progressDetails').textContent = 
+                            `Обработка комбинации ${data.current_combination} из ${data.total_combinations}`;
+                    }
+                    break;
+                    
+                case 'combination_complete':
+                    // Celery: комбинация завершена
+                    if (data.result) {
+                        intermediateResults.push(data.result);
+                        const percent = Math.round((data.combination_id / (data.total || 100)) * 100);
+                        updateProgress(percent, `Завершена комбинация ${data.combination_id}`);
+                    }
                     break;
                     
                 case 'progress_detail':
@@ -551,8 +570,23 @@
                     eventSource.close();
                     currentEventSource = null;
                     analysisInProgress = false;
-                    analysisResults = data.data;
-                    displayResults(data.data);
+                    
+                    // Поддержка как старого формата (data.data), так и нового (data.results)
+                    const results = data.data || data.results || [];
+                    analysisResults = results;
+                    
+                    if (data.best_result) {
+                        // Celery формат с лучшим результатом
+                        displayResults({
+                            combinations: results,
+                            best_combination: data.best_result,
+                            total_combinations: data.total_combinations
+                        });
+                    } else {
+                        // Старый формат
+                        displayResults(results);
+                    }
+                    
                     showNotification('Анализ успешно завершен', 'success');
                     resetAnalysisButton();
                     break;
@@ -635,8 +669,28 @@
 
     // Отображение результатов
     function displayResults(data) {
+        // Обрабатываем разные форматы данных
+        let combinations;
+        if (Array.isArray(data)) {
+            combinations = data;
+        } else if (data.combinations) {
+            combinations = data.combinations;
+        } else {
+            combinations = [];
+        }
+        
+        // Вычисляем win_rate если его нет
+        combinations = combinations.map(item => {
+            if (!item.win_rate && item.tp_count !== undefined && item.sl_count !== undefined) {
+                const total_trades = item.tp_count + item.sl_count;
+                item.win_rate = total_trades > 0 ? (item.tp_count / total_trades * 100) : 0;
+            }
+            return item;
+        });
+        
         // Сортируем по убыванию Win Rate
-        data.sort((a, b) => b.win_rate - a.win_rate);
+        combinations.sort((a, b) => b.win_rate - a.win_rate);
+        data = combinations;
         
         // Показываем топ-3
         if (data.length > 0) {
