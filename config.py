@@ -203,7 +203,8 @@ class Config:
             'trailing_activation_pct': cls.DEFAULT_TRAILING_ACTIVATION_PCT,
             'score_week_min': cls.DEFAULT_SCORE_WEEK_MIN,
             'score_month_min': cls.DEFAULT_SCORE_MONTH_MIN,
-            'allowed_hours': [int(h) for h in cls.DEFAULT_ALLOWED_HOURS.split(',')]
+            'allowed_hours': [int(h) for h in cls.DEFAULT_ALLOWED_HOURS.split(',')],
+            'max_trades_per_15min': cls.DEFAULT_MAX_TRADES_PER_15MIN
         }
     
     @classmethod

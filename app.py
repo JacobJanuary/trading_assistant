@@ -541,8 +541,8 @@ def signal_performance():
                     stop_loss_percent, take_profit_percent, position_size_usd,
                     leverage, use_trailing_stop, trailing_distance_pct,
                     trailing_activation_pct, score_week_min, score_month_min,
-                    allowed_hours
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    allowed_hours, max_trades_per_15min
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             db.execute_query(insert_query, (
                 current_user.id,
@@ -557,7 +557,8 @@ def signal_performance():
                 default_filters['trailing_activation_pct'],
                 default_filters['score_week_min'],
                 default_filters['score_month_min'],
-                default_filters['allowed_hours']
+                default_filters['allowed_hours'],
+                default_filters.get('max_trades_per_15min', 3)
             ))
             
             filters = default_filters
@@ -1923,6 +1924,7 @@ def api_save_filters():
         leverage = max(1, min(20, data.get('leverage', 5)))
         score_week_min = max(0, min(100, data.get('score_week_min', 0)))
         score_month_min = max(0, min(100, data.get('score_month_min', 0)))
+        max_trades_per_15min = max(1, min(10, data.get('max_trades_per_15min', 3)))
         
         # Валидация часов
         allowed_hours = data.get('allowed_hours', list(range(24)))
@@ -1936,8 +1938,8 @@ def api_save_filters():
             INSERT INTO web.user_signal_filters (
                 user_id, hide_younger_than_hours, hide_older_than_hours,
                 position_size_usd, leverage, score_week_min, score_month_min,
-                allowed_hours
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                allowed_hours, max_trades_per_15min
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id) DO UPDATE SET
                 hide_younger_than_hours = EXCLUDED.hide_younger_than_hours,
                 hide_older_than_hours = EXCLUDED.hide_older_than_hours,
@@ -1946,12 +1948,13 @@ def api_save_filters():
                 score_week_min = EXCLUDED.score_week_min,
                 score_month_min = EXCLUDED.score_month_min,
                 allowed_hours = EXCLUDED.allowed_hours,
+                max_trades_per_15min = EXCLUDED.max_trades_per_15min,
                 updated_at = NOW()
         """
 
         db.execute_query(upsert_query, (
             current_user.id, hide_younger, hide_older, position_size, leverage,
-            score_week_min, score_month_min, allowed_hours
+            score_week_min, score_month_min, allowed_hours, max_trades_per_15min
         ))
 
         return jsonify({
@@ -4301,8 +4304,8 @@ def api_reinitialize_signals():
                     stop_loss_percent, take_profit_percent, position_size_usd,
                     leverage, use_trailing_stop, trailing_distance_pct,
                     trailing_activation_pct, score_week_min, score_month_min,
-                    allowed_hours
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    allowed_hours, max_trades_per_15min
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             db.execute_query(insert_query, (
                 current_user.id,
@@ -4317,7 +4320,8 @@ def api_reinitialize_signals():
                 default_filters['trailing_activation_pct'],
                 default_filters['score_week_min'],
                 default_filters['score_month_min'],
-                default_filters['allowed_hours']
+                default_filters['allowed_hours'],
+                default_filters.get('max_trades_per_15min', 3)
             ))
             
             filters = default_filters
