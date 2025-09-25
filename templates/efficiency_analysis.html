@@ -467,6 +467,7 @@
                 score_month_max: scoreMonthMax,
                 step: step,
                 max_trades_per_15min: parseInt(document.getElementById('maxTradesPer15Min').value),
+                use_celery: 'true',  // Явно включаем использование Celery
                 session_id: sessionId  // Передаем ID сессии для отслеживания переподключений
             });
             const eventSource = new EventSource(`/api/efficiency/analyze_30days_progress?${params}`);

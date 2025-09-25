@@ -463,7 +463,8 @@
                 stop_loss_min: stopLossMin,
                 stop_loss_max: stopLossMax,
                 step: step,
-                max_trades_per_15min: parseInt(document.getElementById('maxTradesPer15Min').value)
+                max_trades_per_15min: parseInt(document.getElementById('maxTradesPer15Min').value),
+                use_celery: 'true'  // Явно включаем использование Celery
             });
             
             const eventSource = new EventSource(`/api/trailing/analyze_progress?${params}`);

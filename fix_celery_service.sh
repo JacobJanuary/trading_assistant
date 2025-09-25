@@ -16,7 +16,7 @@ sudo systemctl stop celery-worker
 # Резервная копия старого файла
 echo "Создание резервной копии..."
 sudo cp /etc/systemd/system/celery-worker.service /etc/systemd/system/celery-worker.service.backup
-
+ F
 # Обновляем файл службы
 echo "Обновление файла службы..."
 sudo cp celery-worker-fixed.service /etc/systemd/system/celery-worker.service
