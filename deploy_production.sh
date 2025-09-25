@@ -9,14 +9,6 @@ if [ ! -f /etc/systemd/system/celery-worker.service ]; then
     exit 1
 fi
 
-# Используем production конфигурацию
-if [ -f .env.production ]; then
-    echo "Активация production конфигурации..."
-    cp .env.production .env
-else
-    echo "Ошибка: .env.production не найден"
-    exit 1
-fi
 
 # Проверяем Redis
 echo "Проверка Redis..."
