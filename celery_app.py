@@ -13,9 +13,12 @@ logger = logging.getLogger(__name__)
 celery_app = Celery(
     'trading_assistant',
     broker=Config.CELERY_BROKER_URL,
-    backend=Config.CELERY_RESULT_BACKEND,
-    include=['celery_tasks']  # Модуль с задачами
+    backend=Config.CELERY_RESULT_BACKEND
 )
+
+# Явно импортируем задачи для регистрации
+# Важно: импортируем после создания celery_app
+import celery_tasks
 
 # Конфигурация Celery
 celery_app.conf.update(
