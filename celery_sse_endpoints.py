@@ -2,7 +2,6 @@
 Новые SSE эндпоинты для работы с Celery задачами
 """
 from flask import Response, request, jsonify
-from flask_login import login_required, current_user
 from celery.result import AsyncResult
 from celery_app import celery_app
 from celery_tasks import (
@@ -19,7 +18,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def analyze_efficiency_celery():
+def analyze_efficiency_celery(user_id):
     """SSE endpoint для анализа эффективности через Celery"""
     try:
         # Получаем параметры
@@ -31,7 +30,7 @@ def analyze_efficiency_celery():
         max_trades_per_15min = int(request.args.get('max_trades_per_15min', 3))
         force_recalc = request.args.get('force_recalc', 'false').lower() == 'true'
         
-        user_id = current_user.id
+        # user_id теперь передается как параметр
         logger.info(f"Starting Celery efficiency analysis for user {user_id}")
     except Exception as e:
         logger.error(f"Error in analyze_efficiency_celery initialization: {e}", exc_info=True)
@@ -206,7 +205,7 @@ def analyze_efficiency_celery():
     return Response(generate(), mimetype="text/event-stream")
 
 
-def analyze_trailing_stop_celery():
+def analyze_trailing_stop_celery(user_id):
     """SSE endpoint для анализа Trailing Stop через Celery"""
     # Получаем параметры
     score_week = int(request.args.get('score_week', 70))
@@ -222,7 +221,7 @@ def analyze_trailing_stop_celery():
     stop_loss_step = float(request.args.get('stop_loss_step', 1.0))
     max_trades_per_15min = int(request.args.get('max_trades_per_15min', 3))
     
-    user_id = current_user.id
+    # user_id теперь передается как параметр
     
     def generate():
         try:

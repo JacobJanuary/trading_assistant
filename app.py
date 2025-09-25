@@ -2204,7 +2204,8 @@ def api_efficiency_analyze_30days_progress():
         # Используем Celery версию
         app.logger.info("Using Celery version for efficiency analysis")
         try:
-            return analyze_efficiency_celery()
+            # Передаем user_id в функцию
+            return analyze_efficiency_celery(current_user.id)
         except Exception as e:
             app.logger.error(f"Error in analyze_efficiency_celery: {e}", exc_info=True)
             # Возвращаем ошибку как SSE событие
@@ -2993,7 +2994,8 @@ def api_trailing_analyze_progress():
         # Используем Celery версию
         app.logger.info("Using Celery version for Trailing Stop analysis")
         try:
-            return analyze_trailing_stop_celery()
+            # Передаем user_id в функцию
+            return analyze_trailing_stop_celery(current_user.id)
         except Exception as e:
             app.logger.error(f"Error in analyze_trailing_stop_celery: {e}", exc_info=True)
             # Возвращаем ошибку как SSE событие
