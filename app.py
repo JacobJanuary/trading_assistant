@@ -1052,7 +1052,8 @@ def signal_performance():
                 'trailing_activation_pct': float(filters.get('trailing_activation_pct') or 1.0),
                 'score_week_min': score_week_min,
                 'score_month_min': score_month_min,
-                'allowed_hours': allowed_hours
+                'allowed_hours': allowed_hours,
+                'max_trades_per_15min': filters.get('max_trades_per_15min', 3)  # Добавляем параметр
             },
             last_update=datetime.now()
         )
