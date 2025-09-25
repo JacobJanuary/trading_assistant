@@ -2195,10 +2195,18 @@ def trailing_analysis():
 @login_required
 def api_efficiency_analyze_30days_progress():
     """SSE endpoint для отправки прогресса анализа эффективности в реальном времени"""
-    # Проверяем, использовать ли Celery
-    use_celery = request.args.get('use_celery', Config.USE_CELERY and 'true' or 'false').lower() == 'true'
-    
-    app.logger.info(f"Efficiency analysis: Config.USE_CELERY={Config.USE_CELERY}, use_celery param={use_celery}")
+    try:
+        app.logger.info("=== Efficiency analysis endpoint called ===")
+        app.logger.info(f"Request args: {request.args}")
+        app.logger.info(f"Current user: {current_user.username if current_user else 'None'}")
+        
+        # Проверяем, использовать ли Celery
+        use_celery = request.args.get('use_celery', Config.USE_CELERY and 'true' or 'false').lower() == 'true'
+        
+        app.logger.info(f"Efficiency analysis: Config.USE_CELERY={Config.USE_CELERY}, use_celery param={use_celery}")
+    except Exception as e:
+        app.logger.error(f"Error in efficiency endpoint initialization: {e}", exc_info=True)
+        raise
     
     if use_celery and Config.USE_CELERY:
         # Используем Celery версию
