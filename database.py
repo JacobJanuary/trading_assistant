@@ -63,6 +63,9 @@ class Database:
             database_url: полная строка подключения (используется если не переданы отдельные параметры)
             use_pool: использовать пул подключений (по умолчанию True)
         """
+        # Для периодической проверки здоровья пула
+        self._last_pool_check = time.time()
+        self._pool_check_interval = 60  # Проверяем пул каждые 60 секунд
         if database_url:
             self.database_url = database_url
         else:
@@ -103,21 +106,44 @@ class Database:
         try:
             # Проверяем что соединение не закрыто
             if conn.closed:
+                logger.debug("Connection is closed, will be replaced")
                 raise psycopg.OperationalError("Connection is closed")
             
-            # Если соединение в ошибочном состоянии, пытаемся восстановить
-            if conn.info.transaction_status == psycopg.pq.TransactionStatus.INERROR:
-                conn.rollback()
+            # Проверяем состояние соединения более тщательно
+            if hasattr(conn, 'info') and hasattr(conn.info, 'transaction_status'):
+                tx_status = conn.info.transaction_status
+                
+                # Если соединение в ошибочном состоянии, пытаемся восстановить
+                if tx_status == psycopg.pq.TransactionStatus.INERROR:
+                    logger.debug("Connection in INERROR state, rolling back")
+                    try:
+                        conn.rollback()
+                    except:
+                        # Если rollback не удался, соединение битое
+                        raise psycopg.OperationalError("Failed to rollback INERROR connection")
+                
+                # Если соединение в неизвестном состоянии
+                elif tx_status == psycopg.pq.TransactionStatus.UNKNOWN:
+                    logger.warning("Connection in UNKNOWN state")
+                    raise psycopg.OperationalError("Connection in UNKNOWN state")
             
-            # Быстрая проверка работоспособности
+            # Быстрая проверка работоспособности с таймаутом
             with conn.cursor() as cur:
-                cur.execute("SELECT 1")
-                cur.fetchone()
+                cur.execute("SELECT 1", prepare=False)  # Не используем prepared statement
+                result = cur.fetchone()
+                if not result or result[0] != 1:
+                    raise psycopg.OperationalError("Health check query failed")
             
-        except Exception as e:
-            # Если проверка не прошла, psycopg закроет соединение
-            logger.warning(f"Connection check failed: {e}")
+            return True
+            
+        except (psycopg.OperationalError, psycopg.InterfaceError) as e:
+            # Соединение точно битое
+            logger.warning(f"Connection check failed (will be discarded): {e}")
             raise
+        except Exception as e:
+            # Неожиданная ошибка
+            logger.error(f"Unexpected error in connection check: {e}")
+            raise psycopg.OperationalError(f"Connection check failed: {e}")
     
     def _initialize_pool(self):
         """Инициализация пула подключений"""
@@ -160,6 +186,16 @@ class Database:
     def get_connection(self):
         """Контекстный менеджер для получения подключения"""
         connection = None
+        
+        # Периодическая проверка здоровья пула
+        if self.use_pool and self.connection_pool:
+            current_time = time.time()
+            if current_time - self._last_pool_check > self._pool_check_interval:
+                try:
+                    self.check_pool_health()
+                    self._last_pool_check = current_time
+                except Exception as e:
+                    logger.warning(f"Periodic pool health check failed: {e}")
         
         try:
             if self.use_pool:
@@ -315,6 +351,20 @@ class Database:
         # Увеличиваем счетчик
         self._connection_error_count += 1
         logger.info(f"Connection error count: {self._connection_error_count}/{self._max_errors_before_reinit}")
+    
+    def validate_connection(self, conn):
+        """Валидация отдельного соединения"""
+        try:
+            if conn.closed:
+                return False
+            
+            # Проверяем работоспособность
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1", prepare=False)
+                result = cur.fetchone()
+                return result and result[0] == 1
+        except:
+            return False
     
     def check_pool_health(self):
         """Проверка здоровья пула соединений с очисткой плохих соединений"""
@@ -548,23 +598,34 @@ class Database:
                     return None
                 
                 # Если это ошибка EOF или разрыва соединения
-                if any(x in error_msg for x in ['eof detected', 'connection reset', 'broken pipe', 'consuming input failed']):
+                if any(x in error_msg for x in [
+                    'eof detected', 'connection reset', 'broken pipe', 
+                    'consuming input failed', 'server closed the connection',
+                    'connection unexpectedly closed', 'terminating connection'
+                ]):
                     logger.warning(f"Connection error on attempt {attempt + 1}/{max_retries}: {e}")
                     
+                    # Увеличиваем счетчик ошибок
+                    self._track_connection_error()
+                    
                     if attempt < max_retries - 1:
-                        # Ждем перед повторной попыткой
-                        time.sleep(2 ** attempt)
+                        # Прогрессивная задержка: 1s, 2s, 4s
+                        delay = min(2 ** attempt, 5)  # Максимум 5 секунд
+                        logger.info(f"Waiting {delay}s before retry...")
+                        time.sleep(delay)
                         
-                        # На последней попытке переинициализируем пул
                         if self.use_pool:
-                            if attempt == max_retries - 2:
-                                # Критическая ситуация - переинициализируем пул
+                            # Проверяем, нужно ли переинициализировать пул
+                            if self._connection_error_count >= self._max_errors_before_reinit:
+                                # Слишком много ошибок - пересоздаем пул
+                                logger.warning(f"Too many connection errors ({self._connection_error_count}), reinitializing pool")
                                 try:
                                     self.reinitialize_pool()
+                                    self._connection_error_count = 0  # Сбрасываем счетчик
                                 except Exception as reinit_error:
                                     logger.error(f"Failed to reinitialize pool: {reinit_error}")
                             else:
-                                # Обычная проверка здоровья
+                                # Просто проверяем здоровье пула
                                 self.check_pool_health()
                         continue
                 

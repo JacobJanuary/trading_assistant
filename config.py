@@ -23,20 +23,20 @@ class Config:
     DB_PASSWORD = os.getenv('DB_PASSWORD')  # Может быть None если используется .pgpass
     
     # Параметры пула соединений
-    DB_POOL_MIN_SIZE = int(os.getenv('DB_POOL_MIN_SIZE', 4))
-    DB_POOL_MAX_SIZE = int(os.getenv('DB_POOL_MAX_SIZE', 20))
+    DB_POOL_MIN_SIZE = int(os.getenv('DB_POOL_MIN_SIZE', 2))  # Уменьшено с 4 до 2 - меньше idle соединений
+    DB_POOL_MAX_SIZE = int(os.getenv('DB_POOL_MAX_SIZE', 10))  # Уменьшено с 20 до 10 - меньше нагрузка на БД
     DB_POOL_TIMEOUT = float(os.getenv('DB_POOL_TIMEOUT', 30.0))
-    DB_POOL_MAX_IDLE = float(os.getenv('DB_POOL_MAX_IDLE', 300.0))
-    DB_POOL_MAX_LIFETIME = float(os.getenv('DB_POOL_MAX_LIFETIME', 3600.0))
+    DB_POOL_MAX_IDLE = float(os.getenv('DB_POOL_MAX_IDLE', 120.0))  # Уменьшено с 300 до 120 - закрываем idle быстрее
+    DB_POOL_MAX_LIFETIME = float(os.getenv('DB_POOL_MAX_LIFETIME', 600.0))  # Уменьшено с 3600 до 600 - обновляем каждые 10 мин
     DB_POOL_MAX_WAITING = int(os.getenv('DB_POOL_MAX_WAITING', 20))
     
     # Параметры соединения
     DB_CONNECT_TIMEOUT = int(os.getenv('DB_CONNECT_TIMEOUT', 10))
     DB_KEEPALIVES = int(os.getenv('DB_KEEPALIVES', 1))
-    DB_KEEPALIVES_IDLE = int(os.getenv('DB_KEEPALIVES_IDLE', 30))
-    DB_KEEPALIVES_INTERVAL = int(os.getenv('DB_KEEPALIVES_INTERVAL', 5))
+    DB_KEEPALIVES_IDLE = int(os.getenv('DB_KEEPALIVES_IDLE', 10))  # Уменьшено с 30 до 10 - быстрее обнаружение разрывов
+    DB_KEEPALIVES_INTERVAL = int(os.getenv('DB_KEEPALIVES_INTERVAL', 2))  # Уменьшено с 5 до 2 - чаще проверка
     DB_KEEPALIVES_COUNT = int(os.getenv('DB_KEEPALIVES_COUNT', 5))
-    DB_TCP_USER_TIMEOUT = int(os.getenv('DB_TCP_USER_TIMEOUT', 60000))
+    DB_TCP_USER_TIMEOUT = int(os.getenv('DB_TCP_USER_TIMEOUT', 30000))  # Уменьшено с 60000 до 30000 - быстрее таймаут
     
     # Параметры повторных попыток
     DB_MAX_RETRIES = int(os.getenv('DB_MAX_RETRIES', 3))
