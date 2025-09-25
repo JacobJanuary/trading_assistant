@@ -226,4 +226,4 @@ class TradingStats:
                 avg_trade_size=stats_data.get('avg_trade_size', 0),
                 max_trade_size=stats_data.get('max_trade_size', 0)
             )
-        return TradingStats(0, 0.0, 0)
+        return TradingStats(0, 0.0, 0, 0.0, 0.0)

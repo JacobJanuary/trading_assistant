@@ -559,6 +559,8 @@ class Database:
         for attempt in range(max_retries):
             try:
                 with self.get_connection() as conn:
+                    # Устанавливаем таймаут для операций
+                    conn.execute("SET statement_timeout = '30s'")
                     with conn.cursor(row_factory=dict_row) as cur:
                         cur.execute(query, params)
                         
@@ -579,9 +581,22 @@ class Database:
                             conn.commit()
                             return affected_rows
                             
-            except (psycopg.OperationalError, psycopg.errors.DuplicatePreparedStatement, psycopg.ProgrammingError) as e:
+            except (psycopg.OperationalError, psycopg.errors.DuplicatePreparedStatement, psycopg.ProgrammingError, OSError) as e:
                 last_error = e
                 error_msg = str(e).lower()
+                
+                # Критическая ошибка - invalid socket означает полный разрыв соединения
+                if 'invalid socket' in error_msg or 'bad file descriptor' in error_msg:
+                    logger.error(f"Critical socket error detected: {e}")
+                    # Пересоздаем пул соединений при критических ошибках сокета
+                    if self.error_count >= Config.DB_MAX_ERRORS_BEFORE_REINIT:
+                        logger.warning("Reinitializing connection pool due to socket errors")
+                        self._reinit_pool()
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 2  # Прогрессивная задержка
+                        logger.info(f"Waiting {wait_time}s before retry after socket error...")
+                        time.sleep(wait_time)
+                        continue
                 
                 # Обработка различных типов ошибок
                 if 'prepared statement' in error_msg and attempt < max_retries - 1:
