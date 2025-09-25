@@ -194,21 +194,50 @@ class Database:
                         self._connection_error_count = 0
                     connection = self.connection_pool.getconn()
                 
-                # Устанавливаем autocommit (сначала проверяем состояние транзакции)
+                # Очищаем состояние соединения
                 if connection:
-                    # Если соединение в транзакции, откатываем ее
-                    if connection.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+                    # Обрабатываем различные состояния транзакций
+                    tx_status = connection.info.transaction_status
+                    
+                    if tx_status == psycopg.pq.TransactionStatus.INTRANS:
+                        # В активной транзакции - откатываем
+                        logger.warning("Connection in INTRANS state, rolling back")
                         try:
                             connection.rollback()
-                        except:
-                            pass
+                        except Exception as e:
+                            logger.error(f"Failed to rollback: {e}")
+                    elif tx_status == psycopg.pq.TransactionStatus.INERROR:
+                        # В состоянии ошибки - откатываем
+                        logger.warning("Connection in INERROR state, rolling back")
+                        try:
+                            connection.rollback()
+                        except Exception as e:
+                            logger.error(f"Failed to rollback error transaction: {e}")
+                    
+                    # КРИТИЧНО: Отключаем prepared statements для Gunicorn
+                    # Это предотвращает конфликты между процессами
+                    try:
+                        connection.prepare_threshold = None
+                    except AttributeError:
+                        # Если атрибут не существует в этой версии psycopg
+                        pass
+                    
+                    # Устанавливаем autocommit=False для транзакционности
                     connection.autocommit = False
             else:
                 # Создаем новое подключение без пула
                 connection = psycopg.connect(self.database_url, autocommit=False)
+                # Отключаем prepared statements
+                try:
+                    connection.prepare_threshold = None
+                except AttributeError:
+                    pass
             
             # Возвращаем соединение для использования
             yield connection
+            
+            # Успешное выполнение - сбрасываем счетчик ошибок
+            self._connection_error_count = 0
             
         except psycopg.OperationalError as e:
             # Специальная обработка ошибок соединения
@@ -244,12 +273,23 @@ class Database:
                     try:
                         # Проверяем состояние транзакции перед возвратом в пул
                         if not connection.closed:
-                            if connection.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+                            tx_status = connection.info.transaction_status
+                            
+                            # Если соединение не в IDLE состоянии
+                            if tx_status != psycopg.pq.TransactionStatus.IDLE:
+                                logger.warning(f"Returning connection to pool with status: {tx_status}")
                                 try:
                                     connection.rollback()
-                                except:
-                                    pass
-                            # Возвращаем в пул
+                                except Exception as e:
+                                    logger.error(f"Failed to rollback before returning to pool: {e}")
+                                    # Если rollback не удался, закрываем соединение
+                                    try:
+                                        connection.close()
+                                    except:
+                                        pass
+                                    return  # Не возвращаем в пул
+                            
+                            # Только чистые соединения возвращаем в пул
                             self.connection_pool.putconn(connection)
                     except Exception as e:
                         logger.error(f"Ошибка при возврате соединения в пул: {e}")
@@ -421,6 +461,35 @@ class Database:
         """Деструктор для автоматического закрытия пула"""
         self.close()
 
+    @contextmanager
+    def transaction(self):
+        """
+        Контекстный менеджер для выполнения транзакций
+        
+        Использование:
+            with db.transaction() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("INSERT...")
+                    cur.execute("UPDATE...")
+                # Автоматический commit при успехе или rollback при ошибке
+        """
+        connection = None
+        try:
+            with self.get_connection() as conn:
+                connection = conn
+                yield conn
+                # Если не было исключений, коммитим
+                if conn and not conn.closed:
+                    conn.commit()
+        except Exception as e:
+            # При ошибке откатываем транзакцию
+            if connection and not connection.closed:
+                try:
+                    connection.rollback()
+                except Exception as rollback_error:
+                    logger.error(f"Failed to rollback transaction: {rollback_error}")
+            raise
+    
     def execute_query(self, query, params=None, fetch=False, retry_on_error=True):
         """
         Выполнение SQL запроса с автоматическим восстановлением при EOF
@@ -442,23 +511,41 @@ class Database:
                 with self.get_connection() as conn:
                     with conn.cursor(row_factory=dict_row) as cur:
                         cur.execute(query, params)
+                        
+                        # КРИТИЧНО: Проверяем что запрос действительно возвращает результат
                         if fetch:
-                            result = cur.fetchall()
+                            # Проверяем, есть ли результат для fetch
+                            if cur.description is not None:
+                                result = cur.fetchall()
+                            else:
+                                # Запрос не вернул результат (UPDATE/INSERT/DELETE)
+                                result = []
+                                logger.warning(f"Fetch requested but query produced no result: {query[:100]}")
                             conn.commit()
                             return result
                         else:
+                            # Для не-SELECT запросов возвращаем количество затронутых строк
+                            affected_rows = cur.rowcount if cur.rowcount > 0 else 0
                             conn.commit()
-                            return None
+                            return affected_rows
                             
-            except (psycopg.OperationalError, psycopg.errors.DuplicatePreparedStatement) as e:
+            except (psycopg.OperationalError, psycopg.errors.DuplicatePreparedStatement, psycopg.ProgrammingError) as e:
                 last_error = e
                 error_msg = str(e).lower()
                 
-                # Если это ошибка prepared statement, просто повторяем
+                # Обработка различных типов ошибок
                 if 'prepared statement' in error_msg and attempt < max_retries - 1:
                     logger.warning(f"Duplicate prepared statement on attempt {attempt + 1}/{max_retries}: {e}")
-                    time.sleep(0.1)  # Короткая пауза
+                    time.sleep(0.5)  # Увеличиваем паузу
                     continue
+                
+                # Ошибка "last operation didn't produce a result" - часто из-за неправильного fetch
+                if "didn't produce a result" in error_msg:
+                    logger.error(f"Fetch error on non-SELECT query: {query[:100]}")
+                    # Не повторяем, возвращаем пустой результат если это был fetch
+                    if fetch:
+                        return []
+                    return None
                 
                 # Если это ошибка EOF или разрыва соединения
                 if any(x in error_msg for x in ['eof detected', 'connection reset', 'broken pipe', 'consuming input failed']):
