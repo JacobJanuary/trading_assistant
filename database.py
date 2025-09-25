@@ -2457,7 +2457,32 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
             WHERE session_id = %s AND user_id = %s
         """
 
-    stats = db.execute_query(stats_query, (session_id, user_id), fetch=True)[0]
+    # Безопасно получаем статистику с обработкой ошибок
+    try:
+        stats_result = db.execute_query(stats_query, (session_id, user_id), fetch=True)
+        stats = stats_result[0] if stats_result else {
+            'total': 0, 'buy_signals': 0, 'sell_signals': 0,
+            'tp_count': 0, 'sl_count': 0, 'trailing_count': 0,
+            'timeout_count': 0, 'open_count': 0, 'total_pnl': 0,
+            'tp_profit': 0, 'sl_loss': 0, 'trailing_pnl': 0,
+            'trailing_wins': 0, 'trailing_losses': 0,
+            'total_max_potential': 0, 'avg_hours_to_close': 0,
+            'binance_signals': 0, 'bybit_signals': 0
+        }
+    except Exception as e:
+        print(f"[SCORING] Ошибка получения статистики: {e}")
+        stats = {
+            'total': processed_count, 'buy_signals': 0, 'sell_signals': 0,
+            'tp_count': debug_stats.get('closed_tp', 0),
+            'sl_count': debug_stats.get('closed_sl', 0),
+            'trailing_count': debug_stats.get('closed_trailing', 0),
+            'timeout_count': debug_stats.get('closed_timeout', 0),
+            'open_count': debug_stats.get('still_open', 0),
+            'total_pnl': 0, 'tp_profit': 0, 'sl_loss': 0,
+            'trailing_pnl': 0, 'trailing_wins': 0, 'trailing_losses': 0,
+            'total_max_potential': 0, 'avg_hours_to_close': 0,
+            'binance_signals': 0, 'bybit_signals': 0
+        }
 
     return {
         'processed': processed_count,
@@ -2487,7 +2512,7 @@ def _insert_batch_results(db, batch_data):
 
     for data in batch_data:
         try:
-            db.execute_query(insert_query, data)
+            db.execute_query(insert_query, data, fetch=False)
         except Exception as e:
             print(f"[INSERT] Ошибка вставки записи: {e}")
             # Продолжаем со следующей записью
