@@ -159,6 +159,15 @@ class Config:
     SESSION_LIFETIME = int(os.getenv('SESSION_LIFETIME', 3600))
     PERMANENT_SESSION_LIFETIME = int(os.getenv('PERMANENT_SESSION_LIFETIME', 86400))
     
+    # ============================================
+    # CELERY
+    # ============================================
+    
+    CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+    CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/1')
+    CELERY_TASK_TIME_LIMIT = int(os.getenv('CELERY_TASK_TIME_LIMIT', 3600))  # 1 час
+    CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv('CELERY_TASK_SOFT_TIME_LIMIT', 3300))  # 55 минут
+    
     @classmethod
     def get_database_url(cls):
         """Формирует строку подключения к базе данных"""

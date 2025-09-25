@@ -1,0 +1,41 @@
+[Unit]
+Description=Celery Worker for Trading Assistant
+After=network.target redis.service postgresql.service
+Wants=redis.service
+
+[Service]
+Type=forking
+User=elcrypto
+Group=elcrypto
+WorkingDirectory=/home/elcrypto/trading_assistant
+Environment="PATH=/home/elcrypto/trading_assistant/venv/bin"
+ExecStart=/home/elcrypto/trading_assistant/venv/bin/celery -A celery_app multi start worker1 worker2 \
+    --pidfile=/var/run/celery/%n.pid \
+    --logfile=/var/log/celery/%n%I.log \
+    --loglevel=info \
+    --concurrency=2 \
+    --max-tasks-per-child=50 \
+    --time-limit=3600 \
+    --soft-time-limit=3300
+
+ExecStop=/home/elcrypto/trading_assistant/venv/bin/celery multi stopwait worker1 worker2 \
+    --pidfile=/var/run/celery/%n.pid
+
+ExecReload=/home/elcrypto/trading_assistant/venv/bin/celery multi restart worker1 worker2 \
+    --pidfile=/var/run/celery/%n.pid \
+    --logfile=/var/log/celery/%n%I.log \
+    --loglevel=info
+
+# Создаем директории для PID и логов
+RuntimeDirectory=celery
+LogsDirectory=celery
+
+# Лимиты
+LimitNOFILE=65536
+LimitNPROC=32768
+
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

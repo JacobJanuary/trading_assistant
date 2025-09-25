@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from database import Database, initialize_signals_with_params, process_signal_complete
 from models import User, TradingData, TradingStats
 from config import Config
+from celery_sse_endpoints import analyze_efficiency_celery, analyze_trailing_stop_celery
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -2194,6 +2195,14 @@ def trailing_analysis():
 @login_required
 def api_efficiency_analyze_30days_progress():
     """SSE endpoint для отправки прогресса анализа эффективности в реальном времени"""
+    # Проверяем, использовать ли Celery
+    use_celery = request.args.get('use_celery', 'true').lower() == 'true'
+    
+    if use_celery and Config.CELERY_BROKER_URL:
+        # Используем Celery версию
+        return analyze_efficiency_celery()
+    
+    # Оригинальная версия без Celery
     from flask import Response, request
     from database import get_scoring_signals_v2, process_scoring_signals_batch
     from datetime import datetime, timedelta
@@ -2962,6 +2971,14 @@ def api_tpsl_analyze_progress():
 @login_required
 def api_trailing_analyze_progress():
     """SSE endpoint для анализа эффективности Trailing Stop"""
+    # Проверяем, использовать ли Celery
+    use_celery = request.args.get('use_celery', 'true').lower() == 'true'
+    
+    if use_celery and Config.CELERY_BROKER_URL:
+        # Используем Celery версию
+        return analyze_trailing_stop_celery()
+    
+    # Оригинальная версия без Celery
     from flask import Response, request
     from database import get_scoring_signals_v2, process_scoring_signals_batch
     from datetime import datetime, timedelta

@@ -1,0 +1,37 @@
+[Unit]
+Description=Trading Assistant Application
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=notify
+User=elcrypto
+Group=elcrypto
+WorkingDirectory=/home/elcrypto/trading_assistant
+Environment="PATH=/home/elcrypto/trading_assistant/venv/bin"
+ExecStart=/home/elcrypto/trading_assistant/venv/bin/gunicorn app:app \
+    --workers 3 \
+    --worker-class sync \
+    --worker-connections 100 \
+    --max-requests 1000 \
+    --max-requests-jitter 50 \
+    --timeout 120 \
+    --keepalive 5 \
+    --bind 0.0.0.0:5000 \
+    --access-logfile - \
+    --error-logfile -
+
+# Важные лимиты для решения проблемы с соединениями
+LimitNOFILE=65536
+LimitNPROC=32768
+
+# Автоматический перезапуск при сбоях
+Restart=on-failure
+RestartSec=10
+
+# Для безопасности
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
