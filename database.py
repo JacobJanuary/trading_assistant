@@ -122,21 +122,39 @@ class Database:
                         # Если rollback не удался, соединение битое
                         raise psycopg.OperationalError("Failed to rollback INERROR connection")
                 
+                # Если соединение в транзакции - откатываем (не должно быть возвращенных соединений в транзакции)
+                elif tx_status == psycopg.pq.TransactionStatus.INTRANS:
+                    logger.warning("Connection in INTRANS state, rolling back")
+                    try:
+                        conn.rollback()
+                    except:
+                        raise psycopg.OperationalError("Failed to rollback INTRANS connection")
+                
                 # Если соединение в неизвестном состоянии
                 elif tx_status == psycopg.pq.TransactionStatus.UNKNOWN:
                     logger.warning("Connection in UNKNOWN state")
                     raise psycopg.OperationalError("Connection in UNKNOWN state")
             
-            # Быстрая проверка работоспособности с таймаутом
+            # КРИТИЧНО: Устанавливаем короткий таймаут для проверки
+            conn.execute("SET statement_timeout = '2s'")
+            # Устанавливаем TCP keepalive только для этого соединения
+            conn.execute("SET tcp_keepalives_idle = 30")
+            conn.execute("SET tcp_keepalives_interval = 10")
+            conn.execute("SET tcp_keepalives_count = 3")
+            
+            # Быстрая проверка работоспособности
             with conn.cursor() as cur:
                 cur.execute("SELECT 1", prepare=False)  # Не используем prepared statement
                 result = cur.fetchone()
                 if not result or result[0] != 1:
                     raise psycopg.OperationalError("Health check query failed")
             
+            # Возвращаем таймаут к стандартному значению
+            conn.execute("SET statement_timeout = '30s'")
+            
             return True
             
-        except (psycopg.OperationalError, psycopg.InterfaceError) as e:
+        except (psycopg.OperationalError, psycopg.InterfaceError, OSError) as e:
             # Соединение точно битое
             logger.warning(f"Connection check failed (will be discarded): {e}")
             raise
@@ -268,6 +286,10 @@ class Database:
                     connection.prepare_threshold = None
                 except AttributeError:
                     pass
+                # Устанавливаем агрессивные keepalive параметры для этого соединения
+                connection.execute("SET tcp_keepalives_idle = 30")
+                connection.execute("SET tcp_keepalives_interval = 10") 
+                connection.execute("SET tcp_keepalives_count = 3")
             
             # Возвращаем соединение для использования
             yield connection

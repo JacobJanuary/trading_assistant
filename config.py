@@ -23,11 +23,11 @@ class Config:
     DB_PASSWORD = os.getenv('DB_PASSWORD')  # Может быть None если используется .pgpass
     
     # Параметры пула соединений
-    DB_POOL_MIN_SIZE = int(os.getenv('DB_POOL_MIN_SIZE', 2))  # Уменьшено с 4 до 2 - меньше idle соединений
-    DB_POOL_MAX_SIZE = int(os.getenv('DB_POOL_MAX_SIZE', 10))  # Уменьшено с 20 до 10 - меньше нагрузка на БД
+    DB_POOL_MIN_SIZE = int(os.getenv('DB_POOL_MIN_SIZE', 1))  # Уменьшено до 1 - минимум idle соединений
+    DB_POOL_MAX_SIZE = int(os.getenv('DB_POOL_MAX_SIZE', 5))  # Уменьшено до 5 - меньше соединений
     DB_POOL_TIMEOUT = float(os.getenv('DB_POOL_TIMEOUT', 30.0))
-    DB_POOL_MAX_IDLE = float(os.getenv('DB_POOL_MAX_IDLE', 120.0))  # Уменьшено с 300 до 120 - закрываем idle быстрее
-    DB_POOL_MAX_LIFETIME = float(os.getenv('DB_POOL_MAX_LIFETIME', 600.0))  # Уменьшено с 3600 до 600 - обновляем каждые 10 мин
+    DB_POOL_MAX_IDLE = float(os.getenv('DB_POOL_MAX_IDLE', 60.0))  # Уменьшено до 60 сек - закрываем idle очень быстро
+    DB_POOL_MAX_LIFETIME = float(os.getenv('DB_POOL_MAX_LIFETIME', 300.0))  # Уменьшено до 300 (5 мин) - частое обновление
     DB_POOL_MAX_WAITING = int(os.getenv('DB_POOL_MAX_WAITING', 20))
     
     # Параметры соединения
