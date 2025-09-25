@@ -2247,7 +2247,8 @@ def api_efficiency_analyze_30days_progress():
                         saved_params.get('score_week_max') == score_week_max_param and
                         saved_params.get('score_month_min') == score_month_min_param and
                         saved_params.get('score_month_max') == score_month_max_param and
-                        saved_params.get('step') == step_param):
+                        saved_params.get('step') == step_param and
+                        saved_params.get('max_trades_per_15min') == max_trades_per_15min):
                         
                         # Продолжаем с последней обработанной комбинации
                         start_from_combination = saved_progress['last_processed_combination'] or 0
@@ -2330,7 +2331,8 @@ def api_efficiency_analyze_30days_progress():
                     'score_month_min': score_month_min_param,
                     'score_month_max': score_month_max_param,
                     'step': step_param,
-                    'use_trailing_stop': use_trailing_stop
+                    'use_trailing_stop': use_trailing_stop,
+                    'max_trades_per_15min': max_trades_per_15min
                 }
                 
                 # Создаем новую запись прогресса
@@ -2451,7 +2453,7 @@ def api_efficiency_analyze_30days_progress():
                             last_yield = current_time
                         
                         # Проверяем кэш для этой комбинации и дня
-                        cache_key = f"{date_str}_{score_week_min}_{score_month_min}_{use_trailing_stop}"
+                        cache_key = f"{date_str}_{score_week_min}_{score_month_min}_{use_trailing_stop}_{max_trades_per_15min}"
                         cached_result = None
                         
                         # Используем кэш только если не требуется принудительный пересчет и не используется trailing stop
@@ -2813,7 +2815,7 @@ def api_tpsl_analyze_progress():
                             last_yield = current_time
                         
                         # Проверяем кэш
-                        cache_key = f"tpsl_{date_str}_{score_week}_{score_month}_{tp_percent}_{sl_percent}"
+                        cache_key = f"tpsl_{date_str}_{score_week}_{score_month}_{tp_percent}_{sl_percent}_{max_trades_per_15min}"
                         cache_query = """
                             SELECT signal_count, tp_count, sl_count, timeout_count, daily_pnl
                             FROM web.efficiency_cache
@@ -3088,7 +3090,7 @@ def api_trailing_analyze_progress():
                                 last_yield = current_time
                             
                             # Проверяем кэш
-                            cache_key = f"trail_{date_str}_{score_week}_{score_month}_{activation_pct}_{distance_pct}_{stop_loss}"
+                            cache_key = f"trail_{date_str}_{score_week}_{score_month}_{activation_pct}_{distance_pct}_{stop_loss}_{max_trades_per_15min}"
                             cache_query = """
                                 SELECT signal_count, tp_count, sl_count, timeout_count, daily_pnl
                                 FROM web.efficiency_cache
