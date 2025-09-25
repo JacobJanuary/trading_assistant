@@ -4,8 +4,8 @@
 echo "=== Развертывание Trading Assistant на production ==="
 
 # Проверяем что мы на production сервере
-if [ ! -f /etc/systemd/system/celery.service ]; then
-    echo "Ошибка: Celery service не найден. Вы на production сервере?"
+if [ ! -f /etc/systemd/system/celery-worker.service ]; then
+    echo "Ошибка: Celery worker service не найден. Вы на production сервере?"
     exit 1
 fi
 
@@ -27,7 +27,7 @@ fi
 
 # Перезапускаем Celery для загрузки новой конфигурации
 echo "Перезапуск Celery workers..."
-sudo systemctl restart celery
+sudo systemctl restart celery-worker
 
 # Ждем пока Celery загрузится
 sleep 3
@@ -36,7 +36,7 @@ sleep 3
 echo ""
 echo "=== Проверка статуса служб ==="
 echo "Redis: $(systemctl is-active redis-server)"
-echo "Celery: $(systemctl is-active celery)"
+echo "Celery: $(systemctl is-active celery-worker)"
 
 # Тестируем Celery
 echo ""
