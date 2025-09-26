@@ -168,12 +168,12 @@ def register_auth_routes(app, db):
     
     @app.route('/unauthorized')
     def unauthorized():
-        \"\"\"Страница для неподтвержденных пользователей\"\"\"
+        """Страница для неподтвержденных пользователей"""
         return render_template('unauthorized.html')
     
     @app.route('/auth_status')
     def auth_status():
-        \"\"\"Проверка статуса авторизации\"\"\"
+        """Проверка статуса авторизации"""
         return jsonify({
             'authenticated': current_user.is_authenticated,
             'username': current_user.username if current_user.is_authenticated else None,
@@ -248,13 +248,6 @@ def register_main_routes(app, db):
                              username=current_user.username,
                              is_admin=current_user.is_admin)
     
-    @app.route('/scoring_analysis')
-    @login_required
-    def scoring_analysis():
-        return render_template('scoring_analysis.html',
-                             username=current_user.username,
-                             is_admin=current_user.is_admin)
-    
     @app.route('/tp_sl_analysis')
     @login_required
     def tp_sl_analysis():
@@ -265,7 +258,7 @@ def register_main_routes(app, db):
     @app.route('/tpsl_analysis')
     @login_required
     def tpsl_analysis():
-        \"\"\"Страница TP/SL анализа (альтернативный маршрут)\"\"\"
+        """Страница TP/SL анализа (альтернативный маршрут)"""
         return render_template('tpsl_analysis.html',
                              username=current_user.username,
                              is_admin=current_user.is_admin)
@@ -282,7 +275,7 @@ def register_main_routes(app, db):
     @app.route('/debug_session')
     @login_required
     def debug_session():
-        \"\"\"Отладочная информация о сессии\"\"\"
+        """Отладочная информация о сессии"""
         return jsonify({
             'session_data': dict(session),
             'user_id': current_user.id,
@@ -293,7 +286,7 @@ def register_main_routes(app, db):
     @app.route('/api/dashboard-data')
     @login_required
     def api_dashboard_data():
-        \"\"\"API endpoint для получения данных дашборда\"\"\"
+        """API endpoint для получения данных дашборда"""
         from services import get_dashboard_data
         
         try:
@@ -305,24 +298,24 @@ def register_main_routes(app, db):
 
 
 def register_scoring_routes(app, db):
-    \"\"\"Регистрация маршрутов для Scoring Analysis (7 routes)\"\"\"
+    """Регистрация маршрутов для Scoring Analysis (7 routes)"""
     
     @app.route('/scoring_analysis')
     @login_required
     def scoring_analysis():
-        \"\"\"Страница Scoring Analysis (старая версия)\"\"\"
+        """Страница Scoring Analysis (старая версия)"""
         return render_template('scoring_analysis.html')
     
     @app.route('/scoring_analysis_v2')
     @login_required
     def scoring_analysis_v2():
-        \"\"\"Страница Scoring Analysis v2\"\"\"
+        """Страница Scoring Analysis v2"""
         return render_template('scoring_analysis_v2.html')
     
     @app.route('/api/scoring/apply_filters', methods=['POST'])
     @login_required
     def api_scoring_apply_filters():
-        \"\"\"Применение фильтров для scoring анализа\"\"\"
+        """Применение фильтров для scoring анализа"""
         from services import apply_scoring_filters
         
         try:
@@ -336,7 +329,7 @@ def register_scoring_routes(app, db):
     @app.route('/api/scoring/apply_filters_v2', methods=['POST'])
     @login_required
     def api_scoring_apply_filters_v2():
-        \"\"\"Применение фильтров для scoring анализа v2\"\"\"
+        """Применение фильтров для scoring анализа v2"""
         from services import apply_scoring_filters_v2
         
         try:
@@ -350,7 +343,7 @@ def register_scoring_routes(app, db):
     @app.route('/api/scoring/save_filters', methods=['POST'])
     @login_required
     def api_scoring_save_filters():
-        \"\"\"Сохранение фильтров scoring анализа\"\"\"
+        """Сохранение фильтров scoring анализа"""
         from services import save_scoring_filters
         
         try:
@@ -364,7 +357,7 @@ def register_scoring_routes(app, db):
     @app.route('/api/scoring/get_date_info', methods=['POST'])
     @login_required
     def api_scoring_get_date_info():
-        \"\"\"Получение информации о датах для scoring анализа\"\"\"
+        """Получение информации о датах для scoring анализа"""
         from services import get_scoring_date_info
         
         try:
@@ -378,7 +371,7 @@ def register_scoring_routes(app, db):
     @app.route('/api/scoring/get_date_info_v2', methods=['POST'])
     @login_required
     def api_scoring_get_date_info_v2():
-        \"\"\"Получение информации о датах для scoring анализа v2\"\"\"
+        """Получение информации о датах для scoring анализа v2"""
         from services import get_scoring_date_info_v2
         
         try:
@@ -516,7 +509,7 @@ def register_signal_routes(app, db):
     @app.route('/api/initialize_signals', methods=['POST'])
     @login_required
     def api_initialize_signals():
-        \"\"\"API для инициализации сигналов\"\"\"
+        """API для инициализации сигналов"""
         from database import initialize_signals_with_params
         
         try:
@@ -530,7 +523,7 @@ def register_signal_routes(app, db):
     @app.route('/api/initialize_signals_trailing', methods=['POST'])
     @login_required
     def api_initialize_signals_trailing():
-        \"\"\"Инициализация сигналов для Trailing Stop анализа\"\"\"
+        """Инициализация сигналов для Trailing Stop анализа"""
         from services import initialize_signals_trailing
         
         try:
@@ -544,7 +537,7 @@ def register_signal_routes(app, db):
     @app.route('/api/reinitialize_signals', methods=['POST'])
     @login_required
     def api_reinitialize_signals():
-        \"\"\"Переинициализация сигналов с новыми параметрами\"\"\"
+        """Переинициализация сигналов с новыми параметрами"""
         from services import reinitialize_signals
         
         try:
@@ -557,24 +550,24 @@ def register_signal_routes(app, db):
 
 
 def register_strategy_routes(app, db):
-    \"\"\"Регистрация маршрутов для стратегий и A/B тестирования (4 routes)\"\"\"
+    """Регистрация маршрутов для стратегий и A/B тестирования (4 routes)"""
     
     @app.route('/strategy_comparison')
     @login_required
     def strategy_comparison():
-        \"\"\"Страница сравнения стратегий\"\"\"
+        """Страница сравнения стратегий"""
         return render_template('strategy_comparison.html')
     
     @app.route('/ab_testing')
     @login_required
     def ab_testing():
-        \"\"\"Страница A/B тестирования\"\"\"
+        """Страница A/B тестирования"""
         return render_template('ab_testing.html')
     
     @app.route('/api/strategy/compare', methods=['POST'])
     @login_required
     def api_strategy_compare():
-        \"\"\"API для сравнения стратегий\"\"\"
+        """API для сравнения стратегий"""
         from services import compare_strategies
         
         try:
@@ -588,7 +581,7 @@ def register_strategy_routes(app, db):
     @app.route('/api/ab_test/run', methods=['POST'])
     @login_required
     def api_ab_test_run():
-        \"\"\"API для запуска A/B тестирования\"\"\"
+        """API для запуска A/B тестирования"""
         from services import run_ab_test
         
         try:
@@ -715,7 +708,7 @@ def register_sse_routes(app, db):
     @app.route('/api/tpsl/analyze_progress')
     @login_required
     def api_tpsl_analyze_progress():
-        \"\"\"SSE endpoint для прогресса TP/SL анализа\"\"\"
+        """SSE endpoint для прогресса TP/SL анализа"""
         try:
             use_celery = request.args.get('use_celery', 'false').lower() == 'true'
             
@@ -852,7 +845,7 @@ def register_api_routes(app, db):
     @app.route('/api/save_filters', methods=['POST'])
     @login_required
     def api_save_filters():
-        \"\"\"Сохранение пользовательских фильтров\"\"\"
+        """Сохранение пользовательских фильтров"""
         try:
             filters = request.get_json()
             session['user_filters'] = session.get('user_filters', {})
@@ -870,7 +863,7 @@ def register_api_routes(app, db):
     @app.route('/api/save_trading_mode', methods=['POST'])
     @login_required
     def api_save_trading_mode():
-        \"\"\"Сохранение торгового режима пользователя\"\"\"
+        """Сохранение торгового режима пользователя"""
         from services import save_trading_mode
         
         try:
@@ -887,7 +880,7 @@ def register_api_routes(app, db):
     @app.route('/api/get_user_trading_mode')
     @login_required
     def api_get_user_trading_mode():
-        \"\"\"Получение текущего торгового режима пользователя\"\"\"
+        """Получение текущего торгового режима пользователя"""
         from services import get_user_trading_mode
         
         try:
