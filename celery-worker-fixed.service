@@ -7,17 +7,17 @@ Type=simple
 User=elcrypto
 Group=elcrypto
 WorkingDirectory=/home/elcrypto/trading_assistant
-Environment="PATH=/home/elcrypto/trading_assistant/venv/bin:/usr/local/bin:/usr/bin:/bin"
-Environment="PYTHONPATH=/home/elcrypto/trading_assistant"
+Environment="PATH=/home/elcrypto/trading_assistant/venv/bin"
 
-# Используем простой worker для загрузки задач
-ExecStart=/home/elcrypto/trading_assistant/venv/bin/celery -A celery_app worker --loglevel=info --concurrency=2
+# Запускаем через celery_worker.py который использует Application Factory
+ExecStart=/home/elcrypto/trading_assistant/venv/bin/celery \
+    -A celery_worker:celery worker \
+    --loglevel=info \
+    --concurrency=2
 
-# Перезапуск при сбое
 Restart=on-failure
-RestartSec=10s
+RestartSec=10
 
-# Лимиты
 LimitNOFILE=65536
 LimitNPROC=65536
 

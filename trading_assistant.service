@@ -1,0 +1,26 @@
+[Unit]
+Description=Trading Assistant Gunicorn Service
+After=network.target
+
+[Service]
+User=elcrypto
+Group=elcrypto
+WorkingDirectory=/home/elcrypto/trading_assistant
+Environment="PATH=/home/elcrypto/trading_assistant/venv/bin"
+
+# Запускаем через wsgi.py с использованием Application Factory
+ExecStart=/home/elcrypto/trading_assistant/venv/bin/gunicorn \
+    --workers 4 \
+    --worker-class sync \
+    --bind 0.0.0.0:7777 \
+    --timeout 120 \
+    --log-level info \
+    --access-logfile - \
+    --error-logfile - \
+    wsgi:app
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
