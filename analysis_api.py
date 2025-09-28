@@ -94,16 +94,9 @@ def register_analysis_api_routes(app, db):
             month_steps = range(filters['score_month_min'], filters['score_month_max'] + 1, filters['step'])
             total_combinations = len(list(week_steps)) * len(list(month_steps))
 
-            # Используем параллельную версию только для среднего количества комбинаций
-            # Для больших объемов (>100) используем последовательную версию чтобы не перегружать БД
-            if 10 < total_combinations <= 100:
-                # Запускаем параллельную версию для средних объемов
-                task = analyze_efficiency_parallel.apply_async(args=[user_id, filters])
-                logger.info(f"Using parallel analysis for {total_combinations} combinations")
-            else:
-                # Запускаем обычную последовательную версию для малых и больших объемов
-                task = analyze_efficiency_30days.apply_async(args=[user_id, filters])
-                logger.info(f"Using sequential analysis for {total_combinations} combinations")
+            # Всегда используем параллельную версию
+            task = analyze_efficiency_parallel.apply_async(args=[user_id, filters])
+            logger.info(f"Using parallel analysis for {total_combinations} combinations")
 
             # Создаем запись в БД
             create_task_record(db, user_id, 'efficiency_analysis', task.id)

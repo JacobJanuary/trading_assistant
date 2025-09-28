@@ -31,8 +31,8 @@ celery.conf.update(
     timezone='UTC',
     enable_utc=True,
     task_track_started=True,
-    task_time_limit=300,  # 5 минут на подзадачу
-    task_soft_time_limit=240,
+    task_time_limit=3600,  # 60 минут на главную задачу (для больших батчей)
+    task_soft_time_limit=3300,  # 55 минут soft limit
     worker_prefetch_multiplier=1,
     task_acks_late=True,
 )
@@ -124,18 +124,16 @@ def analyze_efficiency_parallel(self, user_id, filters):
     try:
         db_url = Config.get_database_url()
 
-        # Создаем/обновляем запись в БД
+        # Обновляем существующую запись (созданную в API)
         with psycopg.connect(db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO web.analysis_tasks
-                    (user_id, task_type, task_id, status, progress_status)
-                    VALUES (%s, 'efficiency_analysis', %s, 'running', 'Запускаем параллельную обработку...')
-                    ON CONFLICT (task_id) DO UPDATE
+                    UPDATE web.analysis_tasks
                     SET status = 'running',
                         progress_status = 'Запускаем параллельную обработку...',
                         updated_at = CURRENT_TIMESTAMP
-                """, (user_id, task_id))
+                    WHERE task_id = %s
+                """, (task_id,))
                 conn.commit()
 
         # Генерируем комбинации
@@ -178,52 +176,78 @@ def analyze_efficiency_parallel(self, user_id, filters):
         # Обновляем статус
         with psycopg.connect(db_url) as conn:
             with conn.cursor() as cur:
+                status_msg = f'Обрабатываем {total_combinations} комбинаций параллельно...'
                 cur.execute("""
                     UPDATE web.analysis_tasks
                     SET progress_total = %s,
-                        progress_status = 'Обрабатываем %s комбинаций параллельно...',
+                        progress_status = %s,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE task_id = %s
-                """, (total_combinations, total_combinations, task_id))
+                """, (total_combinations, status_msg, task_id))
                 conn.commit()
 
         # Собираем результаты БЕЗ блокировки
         results = []
         completed = 0
-        max_wait_time = 300  # 5 минут максимум
+        failed = 0
+        # Динамический таймаут: 30 секунд на комбинацию, минимум 10 минут
+        max_wait_time = max(600, total_combinations * 30)
         start_time = time.time()
+        last_progress_time = time.time()
 
-        while completed < total_combinations:
+        logger.info(f"Collecting results for {total_combinations} combinations, timeout: {max_wait_time}s")
+
+        while completed + failed < total_combinations:
             # Проверяем таймаут
-            if time.time() - start_time > max_wait_time:
-                logger.warning(f"Timeout reached, collected {completed}/{total_combinations} results")
+            elapsed = time.time() - start_time
+            if elapsed > max_wait_time:
+                logger.warning(f"Timeout reached after {elapsed:.1f}s, collected {completed}/{total_combinations} results")
+                break
+
+            # Проверяем застой (если нет прогресса более 2 минут)
+            if time.time() - last_progress_time > 120:
+                logger.warning(f"No progress for 2 minutes, collected {completed}/{total_combinations} results")
                 break
 
             # Проверяем готовые результаты
+            progress_made = False
             for i, result in enumerate(job.results):
-                if result.ready() and not result.failed():
-                    try:
-                        # Получаем результат без блокировки
-                        data = result.result
-                        if data and i < len(combinations) and data not in results:
-                            results.append(data)
-                            completed += 1
+                if result.ready():
+                    if not result.failed():
+                        try:
+                            # Получаем результат без блокировки
+                            data = result.result
+                            if data and i < len(combinations) and data not in results:
+                                results.append(data)
+                                completed += 1
+                                progress_made = True
+                                last_progress_time = time.time()
 
-                            # Обновляем прогресс
-                            percent = round((completed / total_combinations) * 100)
-                            with psycopg.connect(db_url) as conn:
-                                with conn.cursor() as cur:
-                                    cur.execute("""
-                                        UPDATE web.analysis_tasks
-                                        SET progress_current = %s,
-                                            progress_percent = %s,
-                                            progress_status = 'Обработано %s из %s комбинаций',
-                                            updated_at = CURRENT_TIMESTAMP
-                                        WHERE task_id = %s
-                                    """, (completed, percent, completed, total_combinations, task_id))
-                                    conn.commit()
-                    except Exception as e:
-                        logger.error(f"Error getting result: {e}")
+                                # Обновляем прогресс каждые 10 результатов или при достижении вех
+                                if completed % 10 == 0 or completed == total_combinations:
+                                    percent = round((completed / total_combinations) * 100)
+                                    status_text = f'Обработано {completed} из {total_combinations} комбинаций'
+                                    with psycopg.connect(db_url) as conn:
+                                        with conn.cursor() as cur:
+                                            cur.execute("""
+                                                UPDATE web.analysis_tasks
+                                                SET progress_current = %s,
+                                                    progress_percent = %s,
+                                                    progress_status = %s,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE task_id = %s
+                                            """, (completed, percent, status_text, task_id))
+                                            conn.commit()
+                        except Exception as e:
+                            logger.error(f"Error getting result {i}: {e}")
+                            failed += 1
+                            progress_made = True
+                    else:
+                        # Задача провалилась
+                        if i not in [r.get('index', -1) for r in results] and failed < total_combinations:
+                            failed += 1
+                            progress_made = True
+                            logger.warning(f"Task {i} failed")
 
             # Небольшая пауза между проверками
             if completed < total_combinations:
