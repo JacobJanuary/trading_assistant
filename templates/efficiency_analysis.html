@@ -327,7 +327,9 @@
     // Загрузка текущих настроек пользователя
     async function loadUserSettings() {
         try {
-            const response = await fetch('/api/get_user_trading_mode');
+            const response = await fetch('/api/get_user_trading_mode', {
+                credentials: 'same-origin'
+            });
             const data = await response.json();
             currentUserSettings = data;
             
@@ -373,307 +375,207 @@
         }
     }
 
-    let analysisInProgress = false;
-    let currentEventSource = null;
-    let heartbeatTimeout = null;
-    let sessionId = null; // Делаем глобальной переменной
-    let intermediateResults = []; // Делаем глобальной для доступа из createEventSource
-    const HEARTBEAT_TIMEOUT = 30000; // 30 секунд без heartbeat = переподключение
+    let pollingInterval = null;
+    let currentTaskId = null;
     
-    // Запуск анализа с SSE для отслеживания прогресса
-    function startAnalysis() {
-        // Проверяем, не запущен ли уже анализ
-        if (analysisInProgress) {
-            showNotification('Анализ уже выполняется. Пожалуйста, дождитесь завершения.', 'warning');
-            return;
-        }
-        
-        // Закрываем предыдущее соединение, если оно было
-        if (currentEventSource) {
-            currentEventSource.close();
-            currentEventSource = null;
-        }
-        
-        analysisInProgress = true;
+    // Запуск анализа через персистентный API
+    async function startAnalysis() {
         const button = document.getElementById('startBtn');
         button.disabled = true;
-        button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Анализ запущен...';
-        
-        // Показываем прогресс
-        document.getElementById('progressContainer').style.display = 'block';
-        document.getElementById('resultsContainer').style.display = 'none';
-        
-        // Сбрасываем прогресс
-        updateProgress(0, 'Инициализация...');
-        
+        button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Запуск анализа...';
+
         // Получаем параметры из формы
-        const scoreWeekMin = parseInt(document.getElementById('scoreWeekMin').value);
-        const scoreWeekMax = parseInt(document.getElementById('scoreWeekMax').value);
-        const scoreMonthMin = parseInt(document.getElementById('scoreMonthMin').value);
-        const scoreMonthMax = parseInt(document.getElementById('scoreMonthMax').value);
-        const step = parseInt(document.getElementById('analysisStep').value);
-        
-        // Вычисляем количество комбинаций
-        const weekSteps = Math.floor((scoreWeekMax - scoreWeekMin) / step) + 1;
-        const monthSteps = Math.floor((scoreMonthMax - scoreMonthMin) / step) + 1;
-        const total_combinations = weekSteps * monthSteps;
-        
-        console.log(`Starting analysis with ${total_combinations} combinations`);
-        if (total_combinations > 100) {
-            showNotification(`Внимание: анализ ${total_combinations} комбинаций может занять длительное время`, 'warning');
-        }
-        
-        // Временные результаты для промежуточного отображения
-        intermediateResults = []; // Сбрасываем глобальную переменную
-        let lastActivity = Date.now();
-        let reconnectAttempts = 0;
-        let connectionLostWarningShown = false;
-        const maxReconnectAttempts = total_combinations > 100 ? 10 : 5; // Больше попыток для больших анализов
-        
-        // Генерируем уникальный ID сессии для отслеживания переподключений
-        sessionId = 'eff_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        
-        // Отменяем все таймеры при закрытии
-        function cleanupConnection() {
-            if (currentEventSource) {
-                currentEventSource.close();
-                currentEventSource = null;
-            }
-            clearTimeout(heartbeatTimeout);
-        }
-        
-        // Функция для сброса таймера heartbeat
-        function resetHeartbeatTimeout() {
-            clearTimeout(heartbeatTimeout);
-            heartbeatTimeout = setTimeout(() => {
-                console.log('No heartbeat received for 30 seconds, reconnecting...');
-                if (currentEventSource && analysisInProgress) {
-                    document.getElementById('progressDetails').innerHTML = 
-                        `<span class="text-yellow-600">Нет ответа от сервера. Переподключение...</span>`;
-                    currentEventSource.close();
-                    // Запускаем переподключение
-                    createEventSource();
-                }
-            }, HEARTBEAT_TIMEOUT);
-        }
-        
-        function createEventSource() {
-            // Очищаем предыдущее соединение
-            cleanupConnection();
-            
-            // Получаем параметры из формы заново (так как эта функция может вызываться при переподключении)
-            const scoreWeekMin = parseInt(document.getElementById('scoreWeekMin').value);
-            const scoreWeekMax = parseInt(document.getElementById('scoreWeekMax').value);
-            const scoreMonthMin = parseInt(document.getElementById('scoreMonthMin').value);
-            const scoreMonthMax = parseInt(document.getElementById('scoreMonthMax').value);
-            const step = parseInt(document.getElementById('analysisStep').value);
-            
-            // Создаем SSE соединение с параметрами
-            const params = new URLSearchParams({
-                score_week_min: scoreWeekMin,
-                score_week_max: scoreWeekMax,
-                score_month_min: scoreMonthMin,
-                score_month_max: scoreMonthMax,
-                step: step,
-                max_trades_per_15min: parseInt(document.getElementById('maxTradesPer15Min').value),
-                use_celery: 'true',  // Явно включаем использование Celery
-                session_id: sessionId  // Передаем ID сессии для отслеживания переподключений
+        const params = {
+            score_week_min: parseInt(document.getElementById('scoreWeekMin').value),
+            score_week_max: parseInt(document.getElementById('scoreWeekMax').value),
+            score_month_min: parseInt(document.getElementById('scoreMonthMin').value),
+            score_month_max: parseInt(document.getElementById('scoreMonthMax').value),
+            step: parseInt(document.getElementById('analysisStep').value),
+            max_trades_per_15min: parseInt(document.getElementById('maxTradesPer15Min').value),
+            take_profit_percent: currentUserSettings.take_profit_percent || 4.0,
+            stop_loss_percent: currentUserSettings.stop_loss_percent || 3.0,
+            position_size_usd: currentUserSettings.position_size || 100,
+            leverage: currentUserSettings.leverage || 5,
+            use_trailing_stop: currentUserSettings.use_trailing_stop || false,
+            trailing_distance_pct: currentUserSettings.trailing_distance_pct || 2.0,
+            trailing_activation_pct: currentUserSettings.trailing_activation_pct || 1.0,
+            allowed_hours: currentUserSettings.allowed_hours || Array.from({length: 24}, (_, i) => i)
+        };
+        try {
+            // Запускаем анализ через API
+            const response = await fetch('/api/efficiency_analysis/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                credentials: 'same-origin',
+                body: JSON.stringify(params)
             });
-            // Логируем URL для отладки
-            const sseUrl = `/api/efficiency/analyze_30days_progress?${params}`;
-            console.log('Attempting SSE connection to:', sseUrl);
-            console.log('Parameters:', Object.fromEntries(params));
-            
-            // EventSource с credentials для отправки cookies
-            const eventSource = new EventSource(sseUrl, { withCredentials: true });
-            currentEventSource = eventSource;
-            
-            // Не создаем таймеры для проверки активности - SSE сам переподключается
-            // Используем только отслеживание состояния
-            let isReconnecting = false;
-            
-        // Обработчик открытия соединения
-        eventSource.onopen = function() {
-            console.log('SSE connection opened successfully');
-            lastActivity = Date.now();
-            resetHeartbeatTimeout();
-        };
-        
-        // Обработка сообщений SSE
-        eventSource.onmessage = function(event) {
-            lastActivity = Date.now();
-            reconnectAttempts = 0; // Сбрасываем счетчик при успешном получении сообщения
-            resetHeartbeatTimeout(); // Сбрасываем таймер heartbeat при любом сообщении
-            
-            // Если было предупреждение о потере соединения, убираем его
-            if (connectionLostWarningShown) {
-                connectionLostWarningShown = false;
-                console.log('Connection restored');
+
+            const data = await response.json();
+
+            if (data.success) {
+                currentTaskId = data.task_id;
+                showNotification('Анализ запущен', 'success');
+
+                // Показываем прогресс контейнер
+                document.getElementById('progressContainer').style.display = 'block';
+                document.getElementById('resultsContainer').style.display = 'none';
+
+                // Запускаем опрос статуса
+                startPolling();
+            } else {
+                showNotification('Ошибка: ' + data.error, 'error');
+                resetAnalysisButton();
             }
-            
-            try {
-                const data = JSON.parse(event.data);
-                console.log('Received SSE message:', data.type, data);
-                
-                switch(data.type) {
-                    case 'start':
-                        if (data.resume) {
-                            // Продолжаем анализ с сохраненного места без лишних уведомлений
-                            const resumePercent = Math.round((data.start_from / data.total_combinations) * 100);
-                            updateProgress(resumePercent, 'Продолжение анализа...');
-                            document.getElementById('progressDetails').textContent = 
-                                `Обработка комбинации ${data.start_from + 1} из ${data.total_combinations}`;
-                        } else {
-                            updateProgress(0, data.message || 'Инициализация анализа...');
-                            document.getElementById('progressDetails').textContent = `Всего комбинаций для анализа: ${data.total_combinations}`;
+        } catch (error) {
+            showNotification('Ошибка подключения: ' + error.message, 'error');
+            resetAnalysisButton();
+        }
+    }
+
+    // Функция опроса статуса
+    function startPolling() {
+        stopPolling();
+        pollingInterval = setInterval(checkAnalysisStatus, 2000);
+    }
+
+    function stopPolling() {
+        if (pollingInterval) {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
+        }
+    }
+
+    // Проверка статуса анализа
+    async function checkAnalysisStatus() {
+        try {
+            const response = await fetch('/api/efficiency_analysis/status', {
+                credentials: 'same-origin',
+                cache: 'no-cache',
+                headers: {
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache'
+                }
+            });
+            const data = await response.json();
+            if (data.success) {
+                if (data.status === 'idle') {
+                    // Нет активной задачи, останавливаем опрос
+                    stopPolling();
+                    resetAnalysisButton();
+
+                } else if (data.status === 'stalled') {
+                    // Задача зависла или прервана
+                    stopPolling();
+                    showStalledError(data.error || 'Задача была прервана');
+
+                } else if (data.status === 'running') {
+                    // Анализ выполняется
+                    if (data.progress) {
+                        updateProgress(
+                            data.progress.percent || 0,
+                            data.progress.status || 'Обработка...'
+                        );
+
+                        if (data.progress.current && data.progress.total) {
+                            document.getElementById('progressDetails').textContent =
+                                `Обработка комбинации ${data.progress.current} из ${data.progress.total}`;
                         }
-                        break;
-                    
-                    case 'tasks_started':
-                        // Celery задачи запущены
-                        updateProgress(1, `Запущено ${data.count} задач для обработки`);
-                        break;
-                    
-                case 'progress':
-                    updateProgress(data.percent || 0, data.status || data.message);
-                    if (data.current && data.total) {
-                        document.getElementById('progressDetails').textContent = 
-                            `Обработка комбинации ${data.current} из ${data.total}`;
-                    } else if (data.current_combination && data.total_combinations) {
-                        document.getElementById('progressDetails').textContent = 
-                            `Обработка комбинации ${data.current_combination} из ${data.total_combinations}`;
                     }
-                    break;
-                    
-                case 'combination_complete':
-                    // Celery: комбинация завершена
-                    if (data.result) {
-                        intermediateResults.push(data.result);
-                        const percent = Math.round((data.combination_id / (data.total || 100)) * 100);
-                        updateProgress(percent, `Завершена комбинация ${data.combination_id}`);
-                    }
-                    break;
-                    
-                case 'progress_detail':
-                    // Детальный прогресс внутри комбинации
-                    updateProgress(data.percent, data.message);
-                    break;
-                    
-                case 'info':
-                    // Информационное сообщение - только логируем в консоль
-                    console.log('Info:', data.message);
-                    break;
-                    
-                case 'intermediate':
-                    // Промежуточный результат для одной комбинации
-                    intermediateResults.push({
-                        combination: data.combination,
-                        pnl: data.pnl,
-                        signals: data.signals,
-                        win_rate: data.win_rate
-                    });
-                    
-                    // Обновляем детали прогресса с информацией о найденных результатах
-                    if (total_combinations <= 50) {
-                        document.getElementById('progressDetails').innerHTML = 
-                            `Обработано комбинаций: ${intermediateResults.length}/${total_combinations}<br>` +
-                            `Последняя: ${data.combination} - P&L: $${data.pnl}, Сигналов: ${data.signals}, WR: ${data.win_rate}%`;
-                    }
-                    break;
-                    
-                case 'complete':
+
+                } else if (data.status === 'completed') {
                     // Анализ завершен
-                    eventSource.close();
-                    currentEventSource = null;
-                    analysisInProgress = false;
-                    
-                    // Поддержка как старого формата (data.data), так и нового (data.results)
-                    const results = data.data || data.results || [];
-                    analysisResults = results;
-                    
-                    if (data.best_result) {
-                        // Celery формат с лучшим результатом
-                        displayResults({
-                            combinations: results,
-                            best_combination: data.best_result,
-                            total_combinations: data.total_combinations
-                        });
-                    } else {
-                        // Старый формат
-                        displayResults(results);
-                    }
-                    
-                    showNotification('Анализ успешно завершен', 'success');
-                    resetAnalysisButton();
-                    break;
-                    
-                case 'error':
-                    // Ошибка
-                    eventSource.close();
-                    currentEventSource = null;
-                    analysisInProgress = false;
-                    showNotification('Ошибка: ' + data.message, 'error');
-                    resetAnalysisButton();
-                    break;
-                    
-                case 'heartbeat':
-                    // Heartbeat сообщение для поддержания соединения
-                    const timestamp = data.timestamp ? new Date(data.timestamp * 1000).toLocaleTimeString() : 'now';
-                    console.log('Heartbeat received at', timestamp);
-                    // heartbeat уже сбрасывается в onmessage, но можно дополнительно вызвать здесь
-                    resetHeartbeatTimeout();
-                    break;
-            }
-            } catch (error) {
-                console.error('Error parsing SSE message:', error, event.data);
-            }
-        };
-        
-        eventSource.onerror = function(error) {
-            // SSE автоматически переподключается при разрыве соединения
-            console.log('SSE connection interrupted, auto-reconnecting...');
-            
-            // Только если это критическая ошибка (readyState === 2 означает CLOSED)
-            if (eventSource.readyState === 2) {
-                console.error('SSE connection closed permanently');
-                
-                if (!isReconnecting && reconnectAttempts < maxReconnectAttempts) {
-                    isReconnecting = true;
-                    reconnectAttempts++;
-                    console.log(`Manual reconnect attempt ${reconnectAttempts}/${maxReconnectAttempts}`);
-                    
-                    // Показываем пользователю, что идет переподключение
-                    document.getElementById('progressDetails').innerHTML = 
-                        `<span class="text-yellow-600">Соединение прервано. Переподключение (попытка ${reconnectAttempts}/${maxReconnectAttempts})...</span>`;
-                    
-                    // Ждем немного перед переподключением
-                    setTimeout(() => {
-                        if (analysisInProgress) {
-                            createEventSource();
-                        }
-                        isReconnecting = false;
-                    }, 3000);
-                } else if (reconnectAttempts >= maxReconnectAttempts) {
-                    cleanupConnection();
-                    showNotification('Превышено количество попыток переподключения', 'error');
-                    resetAnalysisButton();
+                    stopPolling();
+
+                    // Получаем результаты
+                    getAnalysisResult();
                 }
             }
-        };
+        } catch (error) {
+            console.error('Ошибка проверки статуса:', error);
         }
-        
-        // Функция сброса кнопки
-        function resetAnalysisButton() {
-            const button = document.getElementById('startBtn');
-            button.disabled = false;
-            button.innerHTML = '<i class="fas fa-play mr-2"></i>Запустить анализ';
-            document.getElementById('progressContainer').style.display = 'none';
-            analysisInProgress = false;
-            currentEventSource = null;
+    }
+
+    // Получение результатов анализа
+    async function getAnalysisResult() {
+        try {
+            const response = await fetch('/api/efficiency_analysis/result', {
+                credentials: 'same-origin',
+                cache: 'no-cache',
+                headers: {
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache'
+                }
+            });
+            const data = await response.json();
+            if (data.success) {
+                // Отображаем результаты
+                analysisResults = data.results || [];
+                displayResults(data);
+                showNotification('Анализ успешно завершен', 'success');
+                resetAnalysisButton();
+                document.getElementById('resultsContainer').style.display = 'block';
+            } else {
+                showNotification('Ошибка получения результатов: ' + (data.error || 'Unknown'), 'error');
+                resetAnalysisButton();
+            }
+        } catch (error) {
+            console.error('Ошибка получения результатов:', error);
+            showNotification('Ошибка получения результатов', 'error');
+            resetAnalysisButton();
         }
-        
-        // Запускаем первое соединение
-        createEventSource();
+    }
+
+    // Функция сброса кнопки
+    function resetAnalysisButton() {
+        const button = document.getElementById('startBtn');
+        button.disabled = false;
+        button.innerHTML = '<i class="fas fa-play mr-2"></i>Запустить анализ';
+        document.getElementById('progressContainer').style.display = 'none';
+    }
+
+    // Проверка статуса при загрузке страницы
+    async function checkInitialStatus() {
+        try {
+            const response = await fetch('/api/efficiency_analysis/status', {
+                credentials: 'same-origin',
+                cache: 'no-cache',
+                headers: {
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache'
+                }
+            });
+            const data = await response.json();
+            if (data.success && data.status === 'running') {
+                // Есть активная задача
+                const button = document.getElementById('startBtn');
+                button.disabled = true;
+                button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Анализ выполняется...';
+
+                document.getElementById('progressContainer').style.display = 'block';
+
+                if (data.progress) {
+                    updateProgress(
+                        data.progress.percent || 0,
+                        data.progress.status || 'Обработка...'
+                    );
+
+                    if (data.progress.current && data.progress.total) {
+                        document.getElementById('progressDetails').textContent =
+                            `Обработка комбинации ${data.progress.current} из ${data.progress.total}`;
+                    }
+                }
+
+                // Запускаем опрос
+                startPolling();
+
+            } else if (data.success && data.status === 'completed' && data.has_result) {
+                // Анализ завершен, показываем кнопку получения результатов
+                showNotification('Обнаружены результаты предыдущего анализа', 'info');
+                getAnalysisResult();
+            }
+        } catch (error) {
+            console.error('Ошибка проверки начального статуса:', error);
+        }
     }
 
     // Обновление прогресса
@@ -683,12 +585,58 @@
         document.getElementById('progressDetails').textContent = `Обработано ${percent}%`;
     }
 
+    // Показать ошибку о зависшей задаче
+    function showStalledError(errorMessage) {
+        document.getElementById('progressContainer').innerHTML = `
+            <div class="bg-red-50 p-4 rounded-lg">
+                <div class="flex items-center">
+                    <i class="fas fa-exclamation-circle text-red-600 mr-3 text-xl"></i>
+                    <div class="flex-1">
+                        <p class="text-red-800 font-medium">${errorMessage}</p>
+                        <p class="text-red-600 text-sm mt-1">Задача была прервана из-за перезагрузки сервера или ошибки.</p>
+                    </div>
+                </div>
+                <div class="mt-4 flex gap-3">
+                    <button onclick="cancelAnalysis()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors">
+                        <i class="fas fa-times mr-2"></i>Сбросить и начать заново
+                    </button>
+                </div>
+            </div>
+        `;
+        document.getElementById('progressContainer').style.display = 'block';
+        resetAnalysisButton();
+    }
+
+    // Отмена анализа
+    async function cancelAnalysis() {
+        try {
+            const response = await fetch('/api/efficiency_analysis/cancel', {
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-cache'
+            });
+            const data = await response.json();
+            if (data.success) {
+                showNotification('Анализ отменен', 'success');
+                document.getElementById('progressContainer').style.display = 'none';
+                resetAnalysisButton();
+            } else {
+                showNotification('Ошибка отмены: ' + data.error, 'error');
+            }
+        } catch (error) {
+            showNotification('Ошибка: ' + error.message, 'error');
+        }
+    }
+
     // Отображение результатов
     function displayResults(data) {
         // Обрабатываем разные форматы данных
         let combinations;
         if (Array.isArray(data)) {
             combinations = data;
+        } else if (data.results) {
+            // API возвращает data.results
+            combinations = data.results;
         } else if (data.combinations) {
             combinations = data.combinations;
         } else {
@@ -879,46 +827,13 @@
         
         document.getElementById('combinationsCount').textContent = `Комбинаций: ${total}`;
     }
-    
-    // Функция загрузки сохраненных результатов
-    async function loadCachedResults() {
-        try {
-            const response = await fetch('/api/analysis/get_cached_results/efficiency');
-            const data = await response.json();
-            
-            if (data.status === 'success' && data.has_cached && data.data) {
-                const cachedData = data.data;
-                
-                // Отображаем сохраненные результаты
-                displayResults(cachedData.results);
-                
-                // Показываем информацию о времени сохранения
-                const timestamp = new Date(cachedData.timestamp);
-                const timeString = timestamp.toLocaleString('ru-RU');
-                
-                showNotification(`Загружены результаты анализа от ${timeString}`, 'info');
-                
-                // Восстанавливаем параметры в форме, если они отличаются
-                if (cachedData.parameters) {
-                    document.getElementById('scoreWeekMin').value = cachedData.parameters.score_week_min;
-                    document.getElementById('scoreWeekMax').value = cachedData.parameters.score_week_max;
-                    document.getElementById('scoreMonthMin').value = cachedData.parameters.score_month_min;
-                    document.getElementById('scoreMonthMax').value = cachedData.parameters.score_month_max;
-                    document.getElementById('analysisStep').value = cachedData.parameters.step;
-                    updateCombinationsCount();
-                }
-            }
-        } catch (error) {
-            console.error('Ошибка загрузки сохраненных результатов:', error);
-        }
-    }
-    
+
     // Инициализация при загрузке страницы
     document.addEventListener('DOMContentLoaded', function() {
         loadUserSettings();
         updateCombinationsCount();
-        loadCachedResults(); // Загружаем сохраненные результаты
-        
+        checkInitialStatus(); // Проверяем статус активных задач
+
         // Добавляем обработчики для пересчета комбинаций
         ['scoreWeekMin', 'scoreWeekMax', 'scoreMonthMin', 'scoreMonthMax', 'analysisStep'].forEach(id => {
             document.getElementById(id).addEventListener('input', updateCombinationsCount);

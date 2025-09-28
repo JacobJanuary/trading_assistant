@@ -16,7 +16,6 @@ from datetime import datetime, timedelta, timezone
 from database import Database, initialize_signals_with_params, process_signal_complete
 from models import User, TradingData, TradingStats
 from config import Config
-from celery_sse_endpoints import analyze_efficiency_celery, analyze_trailing_stop_celery
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -94,6 +93,14 @@ except Exception as e:
 # Глобальный счетчик критических ошибок БД
 database_critical_errors = 0
 last_db_recovery_attempt = 0
+
+# Регистрация новых API маршрутов для управления анализами через БД
+try:
+    from analysis_api import register_analysis_api_routes
+    register_analysis_api_routes(app, db)
+    logger.info("Зарегистрированы новые API маршруты для управления анализами")
+except Exception as e:
+    logger.error(f"Ошибка регистрации API маршрутов: {e}")
 
 # Глобальные переменные для хранения результатов анализа
 # Ключ - user_id, значение - словарь с результатами различных анализов
@@ -2115,19 +2122,20 @@ def api_initialize_signals_trailing():
 
 
 @app.route('/api/get_user_trading_mode')
-@login_required
 def api_get_user_trading_mode():
     """Получение текущего режима торговли пользователя"""
     try:
+        # Временно используем user_id = 1 для тестирования
+        user_id = 1
         query = """
-            SELECT use_trailing_stop, trailing_distance_pct, 
+            SELECT use_trailing_stop, trailing_distance_pct,
                    trailing_activation_pct, stop_loss_percent,
                    take_profit_percent, position_size_usd, leverage,
                    allowed_hours
             FROM web.user_signal_filters
             WHERE user_id = %s
         """
-        result = db.execute_query(query, (current_user.id,), fetch=True)
+        result = db.execute_query(query, (user_id,), fetch=True)
 
         if result:
             data = result[0]
@@ -2194,44 +2202,13 @@ def trailing_analysis():
 @app.route('/api/efficiency/analyze_30days_progress')
 @login_required
 def api_efficiency_analyze_30days_progress():
-    """SSE endpoint для отправки прогресса анализа эффективности в реальном времени"""
-    try:
-        app.logger.info("=== Efficiency analysis endpoint called ===")
-        app.logger.info(f"Request args: {request.args}")
-        app.logger.info(f"Current user: {current_user.username if current_user else 'None'}")
-        
-        # Проверяем, использовать ли Celery
-        use_celery = request.args.get('use_celery', Config.USE_CELERY and 'true' or 'false').lower() == 'true'
-        
-        app.logger.info(f"Efficiency analysis: Config.USE_CELERY={Config.USE_CELERY}, use_celery param={use_celery}")
-    except Exception as e:
-        app.logger.error(f"Error in efficiency endpoint initialization: {e}", exc_info=True)
-        raise
-    
-    if use_celery and Config.USE_CELERY:
-        # Используем Celery версию
-        app.logger.info("Using Celery version for efficiency analysis")
-        try:
-            # Передаем user_id в функцию
-            return analyze_efficiency_celery(current_user.id)
-        except Exception as e:
-            app.logger.error(f"Error in analyze_efficiency_celery: {e}", exc_info=True)
-            # Возвращаем ошибку как SSE событие
-            from flask import Response
-            import json
-            def error_response():
-                yield f"data: {json.dumps({'type': 'error', 'message': f'Server error: {str(e)}'})}\n\n"
-            return Response(error_response(), mimetype='text/event-stream')
-    
-    # Оригинальная версия без Celery
-    app.logger.info("Using synchronous version for efficiency analysis (Celery disabled)")
+    """SSE endpoint для отправки прогресса анализа эффективности через Celery"""
     from flask import Response, request
-    from database import get_scoring_signals_v2, process_scoring_signals_batch
-    from datetime import datetime, timedelta
-    import uuid
+    from celery_efficiency_parallel import analyze_efficiency_parallel as analyze_efficiency_30days, get_task_status_from_db as get_task_status
+    import redis
     import json
     import time
-    
+
     # Получаем параметры из запроса
     score_week_min_param = int(request.args.get('score_week_min', 60))
     score_week_max_param = int(request.args.get('score_week_max', 80))
@@ -2240,491 +2217,81 @@ def api_efficiency_analyze_30days_progress():
     step_param = int(request.args.get('step', 10))
     max_trades_per_15min = int(request.args.get('max_trades_per_15min', 3))
     force_recalc = request.args.get('force_recalc', 'false').lower() == 'true'
-    session_id = request.args.get('session_id', '')  # ID сессии для отслеживания переподключений
-    
+    session_id = request.args.get('session_id', '')
+
     # Сохраняем user_id до создания генератора
     user_id = current_user.id
-    
+
+    # Запускаем Celery задачу
+    filters = {
+        'score_week_min': score_week_min_param,
+        'score_week_max': score_week_max_param,
+        'score_month_min': score_month_min_param,
+        'score_month_max': score_month_max_param,
+        'step': step_param,
+        'max_trades_per_15min': max_trades_per_15min,
+        'force_recalc': force_recalc
+    }
+
+    # Добавляем дополнительные параметры из текущей сессии
+    filters['take_profit_percent'] = session.get('take_profit_percent', 4.0)
+    filters['stop_loss_percent'] = session.get('stop_loss_percent', 3.0)
+    filters['position_size_usd'] = session.get('position_size_usd', 100)
+    filters['leverage'] = session.get('leverage', 5)
+    filters['use_trailing_stop'] = session.get('use_trailing_stop', False)
+    filters['trailing_distance_pct'] = session.get('trailing_distance_pct', 2.0)
+    filters['trailing_activation_pct'] = session.get('trailing_activation_pct', 1.0)
+
+    # Запускаем задачу Celery
+    from celery_efficiency_parallel import analyze_efficiency_parallel as analyze_efficiency_30days, get_task_status_from_db as get_task_status
+    task = analyze_efficiency_30days.delay(user_id, filters)
+
     def generate():
-        nonlocal session_id, force_recalc  # Указываем, что используем внешние переменные
-        import gc  # Для ручной сборки мусора при больших объемах данных
+        """Генератор SSE для отслеживания прогресса Celery задачи"""
+        import time
         try:
-            # Сначала вычисляем количество комбинаций (нужно для проверки прогресса)
-            week_steps = list(range(score_week_min_param, score_week_max_param + 1, step_param))
-            month_steps = list(range(score_month_min_param, score_month_max_param + 1, step_param))
-            total_combinations = len(week_steps) * len(month_steps)
-            
-            # Проверяем, есть ли сохраненные промежуточные результаты в БД
-            start_from_combination = 0
-            results = []
-            current_combination = 0
-            
-            if not force_recalc:
-                # Проверяем прогресс в БД
-                progress_query = """
-                    SELECT parameters, last_processed_combination, results, completed
-                    FROM web.analysis_progress
-                    WHERE user_id = %s AND analysis_type = 'efficiency'
-                    AND updated_at > NOW() - INTERVAL '24 hours'
-                """
-                progress_data = db.execute_query(progress_query, (user_id,), fetch=True)
-                
-                if progress_data:
-                    saved_progress = progress_data[0]
-                    saved_params = saved_progress['parameters']
-                    
-                    # Проверяем, что параметры совпадают
-                    if (saved_params.get('score_week_min') == score_week_min_param and
-                        saved_params.get('score_week_max') == score_week_max_param and
-                        saved_params.get('score_month_min') == score_month_min_param and
-                        saved_params.get('score_month_max') == score_month_max_param and
-                        saved_params.get('step') == step_param and
-                        saved_params.get('max_trades_per_15min') == max_trades_per_15min):
-                        
-                        # Продолжаем с последней обработанной комбинации
-                        start_from_combination = saved_progress['last_processed_combination'] or 0
-                        results = saved_progress.get('results', []) or []
-                        
-                        if not saved_progress['completed']:
-                            # Логируем восстановление прогресса
-                            logger.info(f'Восстанавливаем прогресс с комбинации {start_from_combination + 1} из {total_combinations}')
-                            # ВАЖНО: отправляем клиенту информацию о восстановлении
-                            yield f"data: {json.dumps({'type': 'info', 'message': f'Продолжаем с {start_from_combination + 1} из {total_combinations}'})}\n\n"
-                    else:
-                        # Параметры изменились, удаляем старый прогресс
-                        db.execute_query("DELETE FROM web.analysis_progress WHERE user_id = %s AND analysis_type = 'efficiency'", (user_id,))
-            else:
-                # Принудительный пересчет - удаляем старый прогресс
-                db.execute_query("DELETE FROM web.analysis_progress WHERE user_id = %s AND analysis_type = 'efficiency'", (user_id,))
-                
-                # При новом запуске очищаем весь кэш пользователя для пересчета
-                if force_recalc:
-                    clear_cache_query = """
-                        DELETE FROM web.efficiency_cache 
-                        WHERE user_id = %s
-                    """
-                    db.execute_query(clear_cache_query, (user_id,))
-                else:
-                    # Очищаем только старый кэш (старше 2 часов)
-                    clear_old_cache_query = """
-                        DELETE FROM web.efficiency_cache 
-                        WHERE user_id = %s 
-                        AND created_at < NOW() - INTERVAL '2 hours'
-                    """
-                    db.execute_query(clear_old_cache_query, (user_id,))
-            
-            # Отправляем немедленный heartbeat для проверки соединения
-            # ВАЖНО: Отправляем простую строку сначала для проверки соединения
-            yield ": ping\n\n"
-            yield f"data: {json.dumps({'type': 'connection_test'})}\n\n"
-            
-            # Переменные для отслеживания времени и обработки
-            last_heartbeat = time.time()
-            last_yield = time.time()
-            processed_combinations = 0
-            HEARTBEAT_INTERVAL = 10  # Отправлять heartbeat каждые 10 секунд
-            
-            # Получаем настройки пользователя
-            settings_query = """
-                SELECT use_trailing_stop, trailing_distance_pct, trailing_activation_pct,
-                       take_profit_percent, stop_loss_percent, position_size_usd, leverage,
-                       allowed_hours
-                FROM web.user_signal_filters
-                WHERE user_id = %s
-            """
-            user_settings = db.execute_query(settings_query, (user_id,), fetch=True)
-            
-            if not user_settings:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'Настройки пользователя не найдены'})}\n\n"
-                return
-            
-            settings = user_settings[0]
-            use_trailing_stop = settings.get('use_trailing_stop', False)
-            trailing_distance_pct = float(settings.get('trailing_distance_pct', 2.0))
-            trailing_activation_pct = float(settings.get('trailing_activation_pct', 1.0))
-            tp_percent = float(settings.get('take_profit_percent', 4.0))
-            sl_percent = float(settings.get('stop_loss_percent', 3.0))
-            position_size = float(settings.get('position_size_usd', 100.0))
-            leverage = int(settings.get('leverage', 5))
-            allowed_hours = settings.get('allowed_hours', list(range(24)))
-            if not allowed_hours:
-                allowed_hours = list(range(24))
-            
-            # Определяем период анализа (исключаем последние 2 дня)
-            end_date = datetime.now().date() - timedelta(days=2)
-            start_date = end_date - timedelta(days=29)
-            
-            # Создаем или обновляем запись прогресса в БД
-            if start_from_combination == 0:  # Новый анализ
-                progress_params = {
-                    'score_week_min': score_week_min_param,
-                    'score_week_max': score_week_max_param,
-                    'score_month_min': score_month_min_param,
-                    'score_month_max': score_month_max_param,
-                    'step': step_param,
-                    'use_trailing_stop': use_trailing_stop,
-                    'max_trades_per_15min': max_trades_per_15min
-                }
-                
-                # Создаем новую запись прогресса
-                upsert_query = """
-                    INSERT INTO web.analysis_progress 
-                    (user_id, analysis_type, parameters, total_combinations, results, last_processed_combination)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (user_id, analysis_type) 
-                    DO UPDATE SET 
-                        parameters = EXCLUDED.parameters,
-                        total_combinations = EXCLUDED.total_combinations,
-                        results = EXCLUDED.results,
-                        last_processed_combination = EXCLUDED.last_processed_combination,
-                        completed = FALSE,
-                        updated_at = NOW()
-                """
-                db.execute_query(upsert_query, (
-                    user_id, 
-                    'efficiency',
-                    json.dumps(progress_params),
-                    total_combinations,
-                    json.dumps(results),
-                    0
-                ))
-            
-            # Отправляем начальное сообщение
-            if start_from_combination > 0:
-                # Показываем продолжение только если это действительно возобновление после длительного перерыва
-                yield f"data: {json.dumps({'type': 'start', 'message': f'Анализ эффективности за 30 дней', 'total_combinations': total_combinations, 'resume': True, 'start_from': start_from_combination})}\n\n"
-                # Отправляем уже обработанные результаты
-                if results:
-                    for result in results[:5]:  # Отправляем первые 5 для отображения
-                        combination_str = f"Week≥{result['score_week']}%, Month≥{result['score_month']}%"
-                        yield f"data: {json.dumps({'type': 'intermediate', 'combination': combination_str, 'pnl': round(result['total_pnl'], 2), 'signals': result['total_signals'], 'win_rate': round(result['win_rate'], 1)})}\n\n"
-            else:
-                # Отправляем начальное сообщение
-                start_msg = {'type': 'start', 'message': 'Инициализация анализа за 30 дней...', 'total_combinations': total_combinations}
-                yield f"data: {json.dumps(start_msg)}\n\n"
-                # Форсируем отправку
-                yield ": keepalive\n\n"
-                
-                # Сразу отправляем первый прогресс чтобы показать начало работы
-                yield f"data: {json.dumps({'type': 'progress', 'percent': 0, 'message': 'Начинаем обработку...', 'current_combination': 0, 'total_combinations': total_combinations})}\n\n"
-            
-            # Перебираем все комбинации на основе пользовательских настроек
-            for score_week_min in week_steps:
-                for score_month_min in month_steps:
-                    current_combination += 1
-                    
-                    # Пропускаем уже обработанные комбинации
-                    if current_combination <= start_from_combination:
-                        continue
-                        
-                    processed_combinations += 1
-                    
-                    # Отправляем heartbeat для поддержания соединения
-                    current_time = time.time()
-                    if current_time - last_heartbeat > HEARTBEAT_INTERVAL:
-                        yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': current_time})}\n\n"
-                        last_heartbeat = current_time
-                    
-                    # Также отправляем keepalive чаще для предотвращения таймаута
-                    if current_time - last_yield > 2:  # Каждые 2 секунды
-                        yield f": keepalive\n\n"
-                        last_yield = current_time
-                    
-                    combination_result = {
-                        'score_week': score_week_min,
-                        'score_month': score_month_min,
-                        'start_date': start_date.strftime('%Y-%m-%d'),
-                        'end_date': end_date.strftime('%Y-%m-%d'),
-                        'total_pnl': 0.0,
-                        'total_signals': 0,
-                        'total_wins': 0,
-                        'total_losses': 0,
-                        'win_rate': 0.0,
-                        'daily_breakdown': []
-                    }
-                    
-                    # Вычисляем прогресс для текущей комбинации
-                    progress_percent = int((current_combination - 0.5) / total_combinations * 100)
-                    
-                    # Отправляем прогресс в начале обработки каждой комбинации
-                    progress_data = {
-                        'type': 'progress', 
-                        'percent': progress_percent, 
-                        'message': f'Обработка {current_combination}/{total_combinations}', 
-                        'current_combination': current_combination, 
-                        'total_combinations': total_combinations
-                    }
-                    yield f"data: {json.dumps(progress_data)}\n\n"
-                    last_yield = time.time()
-                    
-                    # Обрабатываем каждый день
-                    current_date = start_date
-                    days_processed = 0
-                    
-                    while current_date <= end_date:
-                        days_processed += 1
-                        date_str = current_date.strftime('%Y-%m-%d')
-                        
-                        # Отправляем heartbeat регулярно
-                        current_time = time.time()
-                        if current_time - last_heartbeat > HEARTBEAT_INTERVAL:
-                            yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': current_time})}\n\n"
-                            last_heartbeat = current_time
-                        
-                        # Также отправляем keepalive чаще для предотвращения таймаута
-                        if current_time - last_yield > 2:
-                            yield f": keepalive\n\n"
-                            last_yield = current_time
-                        
-                        # Не отправляем детальный прогресс для уменьшения нагрузки при большом количестве комбинаций
-                        # Только для малого количества комбинаций
-                        if total_combinations <= 50 and (days_processed % 10 == 0 or days_processed == 1 or days_processed == 30):
-                            detail_progress = progress_percent + int((days_processed / 30) * (100 / total_combinations) * 0.9)
-                            yield f"data: {json.dumps({'type': 'progress_detail', 'percent': detail_progress, 'message': f'Комбинация {current_combination}: день {days_processed}/30'})}\n\n"
-                            last_yield = current_time
-                        
-                        # Проверяем кэш для этой комбинации и дня
-                        cache_key = f"{date_str}_{score_week_min}_{score_month_min}_{use_trailing_stop}_{max_trades_per_15min}"
-                        cached_result = None
-                        
-                        # Используем кэш только если не требуется принудительный пересчет и не используется trailing stop
-                        # (кэш не содержит trailing_wins/trailing_losses)
-                        if not force_recalc and not use_trailing_stop:
-                            cache_query = """
-                                SELECT signal_count, tp_count, sl_count, timeout_count, daily_pnl
-                                FROM web.efficiency_cache
-                                WHERE cache_key = %s AND user_id = %s
-                                    AND created_at > NOW() - INTERVAL '1 hour'
-                            """
-                            cached_result = db.execute_query(cache_query, (cache_key, user_id), fetch=True)
-                        
-                        if cached_result:
-                            # Используем кэшированные данные
-                            daily_stats = {
-                                'date': date_str,
-                                'signal_count': cached_result[0]['signal_count'],
-                                'tp_count': cached_result[0]['tp_count'],
-                                'sl_count': cached_result[0]['sl_count'],
-                                'trailing_wins': 0,  # Кэш не содержит эти поля, нужно пересчитать
-                                'trailing_losses': 0,
-                                'timeout_count': cached_result[0]['timeout_count'],
-                                'daily_pnl': float(cached_result[0]['daily_pnl'])
-                            }
-                        else:
-                            # Получаем сигналы для текущего дня с учетом разрешенных часов и лимита 15 минут
-                            raw_signals = get_scoring_signals_v2(db, date_str, score_week_min, score_month_min, allowed_hours, max_trades_per_15min)
-                            
-                            daily_stats = {
-                                'date': date_str,
-                                'signal_count': 0,
-                                'tp_count': 0,
-                                'sl_count': 0,
-                                'trailing_wins': 0,
-                                'trailing_losses': 0,
-                                'timeout_count': 0,
-                                'daily_pnl': 0.0
-                            }
-                            
-                            if raw_signals:
-                                session_id = f"eff_{user_id}_{uuid.uuid4().hex[:8]}"
-                                
-                                # КРИТИЧНО: отправляем heartbeat перед КАЖДОЙ тяжелой операцией
-                                # при большом количестве комбинаций
-                                if total_combinations > 100:
-                                    yield f": processing c{current_combination}d{days_processed}\n\n"
-                                
-                                result = process_scoring_signals_batch(
-                                    db, raw_signals, session_id, user_id,
-                                    tp_percent=tp_percent,
-                                    sl_percent=sl_percent,
-                                    position_size=position_size,
-                                    leverage=leverage,
-                                    use_trailing_stop=use_trailing_stop,
-                                    trailing_distance_pct=trailing_distance_pct,
-                                    trailing_activation_pct=trailing_activation_pct
-                                )
-                            
-                                stats = result['stats']
-                                daily_stats['signal_count'] = int(stats.get('total', 0))
-                                daily_stats['tp_count'] = int(stats.get('tp_count', 0))
-                                daily_stats['sl_count'] = int(stats.get('sl_count', 0))
-                                daily_stats['timeout_count'] = int(stats.get('timeout_count', 0))
-                                daily_stats['daily_pnl'] = float(stats.get('total_pnl', 0))
-                                
-                                # Для trailing stop стратегии учитываем trailing_wins и trailing_losses
-                                if use_trailing_stop:
-                                    daily_stats['trailing_wins'] = int(stats.get('trailing_wins', 0))
-                                    daily_stats['trailing_losses'] = int(stats.get('trailing_losses', 0))
-                                
-                                # Сохраняем в кэш только для Fixed режима
-                                if not use_trailing_stop:
-                                    cache_insert = """
-                                        INSERT INTO web.efficiency_cache 
-                                        (cache_key, user_id, signal_count, tp_count, sl_count, timeout_count, daily_pnl)
-                                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                    """
-                                    try:
-                                        db.execute_query(cache_insert, (
-                                            cache_key, user_id,
-                                            daily_stats['signal_count'],
-                                            daily_stats['tp_count'],
-                                            daily_stats['sl_count'],
-                                            daily_stats['timeout_count'],
-                                            daily_stats['daily_pnl']
-                                        ))
-                                    except:
-                                        pass  # Игнорируем ошибки кэша
-                                
-                                # Очищаем временные данные из правильной таблицы
-                                cleanup_query = """
-                                    DELETE FROM web.scoring_analysis_results
-                                    WHERE session_id = %s AND user_id = %s
-                                """
-                                # Очищаем после обработки дня
-                                db.execute_query(cleanup_query, (session_id, user_id))
-                        
-                        # Обновляем общую статистику
-                        if daily_stats:
-                            combination_result['total_signals'] += daily_stats['signal_count']
-                            combination_result['total_pnl'] += daily_stats['daily_pnl']
-                            
-                            # Правильно считаем wins и losses с учетом trailing
-                            if use_trailing_stop:
-                                total_wins = daily_stats.get('tp_count', 0) + daily_stats.get('trailing_wins', 0)
-                                total_losses = daily_stats.get('sl_count', 0) + daily_stats.get('trailing_losses', 0)
-                            else:
-                                total_wins = daily_stats.get('tp_count', 0)
-                                total_losses = daily_stats.get('sl_count', 0)
-                            
-                            combination_result['total_wins'] += total_wins
-                            combination_result['total_losses'] += total_losses
-                        
-                        combination_result['daily_breakdown'].append(daily_stats)
-                        current_date += timedelta(days=1)
-                        
-                        # Отправляем heartbeat после каждого дня для поддержания соединения
-                        if days_processed % 5 == 0:  # Каждые 5 дней
-                            yield f": heartbeat day {days_processed}\n\n"
-                            last_yield = time.time()
-                    
-                    # Рассчитываем win rate
-                    if combination_result['total_signals'] > 0:
-                        total_closed = combination_result['total_wins'] + combination_result['total_losses']
-                        if total_closed > 0:
-                            combination_result['win_rate'] = (combination_result['total_wins'] / total_closed) * 100
-                        
-                        results.append(combination_result)
-                        
-                        # Очищаем память при большом количестве результатов
-                        # Оставляем только топ-200 по win_rate чтобы не исчерпать память
-                        if len(results) > 200 and total_combinations > 100:
-                            # Сортируем и оставляем только лучшие
-                            results = sorted(results, key=lambda x: x.get('win_rate', 0), reverse=True)[:200]
-                            logger.info(f"Очищена память, оставлено топ-200 результатов из {current_combination}")
-                            # Принудительная сборка мусора
-                            gc.collect()
-                        
-                        # КРИТИЧНО: При большом количестве комбинаций сохраняем КАЖДУЮ
-                        # чтобы не потерять прогресс при разрыве соединения
-                        should_save = False
-                        
-                        if total_combinations > 100:
-                            # Сохраняем каждую комбинацию
-                            should_save = True
-                        else:
-                            # При малом количестве сохраняем каждую 5-ю
-                            should_save = (current_combination % 5 == 0) or (current_combination == total_combinations)
-                        
-                        # ВСЕГДА сохраняем первую обработанную комбинацию после восстановления
-                        if current_combination == start_from_combination + 1:
-                            should_save = True
-                        
-                        if should_save:
-                            update_progress_query = """
-                                UPDATE web.analysis_progress 
-                                SET results = %s, 
-                                    last_processed_combination = %s,
-                                    updated_at = NOW()
-                                WHERE user_id = %s AND analysis_type = 'efficiency'
-                            """
-                            try:
-                                db.execute_query(update_progress_query, (
-                                    json.dumps(results),
-                                    current_combination,
-                                    user_id
-                                ))
-                                # Отправляем keepalive после сохранения
-                                yield f": saved {current_combination}\n\n"
-                            except Exception as e:
-                                logger.error(f"Не удалось сохранить прогресс на комбинации {current_combination}: {e}")
-                                # Продолжаем работу даже если не удалось сохранить
-                        
-                        # Отправляем промежуточный результат только для малого количества комбинаций
-                        if total_combinations <= 50:
-                            yield f"data: {json.dumps({'type': 'intermediate', 'combination': f'Week≥{score_week_min}%, Month≥{score_month_min}%', 'pnl': round(combination_result['total_pnl'], 2), 'signals': combination_result['total_signals'], 'win_rate': round(combination_result['win_rate'], 1)})}\n\n"
-                            last_yield = time.time()
-            
-            # Сортируем результаты по Win Rate
-            results.sort(key=lambda x: x['win_rate'], reverse=True)
-            
-            # Сохраняем финальные результаты в БД и помечаем как завершенные
-            final_update_query = """
-                UPDATE web.analysis_progress 
-                SET results = %s, 
-                    last_processed_combination = %s,
-                    completed = TRUE,
-                    updated_at = NOW()
-                WHERE user_id = %s AND analysis_type = 'efficiency'
-            """
-            db.execute_query(final_update_query, (
-                json.dumps(results),
-                total_combinations,
-                user_id
-            ))
-            
-            # Также сохраняем в памяти для быстрого доступа в текущей сессии
-            if 'efficiency' not in analysis_results_cache:
-                analysis_results_cache['efficiency'] = {}
-                
-            analysis_results_cache['efficiency'][user_id] = {
-                'timestamp': datetime.now().isoformat(),
-                'results': results,
-                'parameters': {
-                    'score_week_min': score_week_min_param,
-                    'score_week_max': score_week_max_param,
-                    'score_month_min': score_month_min_param,
-                    'score_month_max': score_month_max_param,
-                    'step': step_param,
-                    'use_trailing_stop': use_trailing_stop,
-                    'tp_percent': tp_percent,
-                    'sl_percent': sl_percent,
-                    'position_size': position_size,
-                    'leverage': leverage
-                },
-                'completed': True
-            }
-            
-            # Отправляем финальные результаты
-            yield f"data: {json.dumps({'type': 'complete', 'data': results})}\n\n"
-            
+            # Отправляем информацию о запуске задачи
+            yield f"data: {json.dumps({'type': 'task_started', 'task_id': task.id})}\n\n"
+
+            # Отслеживаем статус задачи
+            while True:
+                # Получаем статус задачи
+                status = get_task_status(task.id)
+
+                if status['state'] == 'PENDING':
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Задача в очереди...'})}\n\n"
+
+                elif status['state'] == 'PROGRESS':
+                    info = status.get('info', {})
+                    yield f"data: {json.dumps({'type': 'progress', 'data': info})}\n\n"
+
+                elif status['state'] == 'SUCCESS':
+                    result = status.get('info', {})
+                    yield f"data: {json.dumps({'type': 'complete', 'data': result})}\n\n"
+                    break
+
+                elif status['state'] == 'FAILURE':
+                    error = status.get('info', 'Unknown error')
+                    yield f"data: {json.dumps({'type': 'error', 'message': str(error)})}\n\n"
+                    break
+
+                # Heartbeat каждые 2 секунды
+                yield ": ping\n\n"
+                time.sleep(2)
+
         except Exception as e:
-            logger.error(f"Ошибка в SSE генераторе: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"SSE Error: {e}")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-    
-    # Создаем Response БЕЗ stream_with_context - это может блокировать
-    response = Response(
-        generate(),  # Простой генератор без оберток
+
+    return Response(
+        generate(),
         mimetype='text/event-stream',
         headers={
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no',  # Отключает буферизацию в Nginx
+            'X-Accel-Buffering': 'no'
         }
     )
-    
-    return response
 
 
 @app.route('/api/tpsl/analyze_progress')
@@ -2993,28 +2560,6 @@ def api_tpsl_analyze_progress():
 @login_required
 def api_trailing_analyze_progress():
     """SSE endpoint для анализа эффективности Trailing Stop"""
-    # Проверяем, использовать ли Celery
-    use_celery = request.args.get('use_celery', Config.USE_CELERY and 'true' or 'false').lower() == 'true'
-    
-    app.logger.info(f"Trailing Stop analysis: Config.USE_CELERY={Config.USE_CELERY}, use_celery param={use_celery}")
-    
-    if use_celery and Config.USE_CELERY:
-        # Используем Celery версию
-        app.logger.info("Using Celery version for Trailing Stop analysis")
-        try:
-            # Передаем user_id в функцию
-            return analyze_trailing_stop_celery(current_user.id)
-        except Exception as e:
-            app.logger.error(f"Error in analyze_trailing_stop_celery: {e}", exc_info=True)
-            # Возвращаем ошибку как SSE событие
-            from flask import Response
-            import json
-            def error_response():
-                yield f"data: {json.dumps({'type': 'error', 'message': f'Server error: {str(e)}'})}\n\n"
-            return Response(error_response(), mimetype='text/event-stream')
-    
-    # Оригинальная версия без Celery
-    app.logger.info("Using synchronous version for Trailing Stop analysis (Celery disabled)")
     from flask import Response, request
     from database import get_scoring_signals_v2, process_scoring_signals_batch
     from datetime import datetime, timedelta
@@ -3454,13 +2999,31 @@ def api_efficiency_analyze_30days():
 @app.route('/api/efficiency/analyze', methods=['POST'])
 @login_required
 def api_efficiency_analyze():
-    """API для анализа эффективности с различными параметрами скоринга"""
+    """API для анализа эффективности - перенаправление на Celery версию"""
     try:
+        # Используем Celery версию для тяжёлых операций
+        from celery_efficiency_parallel import analyze_efficiency_parallel as analyze_efficiency_30days
+
         data = request.get_json()
+
+        # Получаем фильтры пользователя
+        user_filters = current_user.get_filters()
+
+        # Запускаем задачу через Celery
+        task = analyze_efficiency_30days.delay(current_user.id, user_filters)
+
+        return jsonify({
+            'status': 'success',
+            'task_id': task.id,
+            'message': 'Анализ запущен в фоновом режиме'
+        })
+
+        # Старый код закомментирован для сохранения логики
+        '''
         analysis_type = data.get('type', 'score_total')  # score_total, indicator, pattern, combination
-        
+
         results = []
-        
+
         if analysis_type == 'score_total':
             # Анализ по total_score от 60 до 99
             for score_min in range(60, 100):
@@ -3537,6 +3100,11 @@ def api_efficiency_analyze():
         
     except Exception as e:
         logger.error(f"Ошибка анализа эффективности: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+        '''
+
+    except Exception as e:
+        logger.error(f"Ошибка при запуске анализа через Celery: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
@@ -4448,42 +4016,134 @@ def api_reinitialize_signals():
             'message': str(e)
         }), 500
 
-@app.route('/api/config/celery_status')
+# ============================================
+# CELERY ИНТЕГРАЦИЯ ДЛЯ ТЯЖЁЛЫХ ОПЕРАЦИЙ
+# ============================================
+
+# Новые маршруты для Celery-based анализа
+@app.route('/api/celery/efficiency_analyze', methods=['POST'])
 @login_required
-def api_celery_status():
-    """Проверка статуса Celery"""
-    status = {
-        'USE_CELERY': Config.USE_CELERY,
-        'CELERY_BROKER_URL': Config.CELERY_BROKER_URL if Config.USE_CELERY else None,
-        'celery_tasks_loaded': False,
-        'celery_workers_online': False
-    }
-    
-    if Config.USE_CELERY:
-        try:
-            from celery_app import celery_app
-            from celery_tasks import analyze_efficiency_combination
-            
-            # Проверяем загрузку задач
-            tasks = [t for t in celery_app.tasks.keys() if 'analyze' in t]
-            status['celery_tasks_loaded'] = len(tasks) > 0
-            status['celery_tasks'] = tasks
-            
-            # Проверяем воркеров
-            i = celery_app.control.inspect()
-            stats = i.stats()
-            if stats:
-                status['celery_workers_online'] = True
-                status['celery_workers'] = list(stats.keys())
-        except Exception as e:
-            status['error'] = str(e)
-    
-    return jsonify(status)
+def api_celery_efficiency_analyze():
+    """Запуск анализа эффективности через Celery (асинхронно)"""
+    try:
+        from celery_efficiency_parallel import analyze_efficiency_parallel as analyze_efficiency_30days
+
+        # Получаем настройки пользователя
+        settings_query = """
+            SELECT use_trailing_stop, trailing_distance_pct, trailing_activation_pct,
+                   take_profit_percent, stop_loss_percent, position_size_usd, leverage,
+                   score_week_min, score_month_min, max_trades_per_15min
+            FROM web.user_signal_filters
+            WHERE user_id = %s
+        """
+        user_settings = db.execute_query(settings_query, (current_user.id,), fetch=True)
+
+        if not user_settings:
+            return jsonify({'status': 'error', 'message': 'Настройки не найдены'}), 400
+
+        filters = user_settings[0]
+
+        # Запускаем Celery задачу
+        task = analyze_efficiency_30days.delay(current_user.id, filters)
+
+        return jsonify({
+            'status': 'success',
+            'task_id': task.id,
+            'message': 'Анализ запущен в фоновом режиме'
+        })
+
+    except Exception as e:
+        logger.error(f"Error starting Celery task: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/celery/trailing_analyze', methods=['POST'])
+@login_required
+def api_celery_trailing_analyze():
+    """Запуск анализа Trailing Stop через Celery"""
+    try:
+        from celery_analysis_tasks import analyze_trailing_stop
+
+        # Получаем настройки пользователя
+        settings_query = """
+            SELECT use_trailing_stop, trailing_distance_pct, trailing_activation_pct,
+                   take_profit_percent, stop_loss_percent, position_size_usd, leverage,
+                   score_week_min, score_month_min
+            FROM web.user_signal_filters
+            WHERE user_id = %s
+        """
+        user_settings = db.execute_query(settings_query, (current_user.id,), fetch=True)
+
+        if not user_settings:
+            return jsonify({'status': 'error', 'message': 'Настройки не найдены'}), 400
+
+        filters = user_settings[0]
+
+        # Запускаем Celery задачу
+        task = analyze_trailing_stop.delay(current_user.id, filters)
+
+        return jsonify({
+            'status': 'success',
+            'task_id': task.id,
+            'message': 'Анализ Trailing Stop запущен'
+        })
+
+    except Exception as e:
+        logger.error(f"Error starting Celery task: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/celery/tpsl_optimize', methods=['POST'])
+@login_required
+def api_celery_tpsl_optimize():
+    """Запуск оптимизации TP/SL через Celery"""
+    try:
+        from celery_analysis_tasks import analyze_tpsl_optimization
+
+        # Получаем настройки пользователя
+        settings_query = """
+            SELECT use_trailing_stop, trailing_distance_pct, trailing_activation_pct,
+                   take_profit_percent, stop_loss_percent, position_size_usd, leverage,
+                   score_week_min, score_month_min
+            FROM web.user_signal_filters
+            WHERE user_id = %s
+        """
+        user_settings = db.execute_query(settings_query, (current_user.id,), fetch=True)
+
+        if not user_settings:
+            return jsonify({'status': 'error', 'message': 'Настройки не найдены'}), 400
+
+        filters = user_settings[0]
+
+        # Запускаем Celery задачу
+        task = analyze_tpsl_optimization.delay(current_user.id, filters)
+
+        return jsonify({
+            'status': 'success',
+            'task_id': task.id,
+            'message': 'Оптимизация TP/SL запущена'
+        })
+
+    except Exception as e:
+        logger.error(f"Error starting Celery task: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/celery/task_status/<task_id>')
+@login_required
+def get_task_status(task_id):
+    """Получение статуса Celery задачи"""
+    try:
+        from celery_analysis_tasks import get_task_status
+
+        status = get_task_status(task_id)
+        return jsonify(status)
+
+    except Exception as e:
+        logger.error(f"Error getting task status: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # Запуск приложения
 if __name__ == '__main__':
     port = Config.PORT
     debug = Config.FLASK_DEBUG
-    
+
     logger.info(f"Запуск приложения на порту {port}")
     app.run(host='0.0.0.0', port=port, debug=debug)

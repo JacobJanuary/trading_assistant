@@ -16,19 +16,19 @@ class Config:
     # ============================================
     
     # Основные параметры подключения
-    DB_HOST = os.getenv('DB_HOST', 'localhost')
+    DB_HOST = os.getenv('DB_HOST', '10.8.0.1')  # Изменено на 10.8.0.1 для VPN соединения
     DB_PORT = int(os.getenv('DB_PORT', 5432))
-    DB_NAME = os.getenv('DB_NAME', 'trading_assistant')
-    DB_USER = os.getenv('DB_USER', 'postgres')
-    DB_PASSWORD = os.getenv('DB_PASSWORD')  # Может быть None если используется .pgpass
+    DB_NAME = os.getenv('DB_NAME', 'fox_crypto_new')  # Правильное имя БД
+    DB_USER = os.getenv('DB_USER', 'elcrypto')  # Правильный пользователь
+    DB_PASSWORD = os.getenv('DB_PASSWORD', 'LohNeMamont@!21')  # Пароль по умолчанию
     
     # Параметры пула соединений
-    DB_POOL_MIN_SIZE = int(os.getenv('DB_POOL_MIN_SIZE', 1))  # Уменьшено до 1 - минимум idle соединений
-    DB_POOL_MAX_SIZE = int(os.getenv('DB_POOL_MAX_SIZE', 5))  # Уменьшено до 5 - меньше соединений
+    DB_POOL_MIN_SIZE = int(os.getenv('DB_POOL_MIN_SIZE', 2))  # Минимум idle соединений
+    DB_POOL_MAX_SIZE = int(os.getenv('DB_POOL_MAX_SIZE', 30))  # Увеличено для параллельной работы
     DB_POOL_TIMEOUT = float(os.getenv('DB_POOL_TIMEOUT', 30.0))
-    DB_POOL_MAX_IDLE = float(os.getenv('DB_POOL_MAX_IDLE', 60.0))  # Уменьшено до 60 сек - закрываем idle очень быстро
-    DB_POOL_MAX_LIFETIME = float(os.getenv('DB_POOL_MAX_LIFETIME', 300.0))  # Уменьшено до 300 (5 мин) - частое обновление
-    DB_POOL_MAX_WAITING = int(os.getenv('DB_POOL_MAX_WAITING', 20))
+    DB_POOL_MAX_IDLE = float(os.getenv('DB_POOL_MAX_IDLE', 60.0))  # Закрываем idle через минуту
+    DB_POOL_MAX_LIFETIME = float(os.getenv('DB_POOL_MAX_LIFETIME', 600.0))  # Увеличено до 600 (10 мин)
+    DB_POOL_MAX_WAITING = int(os.getenv('DB_POOL_MAX_WAITING', 50))  # Увеличено количество ожидающих
     
     # Параметры соединения
     DB_CONNECT_TIMEOUT = int(os.getenv('DB_CONNECT_TIMEOUT', 10))
@@ -153,21 +153,21 @@ class Config:
     # ============================================
     # БЕЗОПАСНОСТЬ
     # ============================================
-    
+
     MAX_LOGIN_ATTEMPTS = int(os.getenv('MAX_LOGIN_ATTEMPTS', 5))
     LOGIN_ATTEMPT_WINDOW = int(os.getenv('LOGIN_ATTEMPT_WINDOW', 300))
     SESSION_LIFETIME = int(os.getenv('SESSION_LIFETIME', 3600))
     PERMANENT_SESSION_LIFETIME = int(os.getenv('PERMANENT_SESSION_LIFETIME', 86400))
-    
+
     # ============================================
     # CELERY
     # ============================================
-    
+
+    USE_CELERY = os.getenv('USE_CELERY', 'false').lower() == 'true'
     CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
     CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/1')
     CELERY_TASK_TIME_LIMIT = int(os.getenv('CELERY_TASK_TIME_LIMIT', 3600))  # 1 час
     CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv('CELERY_TASK_SOFT_TIME_LIMIT', 3300))  # 55 минут
-    USE_CELERY = os.getenv('USE_CELERY', 'false').lower() == 'true'  # По умолчанию выключен
     
     @classmethod
     def get_database_url(cls):

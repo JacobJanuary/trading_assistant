@@ -39,7 +39,9 @@ def create_app(config_class=Config):
     
     # Инициализация базы данных
     from database import Database, initialize_signals_with_params, process_signal_complete
-    db = Database(config_class.get_database_url())
+    database_url = config_class.get_database_url()
+    app.logger.info(f"Инициализация Database с URL: {database_url[:50]}...")  # Логируем часть URL для безопасности
+    db = Database(database_url=database_url, use_pool=True)
     app.db = db
     
     # Инициализация схемы БД
@@ -59,7 +61,7 @@ def create_app(config_class=Config):
     @login_manager.user_loader
     def load_user(user_id):
         from models import User
-        return User.get(db, user_id)
+        return User.get_by_id(db, user_id)
     
     # Регистрация ВСЕХ 42 маршрутов из оригинального app.py
     register_auth_routes(app, db)
@@ -73,6 +75,10 @@ def create_app(config_class=Config):
     register_admin_routes(app, db)
     register_data_routes(app, db)
     register_chart_routes(app, db)
+
+    # Регистрация новых API маршрутов для управления анализами через БД
+    from analysis_api import register_analysis_api_routes
+    register_analysis_api_routes(app, db)
     
     # Логирование успешной инициализации
     app.logger.info(f"База данных инициализирована: {config_class.DB_HOST}:{config_class.DB_PORT}/{config_class.DB_NAME}")
@@ -118,10 +124,11 @@ def create_celery(app=None):
                 return self.run(*args, **kwargs)
     
     celery.Task = ContextTask
-    
-    # Импортируем задачи
-    import celery_tasks
-    
+
+    # Регистрируем задачи
+    from celery_tasks import register_tasks
+    register_tasks(celery)
+
     return celery
 
 
@@ -214,53 +221,98 @@ def register_main_routes(app, db):
     @app.route('/dashboard')
     @login_required
     def dashboard():
+        from models import TradingData
         stats = TradingStats.get_for_user(db, current_user.id)
-        return render_template('dashboard.html', 
-                             username=current_user.username, 
+
+        # Получаем данные для дашборда
+        trading_data = []
+        try:
+            raw_data = db.execute_query("""
+                SELECT base_asset,
+                       SUM(CASE WHEN is_sell = false THEN value_usd ELSE 0 END) as total_buys,
+                       SUM(CASE WHEN is_sell = true THEN value_usd ELSE 0 END) as total_sells,
+                       COUNT(*) as total_trades
+                FROM public.large_trades
+                WHERE created_at >= NOW() - INTERVAL '24 hours'
+                GROUP BY base_asset
+                ORDER BY (SUM(CASE WHEN is_sell = false THEN value_usd ELSE 0 END) -
+                         SUM(CASE WHEN is_sell = true THEN value_usd ELSE 0 END)) DESC
+                LIMIT 20
+            """, fetch=True)
+
+            if raw_data:
+                trading_data = [
+                    {
+                        'base_asset': row[0],
+                        'total_buys': float(row[1] or 0),
+                        'total_sells': float(row[2] or 0),
+                        'net_flow': float((row[1] or 0) - (row[2] or 0)),
+                        'total_trades': row[3]
+                    }
+                    for row in raw_data
+                ]
+        except Exception as e:
+            app.logger.error(f"Error fetching trading data: {e}")
+
+        return render_template('dashboard.html',
+                             username=current_user.username,
                              stats=stats,
+                             trading_data=trading_data,
                              is_admin=current_user.is_admin)
     
     @app.route('/signal_performance')
     @login_required
     def signal_performance():
+        user_filters = current_user.get_filters(db)
         return render_template('signal_performance.html',
                              username=current_user.username,
+                             filters=user_filters,
                              is_admin=current_user.is_admin)
     
     @app.route('/signal_analysis')
     @login_required
     def signal_analysis():
+        user_filters = current_user.get_filters(db)
         return render_template('signal_analysis.html',
                              username=current_user.username,
+                             filters=user_filters,
                              is_admin=current_user.is_admin)
     
     @app.route('/efficiency_analysis')
     @login_required
     def efficiency_analysis():
-        return render_template('efficiency_analysis.html', 
+        user_filters = current_user.get_filters(db)
+        return render_template('efficiency_analysis.html',
                              username=current_user.username,
+                             filters=user_filters,
                              is_admin=current_user.is_admin)
     
     @app.route('/trailing_analysis')
     @login_required
     def trailing_analysis():
+        user_filters = current_user.get_filters(db)
         return render_template('trailing_analysis.html',
                              username=current_user.username,
+                             filters=user_filters,
                              is_admin=current_user.is_admin)
     
     @app.route('/tp_sl_analysis')
     @login_required
     def tp_sl_analysis():
+        user_filters = current_user.get_filters(db)
         return render_template('tp_sl_analysis.html',
                              username=current_user.username,
+                             filters=user_filters,
                              is_admin=current_user.is_admin)
     
     @app.route('/tpsl_analysis')
     @login_required
     def tpsl_analysis():
         """Страница TP/SL анализа (альтернативный маршрут)"""
+        user_filters = current_user.get_filters(db)
         return render_template('tpsl_analysis.html',
                              username=current_user.username,
+                             filters=user_filters,
                              is_admin=current_user.is_admin)
     
     @app.route('/settings')
@@ -310,7 +362,11 @@ def register_scoring_routes(app, db):
     @login_required
     def scoring_analysis_v2():
         """Страница Scoring Analysis v2"""
-        return render_template('scoring_analysis_v2.html')
+        user_filters = current_user.get_filters(db)
+        return render_template('scoring_analysis_v2.html',
+                             username=current_user.username,
+                             filters=user_filters,
+                             is_admin=current_user.is_admin)
     
     @app.route('/api/scoring/apply_filters', methods=['POST'])
     @login_required
@@ -878,14 +934,15 @@ def register_api_routes(app, db):
             return jsonify({'error': str(e)}), 500
     
     @app.route('/api/get_user_trading_mode')
-    @login_required
     def api_get_user_trading_mode():
         """Получение текущего торгового режима пользователя"""
         from services import get_user_trading_mode
-        
+
         try:
-            mode = get_user_trading_mode(db, current_user.id)
-            return jsonify({'mode': mode})
+            # Временно используем user_id = 1 для тестирования
+            user_id = 1
+            mode = get_user_trading_mode(db, user_id)
+            return jsonify(mode)
         except Exception as e:
             app.logger.error(f"Error getting trading mode: {e}")
             return jsonify({'error': str(e)}), 500

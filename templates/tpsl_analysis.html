@@ -314,8 +314,9 @@
 {% block scripts %}
 <script>
     let analysisResults = [];
-    let analysisInProgress = false;
-    let currentEventSource = null;
+    let pollingInterval = null;
+    let currentTaskId = null;
+    let currentUserSettings = {};
 
     // Расчет количества комбинаций
     function updateCombinationsCount() {
@@ -337,7 +338,8 @@
         try {
             const response = await fetch('/api/get_user_trading_mode');
             const data = await response.json();
-            
+            currentUserSettings = data;
+
             document.getElementById('positionSize').textContent = `$${data.position_size}`;
             document.getElementById('leverage').textContent = `${data.leverage}x`;
             
@@ -374,123 +376,126 @@
         }
     }
 
-    // Запуск анализа TP/SL
-    function startTPSLAnalysis() {
-        if (analysisInProgress) {
-            showNotification('Анализ уже выполняется', 'warning');
-            return;
-        }
-        
-        if (currentEventSource) {
-            currentEventSource.close();
-            currentEventSource = null;
-        }
-        
-        analysisInProgress = true;
+    // Запуск анализа TP/SL через персистентный API
+    async function startTPSLAnalysis() {
         const button = document.getElementById('startBtn');
         button.disabled = true;
-        button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Анализ запущен...';
-        
-        document.getElementById('progressContainer').style.display = 'block';
-        document.getElementById('resultsContainer').style.display = 'none';
-        
-        updateProgress(0, 'Инициализация...');
-        
+        button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Запуск анализа...';
+
         // Получаем параметры
-        const scoreWeek = parseInt(document.getElementById('scoreWeekFilter').value);
-        const scoreMonth = parseInt(document.getElementById('scoreMonthFilter').value);
-        const tpMin = parseFloat(document.getElementById('tpMin').value);
-        const tpMax = parseFloat(document.getElementById('tpMax').value);
-        const slMin = parseFloat(document.getElementById('slMin').value);
-        const slMax = parseFloat(document.getElementById('slMax').value);
-        const step = parseFloat(document.getElementById('analysisStep').value);
-        
-        // Вычисляем количество комбинаций
-        const tpSteps = Math.floor((tpMax - tpMin) / step) + 1;
-        const slSteps = Math.floor((slMax - slMin) / step) + 1;
-        const total_combinations = tpSteps * slSteps;
-        
-        console.log(`Starting TP/SL analysis with ${total_combinations} combinations`);
-        
-        let lastActivity = Date.now();
-        let reconnectAttempts = 0;
-        const maxReconnectAttempts = 3;
-        
-        function createEventSource() {
-            const params = new URLSearchParams({
-                score_week: scoreWeek,
-                score_month: scoreMonth,
-                tp_min: tpMin,
-                tp_max: tpMax,
-                sl_min: slMin,
-                sl_max: slMax,
-                step: step,
-                max_trades_per_15min: parseInt(document.getElementById('maxTradesPer15Min').value)
+        const params = {
+            score_week_min: parseInt(document.getElementById('scoreWeekFilter').value),
+            score_month_min: parseInt(document.getElementById('scoreMonthFilter').value),
+            max_trades_per_15min: parseInt(document.getElementById('maxTradesPer15Min').value),
+            position_size_usd: currentUserSettings.position_size || 100,
+            leverage: currentUserSettings.leverage || 5,
+            use_trailing_stop: currentUserSettings.use_trailing_stop || false,
+            allowed_hours: currentUserSettings.allowed_hours || Array.from({length: 24}, (_, i) => i)
+        };
+
+        try {
+            // Запускаем анализ через API
+            const response = await fetch('/api/tpsl_analysis/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(params)
             });
-            
-            const eventSource = new EventSource(`/api/tpsl/analyze_progress?${params}`);
-            
-            // SSE автоматически переподключается при разрыве
-            // Не нужно вручную проверять таймауты
-            
-            eventSource.onmessage = function(event) {
-                lastActivity = Date.now();
-                reconnectAttempts = 0;
-                
-                try {
-                    const data = JSON.parse(event.data);
-                    console.log('Received:', data.type);
-                    
-                    switch(data.type) {
-                        case 'start':
-                            updateProgress(0, data.message);
-                            document.getElementById('progressDetails').textContent = `Всего комбинаций: ${data.total_combinations}`;
-                            break;
-                            
-                        case 'progress':
-                            updateProgress(data.percent, data.message);
-                            if (data.details) {
-                                document.getElementById('progressDetails').textContent = data.details;
-                            }
-                            break;
-                            
-                        case 'complete':
-                            eventSource.close();
-                            currentEventSource = null;
-                            analysisInProgress = false;
-                            analysisResults = data.data;
-                            displayResults(data.data);
-                            showNotification('Анализ успешно завершен', 'success');
-                            resetAnalysisButton();
-                            break;
-                            
-                        case 'error':
-                            eventSource.close();
-                            currentEventSource = null;
-                            analysisInProgress = false;
-                            showNotification('Ошибка: ' + data.message, 'error');
-                            resetAnalysisButton();
-                            break;
-                            
-                        case 'heartbeat':
-                            console.log('Heartbeat received');
-                            break;
-                    }
-                } catch (error) {
-                    console.error('Error parsing message:', error);
-                }
-            };
-            
-            eventSource.onerror = function(error) {
-                console.error('SSE Error:', error);
-                lastActivity = Date.now();
-            };
-            
-            currentEventSource = eventSource;
-            return eventSource;
+
+            const data = await response.json();
+
+            if (data.success) {
+                currentTaskId = data.task_id;
+                showNotification('Анализ TP/SL запущен', 'success');
+
+                // Показываем прогресс контейнер
+                document.getElementById('progressContainer').style.display = 'block';
+                document.getElementById('resultsContainer').style.display = 'none';
+
+                // Запускаем опрос статуса
+                startPolling();
+            } else {
+                showNotification('Ошибка: ' + data.error, 'error');
+                resetAnalysisButton();
+            }
+        } catch (error) {
+            showNotification('Ошибка подключения: ' + error.message, 'error');
+            resetAnalysisButton();
         }
-        
-        createEventSource();
+    }
+
+    // Функция опроса статуса
+    function startPolling() {
+        stopPolling();
+        pollingInterval = setInterval(checkAnalysisStatus, 2000);
+    }
+
+    function stopPolling() {
+        if (pollingInterval) {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
+        }
+    }
+
+    // Проверка статуса анализа
+    async function checkAnalysisStatus() {
+        try {
+            const response = await fetch('/api/tpsl_analysis/status');
+            const data = await response.json();
+
+            if (data.success) {
+                if (data.status === 'idle') {
+                    // Нет активной задачи, останавливаем опрос
+                    stopPolling();
+                    resetAnalysisButton();
+
+                } else if (data.status === 'running') {
+                    // Анализ выполняется
+                    if (data.progress) {
+                        updateProgress(
+                            data.progress.percent || 0,
+                            data.progress.status || 'Обработка...'
+                        );
+
+                        if (data.progress.current && data.progress.total) {
+                            document.getElementById('progressDetails').textContent =
+                                `Обработка комбинации ${data.progress.current} из ${data.progress.total}`;
+                        }
+                    }
+
+                } else if (data.status === 'completed') {
+                    // Анализ завершен
+                    stopPolling();
+
+                    // Получаем результаты
+                    getAnalysisResult();
+                }
+            }
+        } catch (error) {
+            console.error('Ошибка проверки статуса:', error);
+        }
+    }
+
+    // Получение результатов анализа
+    async function getAnalysisResult() {
+        try {
+            const response = await fetch('/api/tpsl_analysis/result');
+            const data = await response.json();
+
+            if (data.success && data.result) {
+                analysisResults = data.result.results || [];
+                displayResults(data.result.results);
+                showNotification('Анализ TP/SL успешно завершен', 'success');
+                resetAnalysisButton();
+                document.getElementById('resultsContainer').style.display = 'block';
+            } else {
+                showNotification('Ошибка получения результатов: ' + (data.error || 'Unknown'), 'error');
+                resetAnalysisButton();
+            }
+        } catch (error) {
+            console.error('Ошибка получения результатов:', error);
+            showNotification('Ошибка получения результатов', 'error');
+            resetAnalysisButton();
+        }
     }
 
     // Обновление прогресса
@@ -505,8 +510,6 @@
         button.disabled = false;
         button.innerHTML = '<i class="fas fa-play mr-2"></i>Запустить анализ';
         document.getElementById('progressContainer').style.display = 'none';
-        analysisInProgress = false;
-        currentEventSource = null;
     }
 
     // Отображение результатов
@@ -693,12 +696,51 @@
         }
     }
     
+    // Проверка статуса при загрузке страницы
+    async function checkInitialStatus() {
+        try {
+            const response = await fetch('/api/tpsl_analysis/status');
+            const data = await response.json();
+
+            if (data.success && data.status === 'running') {
+                // Есть активная задача
+                const button = document.getElementById('startBtn');
+                button.disabled = true;
+                button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Анализ выполняется...';
+
+                document.getElementById('progressContainer').style.display = 'block';
+
+                if (data.progress) {
+                    updateProgress(
+                        data.progress.percent || 0,
+                        data.progress.status || 'Обработка...'
+                    );
+
+                    if (data.progress.current && data.progress.total) {
+                        document.getElementById('progressDetails').textContent =
+                            `Обработка комбинации ${data.progress.current} из ${data.progress.total}`;
+                    }
+                }
+
+                // Запускаем опрос
+                startPolling();
+
+            } else if (data.success && data.status === 'completed' && data.has_result) {
+                // Анализ завершен, показываем кнопку получения результатов
+                showNotification('Обнаружены результаты предыдущего анализа', 'info');
+                getAnalysisResult();
+            }
+        } catch (error) {
+            console.error('Ошибка проверки начального статуса:', error);
+        }
+    }
+
     // Инициализация
     document.addEventListener('DOMContentLoaded', function() {
         loadUserSettings();
         updateCombinationsCount();
-        loadCachedResults(); // Загружаем сохраненные результаты
-        
+        checkInitialStatus(); // Проверяем статус активных задач
+
         ['tpMin', 'tpMax', 'slMin', 'slMax', 'analysisStep'].forEach(id => {
             document.getElementById(id).addEventListener('input', updateCombinationsCount);
         });
