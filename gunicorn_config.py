@@ -6,12 +6,12 @@ import os
 import time
 
 # Основные настройки
-bind = "0.0.0.0:5000"
+bind = "unix:/home/elcrypto/trading_assistant/trading_assistant.sock"
 # Уменьшаем количество воркеров для стабильности SSL соединений
 workers = min(multiprocessing.cpu_count() + 1, 4)  # Максимум 4 воркера
 
 # КРИТИЧНО: Увеличиваем таймаут для длительных операций анализа
-timeout = 300  # 5 минут вместо стандартных 30 секунд
+timeout = 7200  # 120 минут для 700+ комбинаций анализа
 
 # Увеличиваем лимит памяти (если используется с systemd)
 # Это нужно настроить в systemd service файле

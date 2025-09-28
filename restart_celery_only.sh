@@ -1,0 +1,11 @@
+#!/bin/bash
+echo "=== Перезапуск Celery ==="
+echo ""
+echo "Требуется выполнить с sudo:"
+echo ""
+echo "sudo systemctl restart celery_efficiency"
+echo ""
+echo "Затем проверьте статус:"
+echo "sudo systemctl status celery_efficiency"
+echo ""
+echo "Изменение: добавлена проверка инициализации job.results"

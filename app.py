@@ -4061,7 +4061,9 @@ def api_celery_efficiency_analyze():
 def api_celery_trailing_analyze():
     """Запуск анализа Trailing Stop через Celery"""
     try:
-        from celery_analysis_tasks import analyze_trailing_stop
+        # TODO: Implement trailing stop analysis
+        return jsonify({'status': 'error', 'message': 'Trailing stop analysis not implemented yet'}), 501
+        # from celery_analysis_tasks import analyze_trailing_stop
 
         # Получаем настройки пользователя
         settings_query = """
@@ -4096,7 +4098,9 @@ def api_celery_trailing_analyze():
 def api_celery_tpsl_optimize():
     """Запуск оптимизации TP/SL через Celery"""
     try:
-        from celery_analysis_tasks import analyze_tpsl_optimization
+        # TODO: Implement TP/SL optimization
+        return jsonify({'status': 'error', 'message': 'TP/SL optimization not implemented yet'}), 501
+        # from celery_analysis_tasks import analyze_tpsl_optimization
 
         # Получаем настройки пользователя
         settings_query = """
@@ -4131,14 +4135,271 @@ def api_celery_tpsl_optimize():
 def get_task_status(task_id):
     """Получение статуса Celery задачи"""
     try:
-        from celery_analysis_tasks import get_task_status
-
-        status = get_task_status(task_id)
+        # TODO: Implement task status check
+        return jsonify({'status': 'error', 'message': 'Task status check not implemented yet'}), 501
+        # from celery_analysis_tasks import get_task_status
+        # status = get_task_status(task_id)
         return jsonify(status)
 
     except Exception as e:
         logger.error(f"Error getting task status: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# ==================== API для Efficiency Analysis ====================
+
+@app.route('/api/efficiency_analysis/start', methods=['POST'])
+@login_required
+def api_efficiency_analysis_start():
+    """Запуск анализа эффективности через Celery"""
+    try:
+        from celery_efficiency_parallel import analyze_efficiency_parallel, get_task_status_from_db
+
+        # Получаем параметры из запроса
+        data = request.get_json() or {}
+
+        filters = {
+            'score_week_min': data.get('score_week_min', 49),
+            'score_week_max': data.get('score_week_max', 75),
+            'score_month_min': data.get('score_month_min', 49),
+            'score_month_max': data.get('score_month_max', 75),
+            'step': data.get('step', 1),
+            'max_trades_per_15min': data.get('max_trades_per_15min', 3),
+            'take_profit_percent': data.get('take_profit_percent', 4),
+            'stop_loss_percent': data.get('stop_loss_percent', 3),
+            'position_size_usd': data.get('position_size_usd', 100),
+            'leverage': data.get('leverage', 5),
+            'use_trailing_stop': data.get('use_trailing_stop', False),
+            'trailing_distance_pct': data.get('trailing_distance_pct', 2),
+            'trailing_activation_pct': data.get('trailing_activation_pct', 1),
+            'allowed_hours': data.get('allowed_hours', list(range(24)))
+        }
+
+        # Проверяем, нет ли уже запущенной задачи
+        check_query = """
+            SELECT task_id, status FROM web.analysis_tasks
+            WHERE user_id = %s AND task_type = 'efficiency_analysis'
+            AND status = 'running'
+            ORDER BY created_at DESC LIMIT 1
+        """
+        existing_task = db.execute_query(check_query, (current_user.id,), fetch=True)
+
+        if existing_task:
+            return jsonify({
+                'success': False,
+                'error': 'Анализ уже запущен',
+                'task_id': existing_task[0][0]
+            })
+
+        # Запускаем задачу
+        task = analyze_efficiency_parallel.delay(current_user.id, filters)
+
+        # Создаем запись в БД для отслеживания
+        create_task_query = """
+            INSERT INTO web.analysis_tasks
+            (user_id, task_type, task_id, status, progress_current, progress_total, progress_status, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+        """
+
+        # Вычисляем количество комбинаций
+        week_range = range(filters['score_week_min'], filters['score_week_max'] + 1, filters['step'])
+        month_range = range(filters['score_month_min'], filters['score_month_max'] + 1, filters['step'])
+        total_combinations = len(list(week_range)) * len(list(month_range))
+
+        # Создаем запись в БД для отслеживания (просто выполняем без проверки результата)
+        db.execute_query(create_task_query, (
+            current_user.id,
+            'efficiency_analysis',
+            task.id,
+            'running',  # Используем 'running' вместо 'pending'
+            0,
+            total_combinations,
+            f'Инициализация, обрабатываем {total_combinations} комбинаций...'
+        ))
+
+        return jsonify({
+            'success': True,
+            'task_id': task.id,
+            'message': 'Анализ запущен'
+        })
+
+    except Exception as e:
+        logger.error(f"Error starting efficiency analysis: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/efficiency_analysis/status', methods=['GET'])
+@login_required
+def api_efficiency_analysis_status():
+    """Получение статуса анализа эффективности"""
+    try:
+        from celery_efficiency_parallel import get_task_status_from_db
+
+        # Получаем последнюю задачу пользователя
+        query = """
+            SELECT task_id, status, progress_current, progress_total,
+                   progress_percent, progress_status, result_data
+            FROM web.analysis_tasks
+            WHERE user_id = %s AND task_type = 'efficiency_analysis'
+            ORDER BY created_at DESC LIMIT 1
+        """
+        task_data = db.execute_query(query, (current_user.id,), fetch=True)
+
+        if not task_data:
+            return jsonify({
+                'success': True,
+                'status': 'no_task',
+                'can_restart': True
+            })
+
+        # Распаковываем данные из словаря
+        row = task_data[0]
+        task_id = row['task_id']
+        status = row['status']
+        current = row['progress_current']
+        total = row['progress_total']
+        percent = row['progress_percent']
+        progress_status = row['progress_status']
+        result_data = row['result_data']
+
+        # Проверяем, не зависла ли задача
+        if status == 'running':
+            # Проверяем время последнего обновления
+            check_stalled_query = """
+                SELECT EXTRACT(EPOCH FROM (NOW() - updated_at)) as seconds_since_update
+                FROM web.analysis_tasks
+                WHERE task_id = %s
+            """
+            stalled_check = db.execute_query(check_stalled_query, (task_id,), fetch=True)
+            if stalled_check and stalled_check[0]['seconds_since_update'] > 120:  # Более 2 минут без обновления
+                # Помечаем как stalled
+                update_query = """
+                    UPDATE web.analysis_tasks
+                    SET status = 'stalled'
+                    WHERE task_id = %s
+                """
+                db.execute_query(update_query, (task_id,))
+                status = 'stalled'
+
+        response = {
+            'success': True,
+            'task_id': task_id,
+            'status': status,
+            'progress': {
+                'current': current or 0,
+                'total': total or 0,
+                'percent': percent or 0,
+                'status': progress_status or ''
+            }
+        }
+
+        if status == 'completed' and result_data:
+            response['has_result'] = True
+        elif status in ('failed', 'stalled'):
+            response['can_restart'] = True
+            response['error'] = 'Задача была прервана. Пожалуйста, запустите анализ заново.'
+
+        return jsonify(response)
+
+    except Exception as e:
+        logger.error(f"Error getting efficiency analysis status: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/efficiency_analysis/result', methods=['GET'])
+@login_required
+def api_efficiency_analysis_result():
+    """Получение результатов анализа эффективности"""
+    try:
+        # Получаем последнюю завершенную задачу
+        query = """
+            SELECT result_data
+            FROM web.analysis_tasks
+            WHERE user_id = %s AND task_type = 'efficiency_analysis'
+            AND status = 'completed' AND result_data IS NOT NULL
+            ORDER BY created_at DESC LIMIT 1
+        """
+        result = db.execute_query(query, (current_user.id,), fetch=True)
+
+        if not result or not result[0]['result_data']:
+            return jsonify({
+                'success': False,
+                'error': 'Результаты не найдены'
+            }), 404
+
+        return jsonify({
+            'success': True,
+            'data': result[0]['result_data']
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting efficiency analysis result: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/efficiency_analysis/cancel', methods=['POST'])
+@login_required
+def api_efficiency_analysis_cancel():
+    """Отмена анализа эффективности"""
+    try:
+        # Получаем текущую запущенную задачу
+        query = """
+            SELECT task_id
+            FROM web.analysis_tasks
+            WHERE user_id = %s AND task_type = 'efficiency_analysis'
+            AND status = 'running'
+            ORDER BY created_at DESC LIMIT 1
+        """
+        task = db.execute_query(query, (current_user.id,), fetch=True)
+
+        if not task:
+            return jsonify({
+                'success': False,
+                'error': 'Нет активных задач для отмены'
+            })
+
+        task_id = task[0]['task_id']
+
+        # Помечаем задачу как отмененную в БД
+        update_query = """
+            UPDATE web.analysis_tasks
+            SET status = 'cancelled',
+                progress_status = 'Отменено пользователем',
+                updated_at = NOW()
+            WHERE task_id = %s
+        """
+        db.execute_query(update_query, (task_id,))
+
+        # Пытаемся отменить задачу в Celery
+        try:
+            from celery.result import AsyncResult
+            from celery_efficiency_parallel import app as celery_app
+
+            celery_task = AsyncResult(task_id, app=celery_app)
+            celery_task.revoke(terminate=True)
+        except Exception as e:
+            logger.warning(f"Could not revoke Celery task {task_id}: {e}")
+
+        return jsonify({
+            'success': True,
+            'message': 'Анализ отменен'
+        })
+
+    except Exception as e:
+        logger.error(f"Error canceling efficiency analysis: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 
 # Запуск приложения
 if __name__ == '__main__':

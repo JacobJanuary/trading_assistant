@@ -147,10 +147,16 @@
     <div id="resultsContainer" style="display: none;">
         <!-- Сводная статистика -->
         <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
-            <h2 class="text-lg font-semibold text-gray-800 mb-4">
-                <i class="fas fa-trophy mr-2 text-yellow-500"></i>
-                Лучшие комбинации фильтров
-            </h2>
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold text-gray-800">
+                    <i class="fas fa-trophy mr-2 text-yellow-500"></i>
+                    Лучшие комбинации фильтров
+                </h2>
+                <button onclick="getAnalysisResult()" class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">
+                    <i class="fas fa-sync-alt mr-1"></i>
+                    Обновить результаты
+                </button>
+            </div>
             
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <!-- Топ-1 результат -->
@@ -509,8 +515,10 @@
             const data = await response.json();
             if (data.success) {
                 // Отображаем результаты
-                analysisResults = data.results || [];
-                displayResults(data);
+                // API возвращает data.data с результатами
+                const resultData = data.data || {};
+                analysisResults = resultData.results || [];
+                displayResults(resultData);
                 showNotification('Анализ успешно завершен', 'success');
                 resetAnalysisButton();
                 document.getElementById('resultsContainer').style.display = 'block';
@@ -569,9 +577,19 @@
                 startPolling();
 
             } else if (data.success && data.status === 'completed' && data.has_result) {
-                // Анализ завершен, показываем кнопку получения результатов
-                showNotification('Обнаружены результаты предыдущего анализа', 'info');
-                getAnalysisResult();
+                // Анализ завершен, но НЕ загружаем автоматически при обновлении страницы
+                // Проверяем, не были ли результаты уже загружены
+                const resultsContainer = document.getElementById('resultsContainer');
+                const resultsTableBody = document.getElementById('resultsTableBody');
+
+                if (!resultsContainer || resultsContainer.style.display === 'none' || !resultsTableBody || resultsTableBody.innerHTML.trim() === '') {
+                    // Результаты еще не показаны, загружаем их
+                    showNotification('Загружаем результаты предыдущего анализа', 'info');
+                    getAnalysisResult();
+                } else {
+                    // Результаты уже отображены, не трогаем их
+                    console.log('Результаты уже загружены, пропускаем автозагрузку');
+                }
             }
         } catch (error) {
             console.error('Ошибка проверки начального статуса:', error);

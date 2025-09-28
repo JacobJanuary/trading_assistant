@@ -23,12 +23,12 @@ class Config:
     DB_PASSWORD = os.getenv('DB_PASSWORD', 'LohNeMamont@!21')  # Пароль по умолчанию
     
     # Параметры пула соединений
-    DB_POOL_MIN_SIZE = int(os.getenv('DB_POOL_MIN_SIZE', 2))  # Минимум idle соединений
-    DB_POOL_MAX_SIZE = int(os.getenv('DB_POOL_MAX_SIZE', 30))  # Увеличено для параллельной работы
-    DB_POOL_TIMEOUT = float(os.getenv('DB_POOL_TIMEOUT', 30.0))
-    DB_POOL_MAX_IDLE = float(os.getenv('DB_POOL_MAX_IDLE', 60.0))  # Закрываем idle через минуту
-    DB_POOL_MAX_LIFETIME = float(os.getenv('DB_POOL_MAX_LIFETIME', 600.0))  # Увеличено до 600 (10 мин)
-    DB_POOL_MAX_WAITING = int(os.getenv('DB_POOL_MAX_WAITING', 50))  # Увеличено количество ожидающих
+    DB_POOL_MIN_SIZE = int(os.getenv('DB_POOL_MIN_SIZE', 5))  # Увеличен минимум до 5
+    DB_POOL_MAX_SIZE = int(os.getenv('DB_POOL_MAX_SIZE', 100))  # Увеличено до 100 для больших задач
+    DB_POOL_TIMEOUT = float(os.getenv('DB_POOL_TIMEOUT', 60.0))  # Увеличен таймаут до 60 секунд
+    DB_POOL_MAX_IDLE = float(os.getenv('DB_POOL_MAX_IDLE', 120.0))  # Держим соединения дольше
+    DB_POOL_MAX_LIFETIME = float(os.getenv('DB_POOL_MAX_LIFETIME', 1800.0))  # Увеличено до 30 минут
+    DB_POOL_MAX_WAITING = int(os.getenv('DB_POOL_MAX_WAITING', 200))  # Увеличено до 200 ожидающих
     
     # Параметры соединения
     DB_CONNECT_TIMEOUT = int(os.getenv('DB_CONNECT_TIMEOUT', 10))
