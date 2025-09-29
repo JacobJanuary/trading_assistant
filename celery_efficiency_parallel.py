@@ -95,11 +95,13 @@ def analyze_single_combination(combo_data):
                 'tp_count': 0,
                 'sl_count': 0,
                 'timeout_count': 0,
-                'daily_pnl': 0
+                'daily_pnl': 0,
+                'trailing_wins': 0,
+                'trailing_losses': 0
             }
 
             if signals:
-                # Обрабатываем сигналы
+                # Обрабатываем сигналы с учетом trailing stop параметров
                 batch_result = process_scoring_signals_batch(
                     db,
                     signals,
@@ -107,7 +109,10 @@ def analyze_single_combination(combo_data):
                     user_id=user_id,
                     tp_percent=filters.get('take_profit_percent', 4.0),
                     sl_percent=filters.get('stop_loss_percent', 3.0),
-                    position_size=filters.get('position_size_usd', 100)
+                    position_size=filters.get('position_size_usd', 100),
+                    use_trailing_stop=filters.get('use_trailing_stop', False),
+                    trailing_distance_pct=filters.get('trailing_distance_pct', 2.0),
+                    trailing_activation_pct=filters.get('trailing_activation_pct', 1.0)
                 )
 
                 if batch_result and 'stats' in batch_result:
@@ -117,6 +122,8 @@ def analyze_single_combination(combo_data):
                     daily_data['tp_count'] = stats.get('tp_count', 0)
                     daily_data['sl_count'] = stats.get('sl_count', 0)
                     daily_data['timeout_count'] = stats.get('timeout_count', 0)
+                    daily_data['trailing_wins'] = stats.get('trailing_wins', 0)
+                    daily_data['trailing_losses'] = stats.get('trailing_losses', 0)
                     daily_data['daily_pnl'] = float(stats.get('total_pnl', 0))
 
                     # Обновляем общие суммы
