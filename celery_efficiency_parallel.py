@@ -56,12 +56,19 @@ def analyze_single_combination(combo_data):
             'total_signals': 0,
             'tp_count': 0,
             'sl_count': 0,
-            'win_rate': 0
+            'win_rate': 0,
+            'daily_breakdown': [],  # Добавляем массив для детализации по дням
+            'start_date': '',
+            'end_date': ''
         }
 
         # Парсим даты
         start = datetime.fromisoformat(date_range['start'])
         end = datetime.fromisoformat(date_range['end'])
+
+        # Сохраняем даты в результат
+        result['start_date'] = start.strftime('%Y-%m-%d')
+        result['end_date'] = end.strftime('%Y-%m-%d')
 
         db = Database(database_url=Config.get_database_url())
 
@@ -81,6 +88,16 @@ def analyze_single_combination(combo_data):
                 max_trades_per_15min=filters.get('max_trades_per_15min', 3)
             )
 
+            # Создаем запись для этого дня
+            daily_data = {
+                'date': date_str,
+                'signal_count': 0,
+                'tp_count': 0,
+                'sl_count': 0,
+                'timeout_count': 0,
+                'daily_pnl': 0
+            }
+
             if signals:
                 # Обрабатываем сигналы
                 batch_result = process_scoring_signals_batch(
@@ -95,10 +112,21 @@ def analyze_single_combination(combo_data):
 
                 if batch_result and 'stats' in batch_result:
                     stats = batch_result['stats']
+                    # Обновляем дневные данные
+                    daily_data['signal_count'] = len(signals)
+                    daily_data['tp_count'] = stats.get('tp_count', 0)
+                    daily_data['sl_count'] = stats.get('sl_count', 0)
+                    daily_data['timeout_count'] = stats.get('timeout_count', 0)
+                    daily_data['daily_pnl'] = float(stats.get('total_pnl', 0))
+
+                    # Обновляем общие суммы
                     result['total_signals'] += len(signals)
                     result['total_pnl'] += float(stats.get('total_pnl', 0))
                     result['tp_count'] += stats.get('tp_count', 0)
                     result['sl_count'] += stats.get('sl_count', 0)
+
+            # Добавляем дневные данные в массив (даже если нет сигналов)
+            result['daily_breakdown'].append(daily_data)
 
         # Вычисляем win rate
         total_trades = result['tp_count'] + result['sl_count']

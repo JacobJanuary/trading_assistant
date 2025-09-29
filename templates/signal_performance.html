@@ -68,14 +68,14 @@
                     <div class="flex items-center justify-center space-x-3 mb-3">
                         <label class="flex items-center cursor-pointer">
                             <input type="radio" name="stopMode" value="fixed"
-                                   id="fixedMode" checked
+                                   id="fixedMode" {% if not filters.use_trailing_stop %}checked{% endif %}
                                    onchange="toggleStopMode()"
                                    class="mr-1 text-purple-600 focus:ring-purple-500">
                             <span class="text-xs font-medium text-gray-700">Fixed TP/SL</span>
                         </label>
                         <label class="flex items-center cursor-pointer">
                             <input type="radio" name="stopMode" value="trailing"
-                                   id="trailingMode"
+                                   id="trailingMode" {% if filters.use_trailing_stop %}checked{% endif %}
                                    onchange="toggleStopMode()"
                                    class="mr-1 text-purple-600 focus:ring-purple-500">
                             <span class="text-xs font-medium text-gray-700">Trailing Stop</span>
@@ -856,6 +856,9 @@
             selectedHours.push(parseInt(checkbox.value));
         });
         
+        // Определяем режим торговли
+        const useTrailing = document.getElementById('trailingMode').checked;
+
         const data = {
             score_week_min: scoreWeek,
             score_month_min: scoreMonth,
@@ -865,6 +868,14 @@
             hide_older_than_hours: parseInt(document.getElementById('hideOlder').value),
             leverage: parseInt(document.getElementById('leverage').value),
             position_size_usd: parseFloat(document.getElementById('positionSize').value),
+            // Параметры торговли
+            take_profit_percent: parseFloat(document.getElementById('takeProfit').value),
+            stop_loss_percent: parseFloat(useTrailing ?
+                document.getElementById('trailingStopLoss').value :
+                document.getElementById('stopLoss').value),
+            use_trailing_stop: useTrailing,
+            trailing_distance_pct: parseFloat(document.getElementById('trailingDistance').value || 2),
+            trailing_activation_pct: parseFloat(document.getElementById('trailingActivation').value || 1),
             // ВАЖНО: передаем текущие выбранные часы
             allowed_hours: selectedHours.length > 0 ? selectedHours : [...Array(24).keys()]
         };
@@ -930,6 +941,9 @@
             selectedHours.push(parseInt(checkbox.value));
         });
         
+        // Определяем режим торговли
+        const useTrailing = document.getElementById('trailingMode').checked;
+
         const data = {
             hide_younger_than_hours: parseInt(document.getElementById('hideYounger').value),
             hide_older_than_hours: parseInt(document.getElementById('hideOlder').value),
@@ -937,6 +951,14 @@
             position_size_usd: parseFloat(document.getElementById('positionSize').value),
             score_week_min: parseInt(document.getElementById('scoreWeek').value || 0),
             score_month_min: parseInt(document.getElementById('scoreMonth').value || 0),
+            // Параметры торговли
+            take_profit_percent: parseFloat(document.getElementById('takeProfit').value),
+            stop_loss_percent: parseFloat(useTrailing ?
+                document.getElementById('trailingStopLoss').value :
+                document.getElementById('stopLoss').value),
+            use_trailing_stop: useTrailing,
+            trailing_distance_pct: parseFloat(document.getElementById('trailingDistance').value || 2),
+            trailing_activation_pct: parseFloat(document.getElementById('trailingActivation').value || 1),
             // ВАЖНО: передаем текущие выбранные часы
             allowed_hours: selectedHours.length > 0 ? selectedHours : [...Array(24).keys()]
         };
@@ -1004,6 +1026,9 @@
             return;
         }
 
+        // Определяем режим торговли
+        const useTrailing = document.getElementById('trailingMode').checked;
+
         // Сохраняем фильтр по часам
         const data = {
             allowed_hours: selectedHours,
@@ -1013,7 +1038,15 @@
             leverage: parseInt(document.getElementById('leverage').value),
             position_size_usd: parseFloat(document.getElementById('positionSize').value),
             score_week_min: parseInt(document.getElementById('scoreWeek').value || 0),
-            score_month_min: parseInt(document.getElementById('scoreMonth').value || 0)
+            score_month_min: parseInt(document.getElementById('scoreMonth').value || 0),
+            // Параметры торговли
+            take_profit_percent: parseFloat(document.getElementById('takeProfit').value),
+            stop_loss_percent: parseFloat(useTrailing ?
+                document.getElementById('trailingStopLoss').value :
+                document.getElementById('stopLoss').value),
+            use_trailing_stop: useTrailing,
+            trailing_distance_pct: parseFloat(document.getElementById('trailingDistance').value || 2),
+            trailing_activation_pct: parseFloat(document.getElementById('trailingActivation').value || 1)
         };
 
         fetch('/api/save_filters', {
@@ -1073,6 +1106,11 @@
             hideYounger: {{ filters.hide_younger_than_hours|default(6) }},
             hideOlder: {{ filters.hide_older_than_hours|default(48) }}
         };
+
+        // Устанавливаем правильный режим торговли при загрузке
+        {% if filters.use_trailing_stop %}
+        toggleStopMode();  // Переключаем на Trailing если он активен
+        {% endif %}
 
         // Элементы формы
         const leverageInput = document.getElementById('leverage');

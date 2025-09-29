@@ -2122,11 +2122,12 @@ def api_initialize_signals_trailing():
 
 
 @app.route('/api/get_user_trading_mode')
+@login_required
 def api_get_user_trading_mode():
     """Получение текущего режима торговли пользователя"""
     try:
-        # Временно используем user_id = 1 для тестирования
-        user_id = 1
+        # Используем текущего пользователя
+        user_id = current_user.id
         query = """
             SELECT use_trailing_stop, trailing_distance_pct,
                    trailing_activation_pct, stop_loss_percent,
@@ -2176,9 +2177,35 @@ def api_get_user_trading_mode():
 @login_required
 def efficiency_analysis():
     """Страница анализа эффективности"""
-    return render_template('efficiency_analysis.html', 
+    # Получаем настройки пользователя из БД (как в signal_performance)
+    filters_query = """
+        SELECT * FROM web.user_signal_filters
+        WHERE user_id = %s
+    """
+    user_filters = db.execute_query(filters_query, (current_user.id,), fetch=True)
+
+    if user_filters:
+        filters = user_filters[0]
+    else:
+        # Создаем дефолтные если нет
+        filters = {
+            'score_week_min': 70,
+            'score_month_min': 70,
+            'max_trades_per_15min': 3,
+            'take_profit_percent': 3,
+            'stop_loss_percent': 2,
+            'position_size_usd': 100,
+            'leverage': 5,
+            'use_trailing_stop': False,
+            'trailing_distance_pct': 2,
+            'trailing_activation_pct': 1,
+            'allowed_hours': list(range(24))
+        }
+
+    return render_template('efficiency_analysis.html',
                           username=current_user.username,
-                          is_admin=current_user.is_admin)
+                          is_admin=current_user.is_admin,
+                          user_filters=filters)
 
 
 @app.route('/tpsl_analysis')

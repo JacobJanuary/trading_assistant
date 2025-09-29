@@ -66,7 +66,7 @@
                 <div>
                     <label class="block text-xs font-medium text-gray-600 mb-2">Score Week</label>
                     <div class="flex items-center space-x-2">
-                        <input type="number" id="scoreWeekMin" value="60" min="0" max="100" 
+                        <input type="number" id="scoreWeekMin" value="{{ user_filters.score_week_min if user_filters else 60 }}" min="0" max="100" 
                                class="w-20 px-2 py-1 border border-gray-300 rounded text-sm">
                         <span class="text-gray-500">-</span>
                         <input type="number" id="scoreWeekMax" value="80" min="0" max="100"
@@ -79,7 +79,7 @@
                 <div>
                     <label class="block text-xs font-medium text-gray-600 mb-2">Score Month</label>
                     <div class="flex items-center space-x-2">
-                        <input type="number" id="scoreMonthMin" value="60" min="0" max="100"
+                        <input type="number" id="scoreMonthMin" value="{{ user_filters.score_month_min if user_filters else 60 }}" min="0" max="100"
                                class="w-20 px-2 py-1 border border-gray-300 rounded text-sm">
                         <span class="text-gray-500">-</span>
                         <input type="number" id="scoreMonthMax" value="80" min="0" max="100"
@@ -104,7 +104,7 @@
             <div class="mt-4">
                 <label class="block text-xs font-medium text-gray-600 mb-2">Макс. сделок за 15 минут</label>
                 <div class="flex items-center space-x-2">
-                    <input type="number" id="maxTradesPer15Min" value="3" min="1" max="10"
+                    <input type="number" id="maxTradesPer15Min" value="{{ user_filters.max_trades_per_15min if user_filters else 3 }}" min="1" max="10"
                            class="w-20 px-2 py-1 border border-gray-300 rounded text-sm">
                     <span class="text-xs text-gray-500">Топ N сигналов по Score Week каждые 15 минут</span>
                 </div>
@@ -673,6 +673,9 @@
         // Сортируем по убыванию Win Rate
         combinations.sort((a, b) => b.win_rate - a.win_rate);
         data = combinations;
+
+        // Сохраняем результаты глобально для кнопки "Детали"
+        analysisResults = combinations;
         
         // Показываем топ-3
         if (data.length > 0) {
@@ -755,17 +758,25 @@
     // Показать детали
     function showDetails(index) {
         const result = analysisResults[index];
-        
-        document.getElementById('modalFilters').textContent = 
+
+        if (!result) {
+            showNotification('Данные не найдены', 'error');
+            return;
+        }
+
+        document.getElementById('modalFilters').textContent =
             `Score Week ≥${result.score_week}%, Score Month ≥${result.score_month}%`;
-        document.getElementById('modalPeriod').textContent = 
-            `${result.start_date} - ${result.end_date}`;
+        document.getElementById('modalPeriod').textContent =
+            `${result.start_date || 'Последние 30 дней'} - ${result.end_date || ''}`;
         document.getElementById('modalTotalPnl').textContent = formatPnL(result.total_pnl);
         document.getElementById('modalTotalPnl').className = getPnLClass(result.total_pnl, 'font-semibold ml-1');
-        
+
         // Заполняем таблицу по дням
         const tbody = document.getElementById('dailyDetailsBody');
-        tbody.innerHTML = result.daily_breakdown.map(day => {
+
+        // Проверяем наличие детализации по дням
+        if (result.daily_breakdown && Array.isArray(result.daily_breakdown)) {
+            tbody.innerHTML = result.daily_breakdown.map(day => {
             // Для Trailing Stop стратегии объединяем TP и trailing wins
             const totalWins = (day.tp_count || 0) + (day.trailing_wins || 0);
             const totalLosses = (day.sl_count || 0) + (day.trailing_losses || 0);
@@ -783,7 +794,20 @@
                 </tr>
             `;
         }).join('');
-        
+        } else {
+            // Если детализации по дням нет, показываем сообщение
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="px-4 py-8 text-center text-gray-500">
+                        <i class="fas fa-info-circle mr-2"></i>
+                        Детализация по дням недоступна для этого результата.
+                        <br>
+                        <span class="text-xs">Запустите новый анализ для получения полной детализации.</span>
+                    </td>
+                </tr>
+            `;
+        }
+
         document.getElementById('detailsModal').classList.remove('hidden');
     }
 
