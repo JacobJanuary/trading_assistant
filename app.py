@@ -3729,6 +3729,180 @@ def api_reinitialize_signals():
             'message': str(e)
         }), 500
 
+
+# ============================================================================
+# BACKTEST STRATEGY ANALYSIS - Новый раздел для анализа бэктеста
+# ============================================================================
+
+@app.route('/backtest_strategy')
+@login_required
+def backtest_strategy():
+    """Страница анализа backtest стратегии"""
+    return render_template('backtest_strategy.html')
+
+
+@app.route('/api/backtest/latest_session', methods=['GET'])
+@login_required
+def api_backtest_latest_session():
+    """API: Получить последнюю сессию бэктеста с топ-50 комбинациями"""
+    try:
+        sort_by = request.args.get('sort_by', 'final_equity')  # 'final_equity' or 'win_rate'
+        limit = int(request.args.get('limit', 50))
+
+        # Получаем последнюю сессию
+        session_query = """
+            SELECT session_id, start_time, end_time, status, parameters, description
+            FROM web.backtest_sessions
+            ORDER BY start_time DESC
+            LIMIT 1
+        """
+        session_result = db.execute_query(session_query, fetch=True)
+
+        if not session_result:
+            return jsonify({
+                'status': 'error',
+                'message': 'Нет доступных сессий бэктеста'
+            }), 404
+
+        session = session_result[0]
+        session_id = session['session_id']
+
+        # Определяем сортировку
+        sort_column = 'final_equity DESC' if sort_by == 'final_equity' else 'win_rate DESC'
+
+        # Получаем топ комбинаций
+        summary_query = f"""
+            SELECT
+                score_week_filter, score_month_filter, max_trades_filter,
+                stop_loss_filter, trailing_activation_filter, trailing_distance_filter,
+                win_rate, total_pnl_usd, final_equity, total_trades,
+                win_count, loss_count, breakeven_count,
+                max_concurrent_positions, min_equity, total_commission_usd
+            FROM web.backtest_summary
+            WHERE session_id = %s
+            ORDER BY {sort_column}, total_pnl_usd DESC
+            LIMIT %s
+        """
+        combinations = db.execute_query(summary_query, (session_id, limit), fetch=True)
+
+        return jsonify({
+            'status': 'success',
+            'session': {
+                'session_id': session_id,
+                'start_time': session['start_time'].isoformat() if session['start_time'] else None,
+                'end_time': session['end_time'].isoformat() if session['end_time'] else None,
+                'status': session['status'],
+                'description': session['description'],
+                'parameters': session['parameters']
+            },
+            'combinations': [{
+                'score_week': c['score_week_filter'],
+                'score_month': c['score_month_filter'],
+                'max_trades': c['max_trades_filter'],
+                'stop_loss': float(c['stop_loss_filter']),
+                'trailing_activation': float(c['trailing_activation_filter']),
+                'trailing_distance': float(c['trailing_distance_filter']),
+                'win_rate': float(c['win_rate'] or 0),
+                'total_pnl': float(c['total_pnl_usd'] or 0),
+                'final_equity': float(c['final_equity'] or 0),
+                'total_trades': c['total_trades'],
+                'win_count': c['win_count'],
+                'loss_count': c['loss_count'],
+                'breakeven_count': c['breakeven_count'],
+                'max_concurrent': c['max_concurrent_positions'],
+                'min_equity': float(c['min_equity'] or 0),
+                'total_commission': float(c['total_commission_usd'] or 0)
+            } for c in combinations]
+        })
+
+    except Exception as e:
+        logger.error(f"Ошибка получения данных бэктеста: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/backtest/combo_details', methods=['POST'])
+@login_required
+def api_backtest_combo_details():
+    """API: Получить детальную информацию по комбинации (trades по дням)"""
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        score_week = data.get('score_week')
+        score_month = data.get('score_month')
+        max_trades = data.get('max_trades')
+        stop_loss = data.get('stop_loss')
+        trailing_activation = data.get('trailing_activation')
+        trailing_distance = data.get('trailing_distance')
+
+        # Получаем агрегированные данные по дням
+        query = """
+            SELECT
+                DATE(signal_timestamp) as day,
+                COUNT(*) as total_trades,
+                SUM(pnl_usd) as day_pnl,
+                COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_count,
+                SUM(CASE WHEN close_reason = 'stop_loss' THEN pnl_usd ELSE 0 END) as sl_loss,
+                COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as ts_count,
+                SUM(CASE WHEN close_reason = 'trailing_stop' THEN pnl_usd ELSE 0 END) as ts_profit,
+                COUNT(CASE WHEN close_reason = 'smart_loss' THEN 1 END) as timeout_count,
+                SUM(CASE WHEN close_reason = 'smart_loss' THEN pnl_usd ELSE 0 END) as timeout_loss
+            FROM web.backtest_results
+            WHERE session_id = %s
+                AND score_week_filter = %s
+                AND score_month_filter = %s
+                AND max_trades_filter = %s
+                AND stop_loss_filter = %s
+                AND trailing_activation_filter = %s
+                AND trailing_distance_filter = %s
+            GROUP BY DATE(signal_timestamp)
+            ORDER BY day
+        """
+
+        daily_stats = db.execute_query(query, (
+            session_id, score_week, score_month, max_trades,
+            stop_loss, trailing_activation, trailing_distance
+        ), fetch=True)
+
+        # Вычисляем накопительный баланс
+        initial_capital = 1000.0  # Из CONFIG
+        balance = initial_capital
+        result_data = []
+
+        for stat in daily_stats:
+            day_pnl = float(stat['day_pnl'] or 0)
+            balance_start = balance
+            balance += day_pnl
+
+            result_data.append({
+                'day': stat['day'].isoformat(),
+                'balance_start': round(balance_start, 2),
+                'balance_end': round(balance, 2),
+                'day_pnl': round(day_pnl, 2),
+                'total_trades': stat['total_trades'],
+                'sl_count': stat['sl_count'],
+                'sl_loss': round(float(stat['sl_loss'] or 0), 2),
+                'ts_count': stat['ts_count'],
+                'ts_profit': round(float(stat['ts_profit'] or 0), 2),
+                'timeout_count': stat['timeout_count'],
+                'timeout_loss': round(float(stat['timeout_loss'] or 0), 2)
+            })
+
+        return jsonify({
+            'status': 'success',
+            'daily_stats': result_data
+        })
+
+    except Exception as e:
+        logger.error(f"Ошибка получения детальной информации: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
 # Запуск приложения
 if __name__ == '__main__':
     port = Config.PORT

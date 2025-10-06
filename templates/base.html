@@ -89,17 +89,9 @@
 
                     <div class="absolute top-full left-0 mt-2 w-56 bg-white/95 backdrop-blur-sm rounded-xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 border border-white/20">
                         <div class="p-2 space-y-1">
-                            <a href="{{ url_for('efficiency_analysis') }}" class="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-700 hover:bg-purple-50 hover:text-purple-700 transition-colors">
-                                <i class="fas fa-chart-line text-purple-500"></i>
-                                <span class="font-medium">Эффективность</span>
-                            </a>
-                            <a href="{{ url_for('tpsl_analysis') }}" class="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-700 hover:bg-red-50 hover:text-red-700 transition-colors">
-                                <i class="fas fa-crosshairs text-red-500"></i>
-                                <span class="font-medium">TP/SL Анализ</span>
-                            </a>
-                            <a href="{{ url_for('trailing_analysis') }}" class="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors">
-                                <i class="fas fa-route text-indigo-500"></i>
-                                <span class="font-medium">Trailing Stop</span>
+                            <a href="{{ url_for('backtest_strategy') }}" class="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors">
+                                <i class="fas fa-chart-line text-blue-500"></i>
+                                <span class="font-medium">Backtest Analysis</span>
                             </a>
                         </div>
                     </div>
@@ -168,14 +160,8 @@
                     <a href="{{ url_for('scoring_analysis_v2') }}" class="block px-4 py-3 text-white hover:bg-white/10 rounded-lg transition-colors">
                         <i class="fas fa-star mr-3"></i>Анализ скоринга
                     </a>
-                    <a href="{{ url_for('efficiency_analysis') }}" class="block px-4 py-3 text-white hover:bg-white/10 rounded-lg transition-colors">
-                        <i class="fas fa-chart-line mr-3"></i>Эффективность
-                    </a>
-                    <a href="{{ url_for('tpsl_analysis') }}" class="block px-4 py-3 text-white hover:bg-white/10 rounded-lg transition-colors">
-                        <i class="fas fa-crosshairs mr-3"></i>TP/SL Анализ
-                    </a>
-                    <a href="{{ url_for('trailing_analysis') }}" class="block px-4 py-3 text-white hover:bg-white/10 rounded-lg transition-colors">
-                        <i class="fas fa-route mr-3"></i>Trailing Stop
+                    <a href="{{ url_for('backtest_strategy') }}" class="block px-4 py-3 text-white hover:bg-white/10 rounded-lg transition-colors">
+                        <i class="fas fa-chart-line mr-3"></i>Backtest Analysis
                     </a>
                     {% if current_user.is_admin %}
                     <a href="{{ url_for('admin') }}" class="block px-4 py-3 text-yellow-300 hover:bg-yellow-500/20 rounded-lg transition-colors">
