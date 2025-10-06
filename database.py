@@ -1245,7 +1245,16 @@ def process_signal_complete(db, signal,
 
                     # Проверка закрытия для SHORT
                     if not is_closed:
-                        if low_price <= tp_price:
+                        # Проверка ликвидации (приоритет!)
+                        liquidation_threshold = Config.LIQUIDATION_THRESHOLD
+                        liquidation_loss_pct = -(100 / leverage) * liquidation_threshold
+                        unrealized_pnl_pct = ((entry_price - high_price) / entry_price) * 100
+                        if unrealized_pnl_pct <= liquidation_loss_pct:
+                            is_closed = True
+                            close_reason = 'liquidation'
+                            close_price = high_price
+                            close_time = current_time
+                        elif low_price <= tp_price:
                             is_closed = True
                             close_reason = 'take_profit'
                             close_price = tp_price
@@ -1267,7 +1276,16 @@ def process_signal_complete(db, signal,
 
                     # Проверка закрытия для LONG
                     if not is_closed:
-                        if high_price >= tp_price:
+                        # Проверка ликвидации (приоритет!)
+                        liquidation_threshold = Config.LIQUIDATION_THRESHOLD
+                        liquidation_loss_pct = -(100 / leverage) * liquidation_threshold
+                        unrealized_pnl_pct = ((low_price - entry_price) / entry_price) * 100
+                        if unrealized_pnl_pct <= liquidation_loss_pct:
+                            is_closed = True
+                            close_reason = 'liquidation'
+                            close_price = low_price
+                            close_time = current_time
+                        elif high_price >= tp_price:
                             is_closed = True
                             close_reason = 'take_profit'
                             close_price = tp_price
@@ -1484,6 +1502,22 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
 
         # ============ Управление позицией (только если еще открыта) ============
         if not is_closed:
+            # ПРОВЕРКА ЛИКВИДАЦИИ (приоритет выше всех остальных!)
+            liquidation_threshold = Config.LIQUIDATION_THRESHOLD
+            liquidation_loss_pct = -(100 / leverage) * liquidation_threshold  # Например: -(100/10)*0.9 = -9%
+
+            if is_long:
+                unrealized_pnl_pct = ((low_price - entry_price) / entry_price) * 100
+            else:  # SHORT
+                unrealized_pnl_pct = ((entry_price - high_price) / entry_price) * 100
+
+            if unrealized_pnl_pct <= liquidation_loss_pct:
+                is_closed = True
+                close_reason = 'liquidation'
+                close_price = low_price if is_long else high_price
+                close_time = candle_time
+                continue
+
             # ФАЗА 1: Активная торговля (0-24ч) - TS/SL
             if phase1_end is None or candle_time <= phase1_end:
                 # Stop Loss
@@ -1749,7 +1783,16 @@ def process_signal_with_trailing(db, signal, user_settings):
 
                     # Проверка закрытия для SHORT
                     if not is_closed:
-                        if low_price <= tp_price:
+                        # Проверка ликвидации (приоритет!)
+                        liquidation_threshold = Config.LIQUIDATION_THRESHOLD
+                        liquidation_loss_pct = -(100 / leverage) * liquidation_threshold
+                        unrealized_pnl_pct = ((entry_price - high_price) / entry_price) * 100
+                        if unrealized_pnl_pct <= liquidation_loss_pct:
+                            is_closed = True
+                            close_reason = 'liquidation'
+                            close_price = high_price
+                            close_time = current_time
+                        elif low_price <= tp_price:
                             is_closed = True
                             close_reason = 'take_profit'
                             close_price = tp_price
@@ -1769,7 +1812,16 @@ def process_signal_with_trailing(db, signal, user_settings):
 
                     # Проверка закрытия для LONG
                     if not is_closed:
-                        if high_price >= tp_price:
+                        # Проверка ликвидации (приоритет!)
+                        liquidation_threshold = Config.LIQUIDATION_THRESHOLD
+                        liquidation_loss_pct = -(100 / leverage) * liquidation_threshold
+                        unrealized_pnl_pct = ((low_price - entry_price) / entry_price) * 100
+                        if unrealized_pnl_pct <= liquidation_loss_pct:
+                            is_closed = True
+                            close_reason = 'liquidation'
+                            close_price = low_price
+                            close_time = current_time
+                        elif high_price >= tp_price:
                             is_closed = True
                             close_reason = 'take_profit'
                             close_price = tp_price
@@ -2479,7 +2531,17 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
 
                         # Проверка TP/SL для SHORT
                         if not is_closed:
-                            if low_price <= tp_price:
+                            # Проверка ликвидации (приоритет!)
+                            liquidation_threshold = Config.LIQUIDATION_THRESHOLD
+                            liquidation_loss_pct = -(100 / leverage) * liquidation_threshold
+                            unrealized_pnl_pct = ((entry_price - high_price) / entry_price) * 100
+                            if unrealized_pnl_pct <= liquidation_loss_pct:
+                                is_closed = True
+                                close_reason = 'liquidation'
+                                close_price = high_price
+                                close_time = current_time
+                                hours_to_close = hours_passed
+                            elif low_price <= tp_price:
                                 is_closed = True
                                 close_reason = 'take_profit'
                                 close_price = tp_price
@@ -2506,7 +2568,17 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
 
                         # Проверка TP/SL для LONG
                         if not is_closed:
-                            if high_price >= tp_price:
+                            # Проверка ликвидации (приоритет!)
+                            liquidation_threshold = Config.LIQUIDATION_THRESHOLD
+                            liquidation_loss_pct = -(100 / leverage) * liquidation_threshold
+                            unrealized_pnl_pct = ((low_price - entry_price) / entry_price) * 100
+                            if unrealized_pnl_pct <= liquidation_loss_pct:
+                                is_closed = True
+                                close_reason = 'liquidation'
+                                close_price = low_price
+                                close_time = current_time
+                                hours_to_close = hours_passed
+                            elif high_price >= tp_price:
                                 is_closed = True
                                 close_reason = 'take_profit'
                                 close_price = tp_price
