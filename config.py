@@ -151,7 +151,20 @@ class Config:
 
     # Ликвидация
     LIQUIDATION_THRESHOLD = float(os.getenv('LIQUIDATION_THRESHOLD', 0.9))  # Ликвидация при потере 90% маржи
-    
+
+    # ============================================
+    # WAVE-BASED SCORING (новая система)
+    # ============================================
+
+    # Feature flag для включения/выключения новой системы
+    USE_WAVE_BASED_SCORING = os.getenv('USE_WAVE_BASED_SCORING', 'True').lower() == 'true'
+
+    # Управление капиталом
+    INITIAL_CAPITAL = float(os.getenv('INITIAL_CAPITAL', 1000.0))  # Начальный капитал для симуляции
+
+    # Фильтрация по волнам
+    WAVE_INTERVAL_MINUTES = int(os.getenv('WAVE_INTERVAL_MINUTES', 15))  # Интервал волны (15 минут)
+
     # ============================================
     # МОНИТОРИНГ И ЛОГИРОВАНИЕ
     # ============================================

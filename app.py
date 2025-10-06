@@ -1209,7 +1209,8 @@ def api_scoring_apply_filters_v2():
     try:
         data = request.get_json()
 
-        from database import get_scoring_signals_v2, process_scoring_signals_batch, get_scoring_analysis_results
+        from database import get_scoring_signals_v2, process_scoring_signals_batch, process_scoring_signals_batch_v2, get_scoring_analysis_results
+        from config import Config
         import uuid
 
         # Генерируем ID сессии
@@ -1281,17 +1282,32 @@ def api_scoring_apply_filters_v2():
         if raw_signals:
             print(f"[API V2] Найдено {len(raw_signals)} сигналов после фильтрации")
 
-            # Обрабатываем сигналы
-            result = process_scoring_signals_batch(
-                db, raw_signals, session_id, current_user.id,
-                tp_percent=tp_percent,
-                sl_percent=sl_percent,
-                position_size=position_size,
-                leverage=leverage,
-                use_trailing_stop=use_trailing_stop,
-                trailing_distance_pct=trailing_distance_pct,
-                trailing_activation_pct=trailing_activation_pct
-            )
+            # Обрабатываем сигналы - используем v2 если включен feature flag
+            if Config.USE_WAVE_BASED_SCORING:
+                print(f"[API V2] Используется WAVE-BASED SCORING (v2)")
+                result = process_scoring_signals_batch_v2(
+                    db, raw_signals, session_id, current_user.id,
+                    tp_percent=tp_percent,
+                    sl_percent=sl_percent,
+                    position_size=position_size,
+                    leverage=leverage,
+                    use_trailing_stop=use_trailing_stop,
+                    trailing_distance_pct=trailing_distance_pct,
+                    trailing_activation_pct=trailing_activation_pct,
+                    max_trades_per_15min=max_trades_per_15min
+                )
+            else:
+                print(f"[API V2] Используется СТАРАЯ ВЕРСИЯ (v1)")
+                result = process_scoring_signals_batch(
+                    db, raw_signals, session_id, current_user.id,
+                    tp_percent=tp_percent,
+                    sl_percent=sl_percent,
+                    position_size=position_size,
+                    leverage=leverage,
+                    use_trailing_stop=use_trailing_stop,
+                    trailing_distance_pct=trailing_distance_pct,
+                    trailing_activation_pct=trailing_activation_pct
+                )
 
             # Получаем обработанные результаты
             signals_data = get_scoring_analysis_results(db, session_id, current_user.id)

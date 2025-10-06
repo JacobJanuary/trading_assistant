@@ -2286,6 +2286,38 @@ def get_scoring_date_info(db, date, score_week_min=None, score_month_min=None, a
     return result
 
 
+def group_signals_by_wave(signals, wave_interval_minutes=15):
+    """
+    Группирует сигналы по 15-минутным волнам
+
+    Args:
+        signals: Список сигналов
+        wave_interval_minutes: Интервал волны в минутах (по умолчанию 15)
+
+    Returns:
+        dict: {wave_time: [signals]} - сигналы, сгруппированные и отсортированные по score
+    """
+    from collections import defaultdict
+
+    signals_by_wave = defaultdict(list)
+
+    for signal in signals:
+        ts = signal['timestamp']
+        # Округляем до границы волны (например, 15 минут)
+        minute_rounded = (ts.minute // wave_interval_minutes) * wave_interval_minutes
+        wave_key = ts.replace(minute=minute_rounded, second=0, microsecond=0)
+        signals_by_wave[wave_key].append(signal)
+
+    # Сортируем сигналы внутри каждой волны по score_week (лучшие первыми)
+    for wave_key in signals_by_wave:
+        signals_by_wave[wave_key].sort(
+            key=lambda x: x.get('score_week', 0),
+            reverse=True  # От большего к меньшему
+        )
+
+    return signals_by_wave
+
+
 def process_scoring_signals_batch(db, signals, session_id, user_id,
                                   tp_percent=None, sl_percent=None,
                                   position_size=None, leverage=None,
@@ -2764,6 +2796,329 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
         'stats': stats,
         'exchange_breakdown': exchange_stats
     }
+
+
+def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
+                                     tp_percent=None, sl_percent=None,
+                                     position_size=None, leverage=None,
+                                     use_trailing_stop=None,
+                                     trailing_distance_pct=None,
+                                     trailing_activation_pct=None,
+                                     max_trades_per_15min=None):
+    """
+    НОВАЯ ВЕРСИЯ: Wave-based scoring analysis с управлением капиталом
+
+    Отличия от v1:
+    - Управление капиталом (capital management)
+    - Группировка сигналов по 15-минутным волнам
+    - Последовательная обработка волн
+    - Отслеживание открытых позиций (position tracking)
+    - Проверка дубликатов по паре
+    - Приоритизация по score_week
+    - Расчет min_equity с floating PnL
+    - Дополнительные метрики (max_drawdown, max_concurrent_positions, etc.)
+    """
+    from trading_simulation import TradingSimulation
+    from datetime import timedelta
+
+    # Параметры по умолчанию
+    tp_percent = tp_percent if tp_percent is not None else Config.DEFAULT_TAKE_PROFIT_PERCENT
+    sl_percent = sl_percent if sl_percent is not None else Config.DEFAULT_STOP_LOSS_PERCENT
+    position_size = position_size if position_size is not None else Config.DEFAULT_POSITION_SIZE
+    leverage = leverage if leverage is not None else Config.DEFAULT_LEVERAGE
+    use_trailing_stop = use_trailing_stop if use_trailing_stop is not None else Config.DEFAULT_USE_TRAILING_STOP
+    trailing_distance_pct = trailing_distance_pct if trailing_distance_pct is not None else Config.DEFAULT_TRAILING_DISTANCE_PCT
+    trailing_activation_pct = trailing_activation_pct if trailing_activation_pct is not None else Config.DEFAULT_TRAILING_ACTIVATION_PCT
+    max_trades_per_15min = max_trades_per_15min if max_trades_per_15min is not None else Config.DEFAULT_MAX_TRADES_PER_15MIN
+
+    initial_capital = Config.INITIAL_CAPITAL
+    wave_interval = Config.WAVE_INTERVAL_MINUTES
+
+    print(f"\n[SCORING V2] ===== WAVE-BASED SCORING ANALYSIS =====")
+    print(f"[SCORING V2] Всего сигналов: {len(signals)}")
+    print(f"[SCORING V2] Режим: {'Trailing Stop' if use_trailing_stop else 'Fixed TP/SL'}")
+    print(f"[SCORING V2] Параметры: TP={tp_percent}%, SL={sl_percent}%, Size=${position_size}, Lev={leverage}x")
+    print(f"[SCORING V2] Капитал: ${initial_capital}, Wave: {wave_interval}min, Max trades/wave: {max_trades_per_15min}")
+    if use_trailing_stop:
+        print(f"[SCORING V2] Trailing: Activation={trailing_activation_pct}%, Distance={trailing_distance_pct}%")
+
+    # Очищаем предыдущие результаты
+    clear_query = """
+        DELETE FROM web.scoring_analysis_results
+        WHERE session_id = %s AND user_id = %s
+    """
+    db.execute_query(clear_query, (session_id, user_id))
+
+    # Инициализируем симуляцию
+    sim = TradingSimulation(
+        initial_capital=initial_capital,
+        position_size=position_size,
+        leverage=leverage,
+        tp_percent=tp_percent,
+        sl_percent=sl_percent,
+        use_trailing_stop=use_trailing_stop,
+        trailing_distance_pct=trailing_distance_pct,
+        trailing_activation_pct=trailing_activation_pct
+    )
+
+    # Группируем сигналы по волнам
+    signals_by_wave = group_signals_by_wave(signals, wave_interval)
+
+    print(f"[SCORING V2] Сигналы сгруппированы в {len(signals_by_wave)} волн")
+
+    # Кэш для market_data (чтобы не загружать несколько раз для одной пары)
+    market_data_cache = {}
+
+    def get_market_data(trading_pair_id, signal_timestamp):
+        """Получает market_data с кэшированием"""
+        cache_key = (trading_pair_id, signal_timestamp)
+        if cache_key in market_data_cache:
+            return market_data_cache[cache_key]
+
+        history_query = """
+            SELECT
+                timestamp,
+                open_price,
+                high_price,
+                low_price,
+                close_price
+            FROM fas.market_data_aggregated
+            WHERE trading_pair_id = %s
+                AND timeframe = '5m'
+                AND timestamp >= %s
+                AND timestamp <= %s + INTERVAL '48 hours'
+            ORDER BY timestamp ASC
+        """
+        history = db.execute_query(
+            history_query,
+            (trading_pair_id, signal_timestamp, signal_timestamp),
+            fetch=True
+        )
+        market_data_cache[cache_key] = history
+        return history
+
+    # Обработка волн последовательно
+    batch_data = []
+    total_processed = 0
+
+    for wave_idx, wave_time in enumerate(sorted(signals_by_wave.keys()), 1):
+        print(f"\n[SCORING V2] === Волна {wave_idx}/{len(signals_by_wave)}: {wave_time} ===")
+
+        # 1. Закрываем позиции, которые должны закрыться до этой волны
+        closed_pairs = sim.close_due_positions(wave_time)
+        if closed_pairs:
+            print(f"[SCORING V2] Закрыто позиций: {len(closed_pairs)} ({', '.join(closed_pairs[:5])}{'...' if len(closed_pairs) > 5 else ''})")
+
+        # 2. Обновляем метрики equity (с учетом floating PnL открытых позиций)
+        # TODO: Передать market_data_by_pair для расчета текущих цен
+        sim.update_equity_metrics(wave_time, market_data_by_pair=None)
+
+        # 3. Обрабатываем сигналы текущей волны
+        wave_candidates = signals_by_wave[wave_time]
+        print(f"[SCORING V2] Кандидатов в волне: {len(wave_candidates)} (отсортированы по score_week)")
+        print(f"[SCORING V2] Доступный капитал: ${sim.available_capital:.2f} / ${sim.initial_capital:.2f}")
+        print(f"[SCORING V2] Открытых позиций: {len(sim.open_positions)}")
+
+        trades_taken_this_wave = 0
+
+        for signal in wave_candidates:
+            # Лимит на волну
+            if trades_taken_this_wave >= max_trades_per_15min:
+                sim.stats['skipped_wave_limit'] += len(wave_candidates) - trades_taken_this_wave
+                print(f"[SCORING V2] Достигнут лимит сделок на волну ({max_trades_per_15min})")
+                break
+
+            pair_symbol = signal.get('pair_symbol')
+            trading_pair_id = signal['trading_pair_id']
+            signal_timestamp = signal['timestamp']
+
+            # Получаем entry_price
+            entry_price_query = """
+                SELECT open_price as entry_price
+                FROM fas.market_data_aggregated
+                WHERE trading_pair_id = %s
+                    AND timeframe = '5m'
+                    AND timestamp >= %s - INTERVAL '15 minutes'
+                    AND timestamp <= %s + INTERVAL '15 minutes'
+                ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
+                LIMIT 1
+            """
+            price_result = db.execute_query(
+                entry_price_query,
+                (trading_pair_id, signal_timestamp, signal_timestamp, signal_timestamp),
+                fetch=True
+            )
+
+            if not price_result:
+                sim.stats['skipped_no_capital'] += 1  # Используем этот счетчик для "нет данных"
+                continue
+
+            entry_price = float(price_result[0]['entry_price'])
+
+            # Получаем market_data для симуляции
+            market_data = get_market_data(trading_pair_id, signal_timestamp)
+
+            if not market_data:
+                sim.stats['skipped_no_capital'] += 1
+                continue
+
+            # Пытаемся открыть позицию через TradingSimulation
+            result = sim.open_position(signal, entry_price, market_data)
+
+            if result['success']:
+                trades_taken_this_wave += 1
+                total_processed += 1
+
+                position = result['position']
+                sim_result = position['simulation_result']
+
+                # Подготавливаем данные для БД
+                batch_data.append((
+                    session_id,
+                    user_id,
+                    signal['timestamp'],
+                    pair_symbol,
+                    trading_pair_id,
+                    signal['signal_action'],
+                    signal.get('market_regime', 'NEUTRAL'),
+                    signal.get('exchange_name', 'Unknown'),
+                    float(signal.get('total_score', 0)),
+                    float(signal.get('indicator_score', 0)),
+                    float(signal.get('pattern_score', 0)),
+                    float(signal.get('combination_score', 0)),
+                    float(signal.get('score_week', 0)),
+                    float(signal.get('score_month', 0)),
+                    entry_price,
+                    sim_result.get('best_price', entry_price),  # best_price_reached
+                    sim_result.get('close_price'),
+                    sim_result.get('close_time'),
+                    sim_result.get('is_closed', False),
+                    sim_result.get('close_reason'),
+                    (sim_result.get('close_time') - signal['timestamp']).total_seconds() / 3600 if sim_result.get('close_time') else 0,
+                    sim_result.get('pnl_percent', 0),
+                    sim_result.get('pnl_usd', 0),
+                    sim_result.get('max_profit_percent', 0),
+                    sim_result.get('max_profit_usd', 0),
+                    tp_percent,
+                    sl_percent,
+                    position_size,
+                    leverage
+                ))
+
+                # Вставляем пачками
+                if len(batch_data) >= 50:
+                    _insert_batch_results(db, batch_data)
+                    batch_data = []
+            else:
+                reason = result['reason']
+                # Причина уже учтена в sim.stats
+
+        print(f"[SCORING V2] Открыто сделок в волне: {trades_taken_this_wave}/{len(wave_candidates)}")
+
+    # Принудительно закрываем все оставшиеся позиции
+    if signals:
+        last_signal_time = max(s['timestamp'] for s in signals)
+        simulation_end_time = last_signal_time + timedelta(hours=48)
+        print(f"\n[SCORING V2] Принудительное закрытие всех позиций на {simulation_end_time}")
+        sim.force_close_all_positions(simulation_end_time)
+
+    # Вставляем оставшиеся данные
+    if batch_data:
+        _insert_batch_results(db, batch_data)
+
+    # Получаем итоговую сводку
+    summary = sim.get_summary()
+
+    print(f"\n[SCORING V2] ===== ИТОГОВАЯ СТАТИСТИКА =====")
+    print(f"[SCORING V2] Обработано сигналов: {sim.stats['total_signals_processed']}")
+    print(f"[SCORING V2] Открыто сделок: {sim.stats['trades_opened']}")
+    print(f"[SCORING V2] Закрыто сделок: {sim.stats['trades_closed']}")
+    print(f"[SCORING V2] Пропущено (нет капитала): {sim.stats['skipped_no_capital']}")
+    print(f"[SCORING V2] Пропущено (дубликат пары): {sim.stats['skipped_duplicate']}")
+    print(f"[SCORING V2] Пропущено (лимит волны): {sim.stats['skipped_wave_limit']}")
+    print(f"\n[SCORING V2] === ФИНАНСОВЫЕ РЕЗУЛЬТАТЫ ===")
+    print(f"[SCORING V2] Начальный капитал: ${summary['initial_capital']:.2f}")
+    print(f"[SCORING V2] Итоговый equity: ${summary['final_equity']:.2f}")
+    print(f"[SCORING V2] Total PnL: ${summary['total_pnl']:.2f} ({summary['total_pnl_percent']:.2f}%)")
+    print(f"[SCORING V2] Win Rate: {summary['win_rate']:.2f}% ({summary['wins']}/{summary['total_trades']})")
+    print(f"[SCORING V2] Max Concurrent Positions: {summary['max_concurrent_positions']}")
+    print(f"[SCORING V2] Min Equity: ${summary['min_equity']:.2f}")
+    print(f"[SCORING V2] Max Drawdown: ${summary['max_drawdown_usd']:.2f} ({summary['max_drawdown_percent']:.2f}%)")
+    print(f"[SCORING V2] Total Commission Paid: ${summary['total_commission_paid']:.2f}")
+
+    # Сохраняем summary в БД
+    save_scoring_session_summary(
+        db, session_id, user_id, summary, sim.stats,
+        position_size, leverage, tp_percent, sl_percent,
+        use_trailing_stop, trailing_distance_pct, trailing_activation_pct
+    )
+
+    return {
+        'processed': total_processed,
+        'errors': 0,
+        'simulation_summary': summary,
+        'stats': sim.stats
+    }
+
+
+def save_scoring_session_summary(db, session_id, user_id, summary, stats,
+                                 position_size, leverage, tp_percent, sl_percent,
+                                 use_trailing_stop, trailing_distance_pct, trailing_activation_pct):
+    """
+    Сохраняет итоговые метрики wave-based scoring в БД
+
+    Args:
+        db: Database connection
+        session_id: ID сессии
+        user_id: ID пользователя
+        summary: Словарь с метриками из TradingSimulation.get_summary()
+        stats: Статистика обработки из sim.stats
+        position_size, leverage, tp_percent, sl_percent: Параметры торговли
+        use_trailing_stop, trailing_distance_pct, trailing_activation_pct: Параметры TS
+    """
+    insert_query = """
+        INSERT INTO web.scoring_session_summary (
+            session_id, user_id,
+            initial_capital, final_equity, min_equity,
+            total_pnl, total_pnl_percent,
+            total_trades, wins, losses, win_rate,
+            max_concurrent_positions,
+            max_drawdown_usd, max_drawdown_percent,
+            total_commission_paid,
+            total_signals_processed, trades_opened, trades_closed,
+            skipped_no_capital, skipped_duplicate, skipped_wave_limit,
+            position_size, leverage, tp_percent, sl_percent,
+            use_trailing_stop, trailing_distance_pct, trailing_activation_pct
+        ) VALUES (
+            %s, %s,
+            %s, %s, %s,
+            %s, %s,
+            %s, %s, %s, %s,
+            %s,
+            %s, %s,
+            %s,
+            %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s, %s,
+            %s, %s, %s
+        )
+    """
+
+    db.execute_query(insert_query, (
+        session_id, user_id,
+        summary['initial_capital'], summary['final_equity'], summary['min_equity'],
+        summary['total_pnl'], summary['total_pnl_percent'],
+        summary['total_trades'], summary['wins'], summary['losses'], summary['win_rate'],
+        summary['max_concurrent_positions'],
+        summary['max_drawdown_usd'], summary['max_drawdown_percent'],
+        summary['total_commission_paid'],
+        stats['total_signals_processed'], stats['trades_opened'], stats['trades_closed'],
+        stats['skipped_no_capital'], stats['skipped_duplicate'], stats['skipped_wave_limit'],
+        position_size, leverage, tp_percent, sl_percent,
+        use_trailing_stop, trailing_distance_pct, trailing_activation_pct
+    ))
+
+    print(f"[SCORING V2] Summary сохранен в БД (session_id={session_id})")
 
 
 def _insert_batch_results(db, batch_data):
