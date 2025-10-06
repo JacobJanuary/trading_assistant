@@ -325,6 +325,7 @@
     document.addEventListener('DOMContentLoaded', function() {
         initializePage();
         updateDateInfo();
+        updatePreviewCount();  // Обновляем превью при первой загрузке
     });
 
     function initializePage() {
@@ -339,6 +340,12 @@
             updateScoreDisplay('month', filters.scoreMonth || 0);
             updateMaxTradesDisplay(filters.maxTrades || 3);
         }
+
+        // Добавляем обработчик изменения даты для обновления превью
+        document.getElementById('dateFilter').addEventListener('change', function() {
+            updateDateInfo();
+            updatePreviewCount();
+        });
     }
 
     // Обновление отображения Score
