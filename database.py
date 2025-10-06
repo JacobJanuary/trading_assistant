@@ -1400,7 +1400,8 @@ def process_signal_complete(db, signal,
 def calculate_trailing_stop_exit(entry_price, history, signal_action,
                                  trailing_distance_pct, trailing_activation_pct,
                                  sl_percent, position_size, leverage,
-                                 signal_timestamp=None, commission_rate=None):
+                                 signal_timestamp=None, commission_rate=None,
+                                 simulation_end_time=None):
     """
     Расчет выхода по 3-фазной торговой системе:
     - Фаза 1 (0-24ч): Активная торговля с TS/SL
@@ -1408,6 +1409,9 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
     - Фаза 3 (32ч+): Smart Loss - 0.5% за каждый час
 
     ВАЖНО: signal_timestamp ОБЯЗАТЕЛЕН для определения фаз!
+
+    Args:
+        simulation_end_time: Время окончания симуляции (для принудительного закрытия по period_end)
     """
     from config import Config
     from datetime import timedelta
@@ -1606,6 +1610,22 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
                 close_time = candle_time
                 break  # Выходим, т.к. smart loss - окончательное закрытие
 
+            # КРИТИЧНО: Принудительное закрытие в конце периода симуляции (как в check_wr_final.py:316-318)
+            if simulation_end_time and candle_time >= simulation_end_time:
+                is_closed = True
+                close_reason = 'period_end'
+                close_price = float(candle['close_price'])
+                close_time = candle_time
+                break
+
+    # КРИТИЧНО: Если позиция все еще открыта - закрываем с data_end (как в check_wr_final.py:321-323)
+    if not is_closed and history and len(history) > 0:
+        last_candle = history[-1]
+        is_closed = True
+        close_reason = 'data_end'
+        close_price = float(last_candle['close_price'])
+        close_time = last_candle['timestamp']
+
     # Формируем результат
     if is_closed:
         if is_short:
@@ -1629,6 +1649,10 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
     result['max_profit_usd'] = max_profit_usd
     result['best_price'] = best_price_for_trailing
     result['absolute_best_price'] = absolute_best_price
+
+    # Сохраняем историю и entry_price для force_close_all_positions
+    result['history'] = history
+    result['entry_price'] = entry_price
 
     # Отладочная информация
     if not is_closed:
@@ -2835,11 +2859,19 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
 
     wave_interval = Config.WAVE_INTERVAL_MINUTES
 
+    # КРИТИЧНО: Вычисляем simulation_end_time В НАЧАЛЕ (как в check_wr_final.py:385)
+    if signals:
+        last_signal_time = max(s['timestamp'] for s in signals)
+        simulation_end_time = last_signal_time + timedelta(hours=48)
+    else:
+        simulation_end_time = None
+
     print(f"\n[SCORING V2] ===== WAVE-BASED SCORING ANALYSIS =====")
     print(f"[SCORING V2] Всего сигналов: {len(signals)}")
     print(f"[SCORING V2] Режим: {'Trailing Stop' if use_trailing_stop else 'Fixed TP/SL'}")
     print(f"[SCORING V2] Параметры: TP={tp_percent}%, SL={sl_percent}%, Size=${position_size}, Lev={leverage}x")
     print(f"[SCORING V2] Капитал: ${initial_capital}, Wave: {wave_interval}min, Max trades/wave: {max_trades_per_15min}")
+    print(f"[SCORING V2] Simulation end time: {simulation_end_time}")
     if use_trailing_stop:
         print(f"[SCORING V2] Trailing: Activation={trailing_activation_pct}%, Distance={trailing_distance_pct}%")
 
@@ -2964,8 +2996,8 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
                 sim.stats['skipped_no_capital'] += 1
                 continue
 
-            # Пытаемся открыть позицию через TradingSimulation
-            result = sim.open_position(signal, entry_price, market_data)
+            # Пытаемся открыть позицию через TradingSimulation (передаем simulation_end_time)
+            result = sim.open_position(signal, entry_price, market_data, simulation_end_time=simulation_end_time)
 
             if result['success']:
                 trades_taken_this_wave += 1
@@ -3017,11 +3049,9 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
 
         print(f"[SCORING V2] Открыто сделок в волне: {trades_taken_this_wave}/{len(wave_candidates)}")
 
-    # Принудительно закрываем все оставшиеся позиции
-    if signals:
-        last_signal_time = max(s['timestamp'] for s in signals)
-        simulation_end_time = last_signal_time + timedelta(hours=48)
-        print(f"\n[SCORING V2] Принудительное закрытие всех позиций на {simulation_end_time}")
+    # Принудительно закрываем все оставшиеся позиции (если есть)
+    if simulation_end_time:
+        print(f"\n[SCORING V2] Принудительное закрытие оставшихся позиций на {simulation_end_time}")
         sim.force_close_all_positions(simulation_end_time)
 
     # Вставляем оставшиеся данные

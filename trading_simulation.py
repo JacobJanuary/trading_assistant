@@ -87,7 +87,7 @@ class TradingSimulation:
 
         return True, 'ok'
 
-    def open_position(self, signal, entry_price, market_data):
+    def open_position(self, signal, entry_price, market_data, simulation_end_time=None):
         """
         Открытие новой позиции
 
@@ -95,6 +95,7 @@ class TradingSimulation:
             signal: Словарь с информацией о сигнале
             entry_price: Цена входа
             market_data: История цен для симуляции
+            simulation_end_time: Время окончания симуляции (для принудительного закрытия)
 
         Returns:
             dict: Информация о результате открытия
@@ -119,12 +120,14 @@ class TradingSimulation:
                 entry_price, market_data, signal_action,
                 self.trailing_distance_pct, self.trailing_activation_pct,
                 self.sl_percent, self.position_size, self.leverage,
-                signal_timestamp, Config.DEFAULT_COMMISSION_RATE
+                signal_timestamp, Config.DEFAULT_COMMISSION_RATE,
+                simulation_end_time=simulation_end_time
             )
         else:
             # Fixed TP/SL логика (упрощенно вызываем)
             result = self._simulate_fixed_tp_sl(
-                entry_price, market_data, signal_action, signal_timestamp
+                entry_price, market_data, signal_action, signal_timestamp,
+                simulation_end_time=simulation_end_time
             )
 
         # Создаем информацию о позиции
@@ -157,8 +160,13 @@ class TradingSimulation:
 
         return {'success': True, 'position': position_info}
 
-    def _simulate_fixed_tp_sl(self, entry_price, history, signal_action, signal_timestamp):
-        """Упрощенная симуляция Fixed TP/SL"""
+    def _simulate_fixed_tp_sl(self, entry_price, history, signal_action, signal_timestamp, simulation_end_time=None):
+        """
+        Упрощенная симуляция Fixed TP/SL
+
+        Args:
+            simulation_end_time: Время окончания симуляции (для принудительного закрытия по period_end)
+        """
         from config import Config
 
         is_long = signal_action in ['BUY', 'LONG']
@@ -211,6 +219,14 @@ class TradingSimulation:
 
             # Проверка закрытия
             if not is_closed:
+                # КРИТИЧНО: Проверка simulation_end_time (как в check_wr_final.py:316-318)
+                if simulation_end_time and current_time >= simulation_end_time:
+                    is_closed = True
+                    close_reason = 'period_end'
+                    close_price = float(candle['close_price'])
+                    close_time = current_time
+                    break
+
                 # Ликвидация
                 if is_long:
                     unrealized_pnl_pct = ((low_price - entry_price) / entry_price) * 100
@@ -251,29 +267,17 @@ class TradingSimulation:
                 if is_closed:
                     break
 
-        # Если не закрылась, проверяем таймаут/smart loss (используем 3-фазную систему)
+        # Если позиция все еще открыта после цикла - проверяем data_end (как в check_wr_final.py:321-323)
         if not is_closed and len(history) > 0:
-            phase1_end = signal_timestamp + timedelta(hours=Config.PHASE1_DURATION_HOURS)
-            phase2_end = phase1_end + timedelta(hours=Config.PHASE2_DURATION_HOURS)
-            last_time = history[-1]['timestamp']
-            last_price = float(history[-1]['close_price'])
+            last_candle = history[-1]
+            last_time = last_candle['timestamp']
+            last_price = float(last_candle['close_price'])
 
-            if last_time > phase2_end:
-                # Phase 3: Smart Loss
-                hours_into_loss = (last_time - phase2_end).total_seconds() / 3600
-                loss_multiplier = max(1, math.ceil(hours_into_loss))
-                loss_percent = Config.SMART_LOSS_RATE_PER_HOUR * loss_multiplier
-                close_price = entry_price * (1 - loss_percent / 100) if is_long else entry_price * (1 + loss_percent / 100)
-                is_closed = True
-                close_reason = 'smart_loss'
-                close_time = last_time
-            elif phase1_end < last_time <= phase2_end:
-                # Phase 2: Breakeven Window
-                if (is_long and last_price >= entry_price) or (is_short and last_price <= entry_price):
-                    is_closed = True
-                    close_reason = 'breakeven'
-                    close_price = entry_price
-                    close_time = last_time
+            # Закрываем с data_end
+            is_closed = True
+            close_reason = 'data_end'
+            close_price = last_price
+            close_time = last_time
 
         # Расчет PnL
         pnl_usd = 0
@@ -313,6 +317,8 @@ class TradingSimulation:
             'max_profit_percent': max_profit_percent,
             'best_price': best_price,
             'commission_usd': total_commission if is_closed else 0,
+            'history': history,  # Нужно для force_close_all_positions
+            'entry_price': entry_price,  # Нужно для force_close_all_positions
         }
 
     def _close_position_internal(self, position_info):
@@ -404,6 +410,7 @@ class TradingSimulation:
     def force_close_all_positions(self, simulation_end_time):
         """
         Принудительно закрывает все открытые позиции в конце симуляции
+        ВАЖНО: Находит последнюю цену из истории и пересчитывает PnL
 
         Args:
             simulation_end_time: Время окончания симуляции
@@ -411,15 +418,63 @@ class TradingSimulation:
         for pair, position in list(self.open_positions.items()):
             # Если позиция еще не закрыта, закрываем принудительно
             if not position['is_closed']:
-                # Берем последнюю цену из simulation_result
                 result = position['simulation_result']
-                # Устанавливаем как закрытую по period_end
-                position['is_closed'] = True
-                position['close_reason'] = 'period_end'
-                position['close_time'] = simulation_end_time
-                # PnL остается из симуляции
+                history = result.get('history', [])
+                entry_price = result.get('entry_price', 0)
+                is_long = position['signal_action'].upper() in ['BUY', 'LONG']
 
-                self._close_position_internal(position)
+                # Находим последнюю цену ДО конца периода (как в check_wr_final.py:491-497)
+                last_price = None
+                for candle in history:
+                    if candle['timestamp'] <= simulation_end_time:
+                        last_price = float(candle['close_price'])
+                    else:
+                        break
+
+                if last_price and entry_price > 0:
+                    # Пересчитываем PnL (как в check_wr_final.py:529-542)
+                    effective_position = self.position_size * self.leverage
+
+                    if is_long:
+                        pnl_percent = ((last_price - entry_price) / entry_price) * 100
+                    else:
+                        pnl_percent = ((entry_price - last_price) / entry_price) * 100
+
+                    gross_pnl = effective_position * (pnl_percent / 100)
+
+                    # Комиссии
+                    commission_rate = Config.DEFAULT_COMMISSION_RATE
+                    entry_commission = effective_position * commission_rate
+                    exit_commission = effective_position * commission_rate
+                    total_commission = entry_commission + exit_commission
+
+                    net_pnl = gross_pnl - total_commission
+
+                    # Обновляем simulation_result
+                    result['close_price'] = last_price
+                    result['close_time'] = simulation_end_time
+                    result['close_reason'] = 'period_end'
+                    result['pnl_usd'] = net_pnl
+                    result['pnl_percent'] = pnl_percent
+                    result['commission_usd'] = total_commission
+                    result['is_closed'] = True
+
+                    # Обновляем позицию
+                    position['is_closed'] = True
+                    position['close_reason'] = 'period_end'
+                    position['close_time'] = simulation_end_time
+                    position['close_price'] = last_price
+                    position['pnl_usd'] = net_pnl
+
+                    self._close_position_internal(position)
+                else:
+                    # Если нет данных, закрываем с PnL=0 (комиссии съедают)
+                    position['is_closed'] = True
+                    position['close_reason'] = 'period_end'
+                    position['close_time'] = simulation_end_time
+                    position['pnl_usd'] = 0
+
+                    self._close_position_internal(position)
 
         # Очищаем открытые позиции
         self.open_positions.clear()
