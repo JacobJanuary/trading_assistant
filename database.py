@@ -12,7 +12,6 @@ import logging
 import time
 from typing import Optional
 from datetime import datetime, timezone
-import pytz
 from config import Config
 
 
@@ -23,16 +22,6 @@ def make_aware(dt):
     if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
         # Если naive, добавляем UTC timezone
         return dt.replace(tzinfo=timezone.utc)
-    return dt
-
-
-def make_naive(dt):
-    """Преобразует aware datetime в naive (убирает timezone)"""
-    if dt is None:
-        return None
-    if dt.tzinfo is not None:
-        # Конвертируем в UTC и убираем timezone
-        return dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
 
 
@@ -886,66 +875,6 @@ def get_trading_stats(db, time_filter=None, min_value_usd=None, operation_type=N
 
     result = db.execute_query(query, tuple(params), fetch=True)
     return result[0] if result else None
-
-
-def get_recent_large_trades(db, limit=100, time_filter=None, min_value_usd=None, operation_type=None):
-    """Получение последних крупных сделок"""
-    query = """
-        SELECT 
-            base_asset,
-            quote_asset,
-            price,
-            quantity,
-            value_usd,
-            is_sell,
-            created_at,
-            exchange_id
-        FROM large_trades
-        WHERE 1=1
-    """
-
-    params = []
-
-    # Исключаем стейблкоины
-    query += """
-        AND base_asset NOT ILIKE '%%USD%%'
-        AND base_asset NOT ILIKE '%%USDT%%'
-        AND base_asset NOT ILIKE '%%USDC%%'
-        AND base_asset NOT ILIKE '%%BUSD%%'
-        AND base_asset NOT ILIKE '%%DAI%%'
-        AND base_asset NOT ILIKE '%%TUSD%%'
-        AND base_asset NOT ILIKE '%%USDE%%'
-        AND base_asset NOT ILIKE '%%USD1%%'
-        AND base_asset NOT ILIKE '%%FDUSD%%'
-        AND base_asset NOT ILIKE '%%PYUSD%%'
-    """
-
-    # Добавление фильтра по типу операций
-    if operation_type and operation_type != 'both':
-        if operation_type == 'buys':
-            query += " AND is_sell = FALSE"
-        elif operation_type == 'sells':
-            query += " AND is_sell = TRUE"
-
-    if time_filter:
-        time_conditions = {
-            '1h': "created_at >= NOW() - INTERVAL '1 hour'",
-            '4h': "created_at >= NOW() - INTERVAL '4 hours'",
-            '12h': "created_at >= NOW() - INTERVAL '12 hours'",
-            '24h': "created_at >= NOW() - INTERVAL '24 hours'",
-            '7d': "created_at >= NOW() - INTERVAL '7 days'"
-        }
-        if time_filter in time_conditions:
-            query += f" AND {time_conditions[time_filter]}"
-
-    if min_value_usd and min_value_usd > 10000:
-        query += " AND value_usd >= %s"
-        params.append(min_value_usd)
-
-    query += " ORDER BY created_at DESC LIMIT %s"
-    params.append(limit)
-
-    return db.execute_query(query, tuple(params), fetch=True)
 
 
 def initialize_signals_with_params(db, hours_back=48, tp_percent=4.0, sl_percent=3.0):
