@@ -1,12 +1,12 @@
-Flask==2.3.3
+Flask==3.0.0
 Flask-Login==0.6.3
 psycopg==3.1.18
 psycopg-pool==3.1.8
 psycopg2-binary==2.9.9
-python-dotenv==1.0.0
+python-dotenv==1.0.1
 pytz==2024.1
-Werkzeug==2.3.7
+Werkzeug==3.0.1
 requests==2.31.0
-numpy==1.24.3
-scipy==1.11.1
+numpy==1.26.3
+scipy==1.11.4
 gunicorn==21.2.0

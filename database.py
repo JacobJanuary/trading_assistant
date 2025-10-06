@@ -305,10 +305,10 @@ class Database:
                     connection.rollback()
                 except:
                     pass
-                # Помечаем соединение для закрытия
+                # КРИТИЧНО: Закрываем битое соединение
                 if self.use_pool:
                     try:
-                        self.connection_pool.putconn(connection)  # БЕЗ close=True!
+                        connection.close()  # Закрываем битое соединение
                         connection = None  # Помечаем что соединение обработано
                     except:
                         pass
@@ -338,6 +338,12 @@ class Database:
                                 logger.warning(f"Returning connection to pool with status: {tx_status}")
                                 try:
                                     connection.rollback()
+                                    # После rollback проверяем что соединение в IDLE
+                                    if connection.info.transaction_status == psycopg.pq.TransactionStatus.IDLE:
+                                        self.connection_pool.putconn(connection)
+                                    else:
+                                        # Если все еще не IDLE - закрываем
+                                        connection.close()
                                 except Exception as e:
                                     logger.error(f"Failed to rollback before returning to pool: {e}")
                                     # Если rollback не удался, закрываем соединение
@@ -345,10 +351,9 @@ class Database:
                                         connection.close()
                                     except:
                                         pass
-                                    return  # Не возвращаем в пул
-                            
-                            # Только чистые соединения возвращаем в пул
-                            self.connection_pool.putconn(connection)
+                            else:
+                                # Только чистые соединения возвращаем в пул
+                                self.connection_pool.putconn(connection)
                     except Exception as e:
                         logger.error(f"Ошибка при возврате соединения в пул: {e}")
                         try:

@@ -6,7 +6,7 @@ import os
 import time
 
 # Основные настройки
-bind = "0.0.0.0:5000"
+bind = "unix:/home/elcrypto/trading_assistant/trading_assistant.sock"
 # Уменьшаем количество воркеров для стабильности SSL соединений
 workers = min(multiprocessing.cpu_count() + 1, 4)  # Максимум 4 воркера
 
@@ -39,8 +39,10 @@ graceful_timeout = 120
 # worker_connections = 1000  # Максимум соединений на воркер
 # threads = 2  # Количество потоков на воркер для лучшей производительности
 
-# Предварительная загрузка приложения для экономии памяти
-preload_app = True
+# КРИТИЧНО: ОТКЛЮЧАЕМ preload_app для правильной работы connection pool
+# При preload_app=True пул соединений создается в мастер-процессе,
+# а затем форкается в воркеры, что приводит к проблемам с соединениями
+preload_app = False
 
 # Настройки для работы с прокси
 forwarded_allow_ips = '*'
