@@ -2804,7 +2804,8 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
                                      use_trailing_stop=None,
                                      trailing_distance_pct=None,
                                      trailing_activation_pct=None,
-                                     max_trades_per_15min=None):
+                                     max_trades_per_15min=None,
+                                     initial_capital=None):
     """
     НОВАЯ ВЕРСИЯ: Wave-based scoring analysis с управлением капиталом
 
@@ -2830,8 +2831,8 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
     trailing_distance_pct = trailing_distance_pct if trailing_distance_pct is not None else Config.DEFAULT_TRAILING_DISTANCE_PCT
     trailing_activation_pct = trailing_activation_pct if trailing_activation_pct is not None else Config.DEFAULT_TRAILING_ACTIVATION_PCT
     max_trades_per_15min = max_trades_per_15min if max_trades_per_15min is not None else Config.DEFAULT_MAX_TRADES_PER_15MIN
+    initial_capital = initial_capital if initial_capital is not None else Config.INITIAL_CAPITAL
 
-    initial_capital = Config.INITIAL_CAPITAL
     wave_interval = Config.WAVE_INTERVAL_MINUTES
 
     print(f"\n[SCORING V2] ===== WAVE-BASED SCORING ANALYSIS =====")
@@ -2922,6 +2923,7 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
         trades_taken_this_wave = 0
 
         for signal in wave_candidates:
+            sim.stats['total_signals_processed'] += 1
             # Лимит на волну
             if trades_taken_this_wave >= max_trades_per_15min:
                 sim.stats['skipped_wave_limit'] += len(wave_candidates) - trades_taken_this_wave

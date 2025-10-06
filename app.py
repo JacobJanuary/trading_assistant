@@ -1222,11 +1222,11 @@ def api_scoring_apply_filters_v2():
         score_month_min = data.get('score_month_min')
         max_trades_per_15min = data.get('max_trades_per_15min', 3)
         
-        # Получаем настройки пользователя включая allowed_hours
+        # Получаем настройки пользователя включая allowed_hours и initial_capital
         settings_query = """
             SELECT take_profit_percent, stop_loss_percent, position_size_usd, leverage,
                    use_trailing_stop, trailing_distance_pct, trailing_activation_pct,
-                   allowed_hours
+                   allowed_hours, initial_capital
             FROM web.user_signal_filters
             WHERE user_id = %s
         """
@@ -1241,6 +1241,7 @@ def api_scoring_apply_filters_v2():
         trailing_distance_pct = 2.0
         trailing_activation_pct = 1.0
         allowed_hours = list(range(24))  # По умолчанию все часы
+        initial_capital = Config.INITIAL_CAPITAL  # По умолчанию из конфига
 
         if user_settings:
             settings = user_settings[0]
@@ -1255,12 +1256,15 @@ def api_scoring_apply_filters_v2():
             allowed_hours = settings.get('allowed_hours', list(range(24)))
             if not allowed_hours:
                 allowed_hours = list(range(24))
+            # Получаем initial_capital из настроек пользователя
+            initial_capital = float(settings.get('initial_capital', Config.INITIAL_CAPITAL))
         
         # Если в запросе переданы параметры, используем их
         tp_percent = data.get('tp_percent', tp_percent)
         sl_percent = data.get('sl_percent', sl_percent)
         position_size = data.get('position_size', position_size)
         leverage = data.get('leverage', leverage)
+        initial_capital = data.get('initial_capital', initial_capital)
 
         print(f"[API V2] Обработка фильтров для даты {selected_date}")
         print(f"[API V2] Фильтры: score_week >= {score_week_min}, score_month >= {score_month_min}")
@@ -1285,6 +1289,7 @@ def api_scoring_apply_filters_v2():
             # Обрабатываем сигналы - используем v2 если включен feature flag
             if Config.USE_WAVE_BASED_SCORING:
                 print(f"[API V2] Используется WAVE-BASED SCORING (v2)")
+                print(f"[API V2] Initial Capital: ${initial_capital}")
                 result = process_scoring_signals_batch_v2(
                     db, raw_signals, session_id, current_user.id,
                     tp_percent=tp_percent,
@@ -1294,7 +1299,8 @@ def api_scoring_apply_filters_v2():
                     use_trailing_stop=use_trailing_stop,
                     trailing_distance_pct=trailing_distance_pct,
                     trailing_activation_pct=trailing_activation_pct,
-                    max_trades_per_15min=max_trades_per_15min
+                    max_trades_per_15min=max_trades_per_15min,
+                    initial_capital=initial_capital
                 )
             else:
                 print(f"[API V2] Используется СТАРАЯ ВЕРСИЯ (v1)")
