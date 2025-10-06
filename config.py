@@ -143,6 +143,11 @@ class Config:
     # Scoring анализ
     SCORING_ANALYSIS_DEFAULT_DAYS_BACK = int(os.getenv('SCORING_ANALYSIS_DEFAULT_DAYS_BACK', 30))
     SCORING_ANALYSIS_BATCH_SIZE = int(os.getenv('SCORING_ANALYSIS_BATCH_SIZE', 50))
+
+    # 3-фазная торговая система
+    PHASE1_DURATION_HOURS = int(os.getenv('PHASE1_DURATION_HOURS', 24))  # Фаза 1: Активная торговля
+    PHASE2_DURATION_HOURS = int(os.getenv('PHASE2_DURATION_HOURS', 8))   # Фаза 2: Breakeven Window
+    SMART_LOSS_RATE_PER_HOUR = float(os.getenv('SMART_LOSS_RATE_PER_HOUR', 0.5))  # Фаза 3: 0.5% в час
     
     # ============================================
     # МОНИТОРИНГ И ЛОГИРОВАНИЕ

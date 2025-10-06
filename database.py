@@ -1089,9 +1089,9 @@ def process_signal_complete(db, signal,
             SELECT open_price
             FROM fas.market_data_aggregated
             WHERE trading_pair_id = %s 
-                AND timeframe = '15m'
-                AND timestamp >= %s - INTERVAL '15 minutes'
-                AND timestamp <= %s + INTERVAL '15 minutes'
+                AND timeframe = '5m'
+                AND timestamp >= %s - INTERVAL '5 minutes'
+                AND timestamp <= %s + INTERVAL '5 minutes'
             ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
             LIMIT 1
         """
@@ -1108,7 +1108,7 @@ def process_signal_complete(db, signal,
                 SELECT open_price
                 FROM fas.market_data_aggregated
                 WHERE trading_pair_id = %s
-                    AND timeframe = '15m'
+                    AND timeframe = '5m'
                     AND timestamp >= %s - INTERVAL '1 hour'
                     AND timestamp <= %s + INTERVAL '1 hour'
                 ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
@@ -1134,7 +1134,7 @@ def process_signal_complete(db, signal,
             SELECT timestamp, open_price, high_price, low_price, close_price
             FROM fas.market_data_aggregated
             WHERE trading_pair_id = %s
-                AND timeframe = '15m'
+                AND timeframe = '5m'
                 AND timestamp >= %s
                 AND timestamp <= NOW()
             ORDER BY timestamp ASC
@@ -1382,14 +1382,18 @@ def process_signal_complete(db, signal,
 def calculate_trailing_stop_exit(entry_price, history, signal_action,
                                  trailing_distance_pct, trailing_activation_pct,
                                  sl_percent, position_size, leverage,
-                                 signal_timestamp=None, commission_rate=None):  # ДОБАВЛЯЕМ параметр
+                                 signal_timestamp=None, commission_rate=None):
     """
-    Расчет выхода по trailing stop с ПРАВИЛЬНЫМ отслеживанием максимального профита
+    Расчет выхода по 3-фазной торговой системе:
+    - Фаза 1 (0-24ч): Активная торговля с TS/SL
+    - Фаза 2 (24-32ч): Breakeven Window - закрытие в безубыток
+    - Фаза 3 (32ч+): Smart Loss - 0.5% за каждый час
 
-    ВАЖНО: Добавлен параметр signal_timestamp для корректного расчета таймаута
-    ВАЖНО: Добавлен параметр commission_rate для учета комиссий
+    ВАЖНО: signal_timestamp ОБЯЗАТЕЛЕН для определения фаз!
     """
     from config import Config
+    from datetime import timedelta
+    import math
 
     # Расчет комиссий
     if commission_rate is None:
@@ -1400,11 +1404,25 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
     exit_commission = effective_position * commission_rate
     total_commission = entry_commission + exit_commission
 
+    # Параметры 3-фазной системы
+    phase1_hours = Config.PHASE1_DURATION_HOURS  # 24
+    phase2_hours = Config.PHASE2_DURATION_HOURS  # 8
+    smart_loss_rate = Config.SMART_LOSS_RATE_PER_HOUR  # 0.5
+
+    # Временные границы фаз
+    if signal_timestamp:
+        phase1_end = signal_timestamp + timedelta(hours=phase1_hours)
+        phase2_end = signal_timestamp + timedelta(hours=phase1_hours + phase2_hours)
+    else:
+        # Если timestamp не передан, используем старую логику (только для совместимости)
+        phase1_end = None
+        phase2_end = None
+
     # Переменные для отслеживания trailing stop
     is_trailing_active = False
     trailing_stop_price = None
     best_price_for_trailing = entry_price
-    activation_candle_time = None  # Время свечи, на которой активировался trailing
+    activation_candle_time = None
 
     # ВАЖНО: Отдельная переменная для АБСОЛЮТНОГО максимума за весь период
     absolute_best_price = entry_price
@@ -1417,12 +1435,15 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
     close_reason = None
 
     # Расчет уровней
-    if signal_action in ['SELL', 'SHORT']:
+    is_long = signal_action in ['BUY', 'LONG']
+    is_short = signal_action in ['SELL', 'SHORT']
+
+    if is_short:
         activation_price = entry_price * (1 - trailing_activation_pct / 100)
-        insurance_sl_price = entry_price * (1 + sl_percent / 100)
-    else:  # BUY, LONG
+        sl_price = entry_price * (1 + sl_percent / 100)
+    else:  # LONG
         activation_price = entry_price * (1 + trailing_activation_pct / 100)
-        insurance_sl_price = entry_price * (1 - sl_percent / 100)
+        sl_price = entry_price * (1 - sl_percent / 100)
 
     # Результат по умолчанию
     result = {
@@ -1443,132 +1464,126 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
 
     # ГЛАВНЫЙ ЦИКЛ - обрабатываем ВСЮ историю
     for candle in history:
-        current_time = candle['timestamp']
+        candle_time = candle['timestamp']
         high_price = float(candle['high_price'])
         low_price = float(candle['low_price'])
 
-        # ============ БЛОК 1: ВСЕГДА обновляем абсолютный максимум ============
-        if signal_action in ['SELL', 'SHORT']:
+        # ============ ВСЕГДА обновляем абсолютный максимум ============
+        if is_short:
             if low_price < absolute_best_price:
                 absolute_best_price = low_price
                 max_profit_percent = ((entry_price - absolute_best_price) / entry_price) * 100
                 gross_max_profit = effective_position * (max_profit_percent / 100)
-                max_profit_usd = gross_max_profit - total_commission  # Вычитаем комиссии
-        else:  # BUY, LONG
+                max_profit_usd = gross_max_profit - total_commission
+        else:  # LONG
             if high_price > absolute_best_price:
                 absolute_best_price = high_price
                 max_profit_percent = ((absolute_best_price - entry_price) / entry_price) * 100
                 gross_max_profit = effective_position * (max_profit_percent / 100)
-                max_profit_usd = gross_max_profit - total_commission  # Вычитаем комиссии
+                max_profit_usd = gross_max_profit - total_commission
 
-        # ============ БЛОК 2: Управление позицией (только если еще открыта) ============
+        # ============ Управление позицией (только если еще открыта) ============
         if not is_closed:
-            if signal_action in ['SELL', 'SHORT']:
-                # Проверка страховочного SL (только если trailing не активен)
-                if not is_trailing_active and high_price >= insurance_sl_price:
+            # ФАЗА 1: Активная торговля (0-24ч) - TS/SL
+            if phase1_end is None or candle_time <= phase1_end:
+                # Stop Loss
+                if (is_long and low_price <= sl_price) or (is_short and high_price >= sl_price):
                     is_closed = True
                     close_reason = 'stop_loss'
-                    close_price = insurance_sl_price
-                    close_time = current_time
-                    continue  # Переходим к следующей свече для продолжения отслеживания max_profit
-
-                # СНАЧАЛА обновляем best_price
-                if low_price < best_price_for_trailing:
-                    best_price_for_trailing = low_price
-
-                # ЗАТЕМ проверяем активацию trailing stop
-                if not is_trailing_active and best_price_for_trailing <= activation_price:
-                    is_trailing_active = True
-                    result['trailing_activated'] = True
-                    activation_candle_time = current_time  # Запоминаем время активации
-                    trailing_stop_price = best_price_for_trailing * (1 + trailing_distance_pct / 100)
-                    print(
-                        f"[TRAILING] SHORT активирован на {best_price_for_trailing:.8f}, stop={trailing_stop_price:.8f}")
-                
-                # Если trailing активен, обновляем стоп при изменении best_price
-                if is_trailing_active:
-                    new_stop = best_price_for_trailing * (1 + trailing_distance_pct / 100)
-                    if new_stop < trailing_stop_price:
-                        trailing_stop_price = new_stop
-                        print(f"[TRAILING] SHORT стоп обновлен до {trailing_stop_price:.8f}")
-
-                # ПОСЛЕ обновления проверяем срабатывание trailing stop
-                # НЕ проверяем на свече активации
-                if is_trailing_active and current_time != activation_candle_time and high_price >= trailing_stop_price:
-                    is_closed = True
-                    close_reason = 'trailing_stop'
-                    close_price = trailing_stop_price
-                    close_time = current_time
-                    print(f"[TRAILING] SHORT закрыт по trailing stop на {close_price:.8f}")
-
-            else:  # BUY, LONG
-                # Проверка страховочного SL (только если trailing не активен)
-                if not is_trailing_active and low_price <= insurance_sl_price:
-                    is_closed = True
-                    close_reason = 'stop_loss'
-                    close_price = insurance_sl_price
-                    close_time = current_time
+                    close_price = sl_price
+                    close_time = candle_time
                     continue
 
-                # СНАЧАЛА обновляем best_price
-                if high_price > best_price_for_trailing:
-                    best_price_for_trailing = high_price
+                # Trailing Stop логика
+                if is_short:
+                    # Обновляем best_price
+                    if low_price < best_price_for_trailing:
+                        best_price_for_trailing = low_price
 
-                # ЗАТЕМ проверяем активацию trailing stop
-                if not is_trailing_active and best_price_for_trailing >= activation_price:
-                    is_trailing_active = True
-                    result['trailing_activated'] = True
-                    activation_candle_time = current_time  # Запоминаем время активации
-                    trailing_stop_price = best_price_for_trailing * (1 - trailing_distance_pct / 100)
-                    print(
-                        f"[TRAILING] LONG активирован на {best_price_for_trailing:.8f}, stop={trailing_stop_price:.8f}")
-                
-                # Если trailing активен, обновляем стоп при изменении best_price
-                if is_trailing_active:
-                    new_stop = best_price_for_trailing * (1 - trailing_distance_pct / 100)
-                    if new_stop > trailing_stop_price:
-                        trailing_stop_price = new_stop
-                        print(f"[TRAILING] LONG стоп обновлен до {trailing_stop_price:.8f}")
+                    # Активация trailing stop
+                    if not is_trailing_active and best_price_for_trailing <= activation_price:
+                        is_trailing_active = True
+                        result['trailing_activated'] = True
+                        activation_candle_time = candle_time
+                        trailing_stop_price = best_price_for_trailing * (1 + trailing_distance_pct / 100)
 
-                # ПОСЛЕ обновления проверяем срабатывание trailing stop
-                # НЕ проверяем на свече активации
-                if is_trailing_active and current_time != activation_candle_time and low_price <= trailing_stop_price:
+                    # Обновление trailing stop
+                    if is_trailing_active:
+                        new_stop = best_price_for_trailing * (1 + trailing_distance_pct / 100)
+                        if new_stop < trailing_stop_price:
+                            trailing_stop_price = new_stop
+
+                    # Срабатывание trailing stop
+                    if is_trailing_active and candle_time != activation_candle_time and high_price >= trailing_stop_price:
+                        is_closed = True
+                        close_reason = 'trailing_stop'
+                        close_price = trailing_stop_price
+                        close_time = candle_time
+
+                else:  # LONG
+                    # Обновляем best_price
+                    if high_price > best_price_for_trailing:
+                        best_price_for_trailing = high_price
+
+                    # Активация trailing stop
+                    if not is_trailing_active and best_price_for_trailing >= activation_price:
+                        is_trailing_active = True
+                        result['trailing_activated'] = True
+                        activation_candle_time = candle_time
+                        trailing_stop_price = best_price_for_trailing * (1 - trailing_distance_pct / 100)
+
+                    # Обновление trailing stop
+                    if is_trailing_active:
+                        new_stop = best_price_for_trailing * (1 - trailing_distance_pct / 100)
+                        if new_stop > trailing_stop_price:
+                            trailing_stop_price = new_stop
+
+                    # Срабатывание trailing stop
+                    if is_trailing_active and candle_time != activation_candle_time and low_price <= trailing_stop_price:
+                        is_closed = True
+                        close_reason = 'trailing_stop'
+                        close_price = trailing_stop_price
+                        close_time = candle_time
+
+            # ФАЗА 2: Breakeven Window (24-32ч)
+            elif phase1_end < candle_time <= phase2_end:
+                # Закрытие в безубыток при касании entry_price
+                if (is_long and high_price >= entry_price) or (is_short and low_price <= entry_price):
                     is_closed = True
-                    close_reason = 'trailing_stop'
-                    close_price = trailing_stop_price
-                    close_time = current_time
-                    print(f"[TRAILING] LONG закрыт по trailing stop на {close_price:.8f}")
+                    close_reason = 'breakeven'
+                    close_price = entry_price
+                    close_time = candle_time
 
-    # После обработки ВСЕЙ истории проверяем таймаут
-    if not is_closed and len(history) > 0:
-        # ИСПРАВЛЕНИЕ: Используем signal_timestamp если он передан
-        if signal_timestamp:
-            # Считаем от времени сигнала
-            hours_passed = (history[-1]['timestamp'] - signal_timestamp).total_seconds() / 3600
-        else:
-            # Fallback - считаем весь период истории
-            hours_passed = (history[-1]['timestamp'] - history[0]['timestamp']).total_seconds() / 3600
+            # ФАЗА 3: Smart Loss (32ч+)
+            elif candle_time > phase2_end:
+                # Рассчитываем накопленный убыток
+                hours_into_loss = (candle_time - phase2_end).total_seconds() / 3600
+                loss_multiplier = max(1, math.ceil(hours_into_loss))
+                loss_percent = smart_loss_rate * loss_multiplier
 
-        if hours_passed >= 48:
-            last_price = float(history[-1]['close_price'])
-            is_closed = True
-            close_reason = 'timeout'
-            close_price = last_price
-            close_time = history[-1]['timestamp']
-            print(f"[TRAILING] Позиция закрыта по таймауту после {hours_passed:.1f} часов")
+                # Вычисляем цену закрытия с убытком
+                if is_long:
+                    close_price = entry_price * (1 - loss_percent / 100)
+                else:  # SHORT
+                    close_price = entry_price * (1 + loss_percent / 100)
+
+                is_closed = True
+                close_reason = 'smart_loss'
+                close_time = candle_time
+                break  # Выходим, т.к. smart loss - окончательное закрытие
 
     # Формируем результат
     if is_closed:
-        if signal_action in ['SELL', 'SHORT']:
+        if is_short:
             result['pnl_percent'] = ((entry_price - close_price) / entry_price) * 100
         else:
             result['pnl_percent'] = ((close_price - entry_price) / entry_price) * 100
 
         # Расчет PnL с учетом комиссий
         gross_pnl = effective_position * (result['pnl_percent'] / 100)
-        result['pnl_usd'] = gross_pnl - total_commission  # NET PnL после комиссий
-        result['gross_pnl_usd'] = gross_pnl  # GROSS PnL до комиссий
-        result['commission_usd'] = total_commission  # Общая комиссия
+        result['pnl_usd'] = gross_pnl - total_commission  # NET PnL
+        result['gross_pnl_usd'] = gross_pnl
+        result['commission_usd'] = total_commission
         result['entry_commission_usd'] = entry_commission
         result['exit_commission_usd'] = exit_commission
         result['is_closed'] = True
@@ -1576,7 +1591,7 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
         result['close_price'] = close_price
         result['close_time'] = close_time
 
-    # КРИТИЧНО: Сохраняем максимальный профит независимо от закрытия
+    # Сохраняем максимальный профит независимо от закрытия
     result['max_profit_usd'] = max_profit_usd
     result['best_price'] = best_price_for_trailing
     result['absolute_best_price'] = absolute_best_price
@@ -1627,9 +1642,9 @@ def process_signal_with_trailing(db, signal, user_settings):
             SELECT open_price
             FROM fas.market_data_aggregated
             WHERE trading_pair_id = %s 
-                AND timeframe = '15m'
-                AND timestamp >= %s - INTERVAL '15 minutes'
-                AND timestamp <= %s + INTERVAL '15 minutes'
+                AND timeframe = '5m'
+                AND timestamp >= %s - INTERVAL '5 minutes'
+                AND timestamp <= %s + INTERVAL '5 minutes'
             ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
             LIMIT 1
         """
@@ -1646,7 +1661,7 @@ def process_signal_with_trailing(db, signal, user_settings):
                 SELECT open_price
                 FROM fas.market_data_aggregated
                 WHERE trading_pair_id = %s
-                    AND timeframe = '15m'
+                    AND timeframe = '5m'
                     AND timestamp >= %s - INTERVAL '1 hour'
                     AND timestamp <= %s + INTERVAL '1 hour'
                 ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
@@ -1668,7 +1683,7 @@ def process_signal_with_trailing(db, signal, user_settings):
             SELECT timestamp, open_price, high_price, low_price, close_price
             FROM fas.market_data_aggregated
             WHERE trading_pair_id = %s
-                AND timeframe = '15m'
+                AND timeframe = '5m'
                 AND timestamp >= %s
                 AND timestamp <= NOW()
             ORDER BY timestamp ASC
@@ -2289,7 +2304,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                     timestamp
                 FROM fas.market_data_aggregated
                 WHERE trading_pair_id = %s
-                    AND timeframe = '15m'
+                    AND timeframe = '5m'
                     AND timestamp >= %s - INTERVAL '15 minutes'
                     AND timestamp <= %s + INTERVAL '15 minutes'
                 ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
@@ -2311,7 +2326,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                         timestamp
                     FROM fas.market_data_aggregated
                     WHERE trading_pair_id = %s
-                        AND timeframe = '15m'
+                        AND timeframe = '5m'
                         AND timestamp >= %s - INTERVAL '1 hour'
                         AND timestamp <= %s + INTERVAL '1 hour'
                     ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
@@ -2340,7 +2355,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                     close_price
                 FROM fas.market_data_aggregated
                 WHERE trading_pair_id = %s
-                    AND timeframe = '15m'
+                    AND timeframe = '5m'
                     AND timestamp >= %s
                     AND timestamp <= %s + INTERVAL '48 hours'
                 ORDER BY timestamp ASC
