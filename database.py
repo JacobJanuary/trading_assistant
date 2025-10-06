@@ -3055,11 +3055,57 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
         use_trailing_stop, trailing_distance_pct, trailing_activation_pct
     )
 
+    # Получаем статистику из БД (для совместимости с UI)
+    stats_query = """
+        SELECT
+            COUNT(*) as total,
+            COUNT(CASE WHEN signal_action = 'BUY' THEN 1 END) as buy_signals,
+            COUNT(CASE WHEN signal_action = 'SELL' THEN 1 END) as sell_signals,
+            COUNT(CASE WHEN close_reason = 'take_profit' THEN 1 END) as tp_count,
+            COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_count,
+            COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as trailing_count,
+            COUNT(CASE WHEN close_reason = 'timeout' THEN 1 END) as timeout_count,
+            COUNT(CASE WHEN close_reason = 'smart_loss' THEN 1 END) as smart_loss_count,
+            COUNT(CASE WHEN close_reason = 'breakeven' THEN 1 END) as breakeven_count,
+            COUNT(CASE WHEN close_reason = 'liquidation' THEN 1 END) as liquidation_count,
+            COUNT(CASE WHEN close_reason = 'period_end' THEN 1 END) as period_end_count,
+            COUNT(CASE WHEN is_closed = FALSE THEN 1 END) as open_count,
+            COALESCE(SUM(pnl_usd), 0) as total_pnl,
+            COALESCE(SUM(CASE WHEN close_reason = 'take_profit' THEN pnl_usd ELSE 0 END), 0) as tp_profit,
+            COALESCE(SUM(CASE WHEN close_reason = 'stop_loss' THEN ABS(pnl_usd) ELSE 0 END), 0) as sl_loss,
+            COALESCE(SUM(CASE WHEN close_reason = 'trailing_stop' THEN pnl_usd ELSE 0 END), 0) as trailing_pnl,
+            COUNT(CASE WHEN close_reason = 'trailing_stop' AND pnl_usd > 0 THEN 1 END) as trailing_wins,
+            COUNT(CASE WHEN close_reason = 'trailing_stop' AND pnl_usd <= 0 THEN 1 END) as trailing_losses,
+            SUM(max_potential_profit_usd) as total_max_potential,
+            AVG(hours_to_close) FILTER (WHERE close_reason != 'timeout') as avg_hours_to_close,
+            COUNT(CASE WHEN exchange_name = 'Binance' THEN 1 END) as binance_signals,
+            COUNT(CASE WHEN exchange_name = 'Bybit' THEN 1 END) as bybit_signals
+        FROM web.scoring_analysis_results
+        WHERE session_id = %s AND user_id = %s
+    """
+
+    try:
+        stats_result = db.execute_query(stats_query, (session_id, user_id), fetch=True)
+        db_stats = stats_result[0] if stats_result else {}
+    except Exception as e:
+        print(f"[SCORING V2] Ошибка получения статистики из БД: {e}")
+        db_stats = {
+            'total': total_processed,
+            'buy_signals': 0,
+            'sell_signals': 0,
+            'tp_count': 0,
+            'sl_count': 0,
+            'trailing_count': 0,
+            'timeout_count': 0,
+            'open_count': 0,
+            'total_pnl': summary['total_pnl']
+        }
+
     return {
         'processed': total_processed,
         'errors': 0,
         'simulation_summary': summary,
-        'stats': sim.stats
+        'stats': db_stats  # Используем статистику из БД вместо sim.stats
     }
 
 
