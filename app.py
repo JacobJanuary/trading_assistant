@@ -1121,7 +1121,7 @@ def scoring_analysis_v2():
         settings_query = """
             SELECT use_trailing_stop, trailing_distance_pct, trailing_activation_pct,
                    take_profit_percent, stop_loss_percent, position_size_usd, leverage,
-                   allowed_hours
+                   allowed_hours, initial_capital
             FROM web.user_signal_filters
             WHERE user_id = %s
         """
@@ -1136,6 +1136,7 @@ def scoring_analysis_v2():
         trailing_distance = 2.0
         trailing_activation = 1.0
         allowed_hours = list(range(24))
+        initial_capital = Config.INITIAL_CAPITAL
         
         if user_settings:
             settings = user_settings[0]
@@ -1147,6 +1148,7 @@ def scoring_analysis_v2():
             trailing_distance = float(settings.get('trailing_distance_pct', 2.0))
             trailing_activation = float(settings.get('trailing_activation_pct', 1.0))
             allowed_hours = settings.get('allowed_hours', list(range(24)))
+            initial_capital = float(settings.get('initial_capital', Config.INITIAL_CAPITAL))
 
         # Форматируем allowed_hours для отображения
         hours_display = ""
@@ -1186,10 +1188,11 @@ def scoring_analysis_v2():
                 'mode': mode,
                 'tp_percent': tp_percent,
                 'sl_percent': sl_percent,
-                'position_size': position_size,
+                'position_size_usd': position_size,
                 'leverage': leverage,
                 'trailing_distance': trailing_distance,
-                'trailing_activation': trailing_activation
+                'trailing_activation': trailing_activation,
+                'initial_capital': initial_capital
             },
             hours_display=hours_display
         )
@@ -1685,6 +1688,37 @@ def api_scoring_save_filters():
 
     except Exception as e:
         logger.error(f"Ошибка сохранения фильтров: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/scoring/save_trading_params', methods=['POST'])
+@login_required
+def api_scoring_save_trading_params():
+    """API для сохранения параметров торговли (position_size, leverage, initial_capital)"""
+    try:
+        data = request.get_json()
+
+        position_size = float(data.get('position_size', 100))
+        leverage = int(data.get('leverage', 5))
+        initial_capital = float(data.get('initial_capital', 1000))
+
+        update_query = """
+            UPDATE web.user_signal_filters SET
+                position_size_usd = %s,
+                leverage = %s,
+                initial_capital = %s,
+                updated_at = NOW()
+            WHERE user_id = %s
+        """
+        db.execute_query(update_query, (position_size, leverage, initial_capital, current_user.id))
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Параметры торговли сохранены'
+        })
+
+    except Exception as e:
+        logger.error(f"Ошибка сохранения параметров торговли: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 

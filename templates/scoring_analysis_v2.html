@@ -118,7 +118,7 @@
             Параметры торговли
         </h2>
 
-        <div class="grid grid-cols-2 md:grid-cols-2 gap-4 mb-4">
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
             <!-- Position Size -->
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">
@@ -140,6 +140,19 @@
                        min="1" max="20" step="1"
                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
             </div>
+
+            <!-- Initial Capital -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                    Начальный капитал ($)
+                    <i class="fas fa-info-circle text-gray-400 text-xs ml-1"
+                       title="Стартовый капитал для симуляции торговли"></i>
+                </label>
+                <input type="number" id="initialCapital"
+                       value="{{ params.initial_capital|default(1000) }}"
+                       min="100" max="100000" step="100"
+                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+            </div>
         </div>
 
         <!-- Кнопки управления -->
@@ -152,10 +165,17 @@
 
             <!-- Группа кнопок сохранения/загрузки -->
             <div class="flex gap-2">
+                <button onclick="saveTradingParams()"
+                        class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
+                        title="Сохранить параметры торговли (позиция, плечо, капитал)">
+                    <i class="fas fa-save mr-2"></i>
+                    Сохранить параметры
+                </button>
+
                 <button onclick="showSaveModal()"
                         class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 transition-colors">
                     <i class="fas fa-save mr-2"></i>
-                    Сохранить
+                    Сохранить фильтры
                 </button>
 
                 <button onclick="showLoadModal()"
@@ -390,6 +410,7 @@
         const date = document.getElementById('dateFilter').value;
         const positionSize = parseFloat(document.getElementById('positionSize').value);
         const leverage = parseInt(document.getElementById('leverage').value);
+        const initialCapital = parseFloat(document.getElementById('initialCapital').value);
         
         // Используем параметры из сохраненной стратегии
         const tp = {{ params.tp_percent|default(4.0) }};
@@ -415,7 +436,8 @@
                               `- Score Month >= ${currentScoreMonth}\n` +
                               `- Макс. сделок за 15 мин: ${currentMaxTrades}\n\n` +
                               `Режим: ${modeText}\n` +
-                              `Параметры: TP=${tp}%, SL=${sl}%, Size=$${positionSize}, Lev=${leverage}x\n\n` +
+                              `Параметры: TP=${tp}%, SL=${sl}%, Size=$${positionSize}, Lev=${leverage}x\n` +
+                              `Капитал: $${initialCapital}\n\n` +
                               `Продолжить?`;
 
                 if (!confirm(message)) {
@@ -440,7 +462,8 @@
                         tp_percent: tp,
                         sl_percent: sl,
                         position_size: positionSize,
-                        leverage: leverage
+                        leverage: leverage,
+                        initial_capital: initialCapital
                     })
                 })
                 .then(response => response.json())
@@ -784,6 +807,48 @@
 
         // Здесь можно добавить логику экспорта в Excel
         showNotification('Функция экспорта в разработке', 'info');
+    }
+
+    // Сохранение параметров торговли
+    function saveTradingParams() {
+        const positionSize = parseFloat(document.getElementById('positionSize').value);
+        const leverage = parseInt(document.getElementById('leverage').value);
+        const initialCapital = parseFloat(document.getElementById('initialCapital').value);
+
+        // Валидация
+        if (positionSize < 10 || positionSize > 10000) {
+            alert('Размер позиции должен быть от $10 до $10,000');
+            return;
+        }
+        if (leverage < 1 || leverage > 20) {
+            alert('Плечо должно быть от 1x до 20x');
+            return;
+        }
+        if (initialCapital < 100 || initialCapital > 100000) {
+            alert('Начальный капитал должен быть от $100 до $100,000');
+            return;
+        }
+
+        fetch('/api/scoring/save_trading_params', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                position_size: positionSize,
+                leverage: leverage,
+                initial_capital: initialCapital
+            })
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.status === 'success') {
+                showNotification('Параметры торговли сохранены', 'success');
+            } else {
+                alert('Ошибка сохранения: ' + result.message);
+            }
+        })
+        .catch(error => {
+            alert('Ошибка сети: ' + error);
+        });
     }
 </script>
 {% endblock %}
