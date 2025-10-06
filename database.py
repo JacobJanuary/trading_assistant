@@ -1177,7 +1177,8 @@ def process_signal_complete(db, signal,
                 entry_price, history, signal_action,
                 trailing_distance_pct, trailing_activation_pct,
                 sl_percent, position_size, leverage,
-                signal_timestamp  # Передаем timestamp для корректного расчета таймаута
+                signal_timestamp,  # Передаем timestamp для корректного расчета таймаута
+                Config.DEFAULT_COMMISSION_RATE  # Передаем commission_rate
             )
 
             is_closed = result['is_closed']
@@ -1199,7 +1200,14 @@ def process_signal_complete(db, signal,
                 unrealized_pnl = 0
 
         else:
-            # СУЩЕСТВУЮЩАЯ ЛОГИКА Fixed TP/SL (оставляем как есть)
+            # СУЩЕСТВУЮЩАЯ ЛОГИКА Fixed TP/SL с учетом комиссий
+            # Расчет комиссий
+            commission_rate = Config.DEFAULT_COMMISSION_RATE
+            effective_position = position_size * leverage
+            entry_commission = effective_position * commission_rate
+            exit_commission = effective_position * commission_rate
+            total_commission = entry_commission + exit_commission
+
             max_profit = 0
             max_profit_price = entry_price
             is_closed = False
@@ -1229,7 +1237,8 @@ def process_signal_complete(db, signal,
                     if low_price < best_price_ever:
                         best_price_ever = low_price
                         max_profit_percent = ((entry_price - best_price_ever) / entry_price) * 100
-                        potential_max_profit = position_size * (max_profit_percent / 100) * leverage
+                        gross_potential_max_profit = effective_position * (max_profit_percent / 100)
+                        potential_max_profit = gross_potential_max_profit - total_commission  # Вычитаем комиссии
                         if potential_max_profit > max_profit:
                             max_profit = potential_max_profit
                             max_profit_price = best_price_ever
@@ -1250,7 +1259,8 @@ def process_signal_complete(db, signal,
                     if high_price > best_price_ever:
                         best_price_ever = high_price
                         max_profit_percent = ((best_price_ever - entry_price) / entry_price) * 100
-                        potential_max_profit = position_size * (max_profit_percent / 100) * leverage
+                        gross_potential_max_profit = effective_position * (max_profit_percent / 100)
+                        potential_max_profit = gross_potential_max_profit - total_commission  # Вычитаем комиссии
                         if potential_max_profit > max_profit:
                             max_profit = potential_max_profit
                             max_profit_price = best_price_ever
@@ -1277,13 +1287,14 @@ def process_signal_complete(db, signal,
                     close_price = last_price
                     close_time = history[-1]['timestamp']
 
-            # Рассчитываем realized PnL если закрыта
+            # Рассчитываем realized PnL если закрыта (с учетом комиссий)
             if is_closed:
                 if signal_action in ['SELL', 'SHORT']:
                     pnl_percent = ((entry_price - close_price) / entry_price) * 100
                 else:
                     pnl_percent = ((close_price - entry_price) / entry_price) * 100
-                realized_pnl = position_size * (pnl_percent / 100) * leverage
+                gross_pnl = effective_position * (pnl_percent / 100)
+                realized_pnl = gross_pnl - total_commission  # NET PnL после комиссий
 
             # Рассчитываем unrealized PnL если открыта
             unrealized_pnl = 0
@@ -1371,12 +1382,23 @@ def process_signal_complete(db, signal,
 def calculate_trailing_stop_exit(entry_price, history, signal_action,
                                  trailing_distance_pct, trailing_activation_pct,
                                  sl_percent, position_size, leverage,
-                                 signal_timestamp=None):  # ДОБАВЛЯЕМ параметр
+                                 signal_timestamp=None, commission_rate=None):  # ДОБАВЛЯЕМ параметр
     """
     Расчет выхода по trailing stop с ПРАВИЛЬНЫМ отслеживанием максимального профита
 
     ВАЖНО: Добавлен параметр signal_timestamp для корректного расчета таймаута
+    ВАЖНО: Добавлен параметр commission_rate для учета комиссий
     """
+    from config import Config
+
+    # Расчет комиссий
+    if commission_rate is None:
+        commission_rate = Config.DEFAULT_COMMISSION_RATE
+
+    effective_position = position_size * leverage
+    entry_commission = effective_position * commission_rate
+    exit_commission = effective_position * commission_rate
+    total_commission = entry_commission + exit_commission
 
     # Переменные для отслеживания trailing stop
     is_trailing_active = False
@@ -1430,12 +1452,14 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
             if low_price < absolute_best_price:
                 absolute_best_price = low_price
                 max_profit_percent = ((entry_price - absolute_best_price) / entry_price) * 100
-                max_profit_usd = position_size * (max_profit_percent / 100) * leverage
+                gross_max_profit = effective_position * (max_profit_percent / 100)
+                max_profit_usd = gross_max_profit - total_commission  # Вычитаем комиссии
         else:  # BUY, LONG
             if high_price > absolute_best_price:
                 absolute_best_price = high_price
                 max_profit_percent = ((absolute_best_price - entry_price) / entry_price) * 100
-                max_profit_usd = position_size * (max_profit_percent / 100) * leverage
+                gross_max_profit = effective_position * (max_profit_percent / 100)
+                max_profit_usd = gross_max_profit - total_commission  # Вычитаем комиссии
 
         # ============ БЛОК 2: Управление позицией (только если еще открыта) ============
         if not is_closed:
@@ -1540,7 +1564,13 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
         else:
             result['pnl_percent'] = ((close_price - entry_price) / entry_price) * 100
 
-        result['pnl_usd'] = position_size * (result['pnl_percent'] / 100) * leverage
+        # Расчет PnL с учетом комиссий
+        gross_pnl = effective_position * (result['pnl_percent'] / 100)
+        result['pnl_usd'] = gross_pnl - total_commission  # NET PnL после комиссий
+        result['gross_pnl_usd'] = gross_pnl  # GROSS PnL до комиссий
+        result['commission_usd'] = total_commission  # Общая комиссия
+        result['entry_commission_usd'] = entry_commission
+        result['exit_commission_usd'] = exit_commission
         result['is_closed'] = True
         result['close_reason'] = close_reason
         result['close_price'] = close_price
@@ -1655,7 +1685,9 @@ def process_signal_with_trailing(db, signal, user_settings):
             result = calculate_trailing_stop_exit(
                 entry_price, history, signal_action,
                 trailing_distance, trailing_activation,
-                sl_percent, position_size, leverage
+                sl_percent, position_size, leverage,
+                signal_timestamp,  # Передаем timestamp для таймаута
+                Config.DEFAULT_COMMISSION_RATE  # Передаем commission_rate
             )
 
             is_closed = result['is_closed']
@@ -2338,7 +2370,8 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                     sl_percent,
                     position_size,
                     leverage,
-                    signal_timestamp=signal['timestamp']
+                    signal_timestamp=signal['timestamp'],
+                    commission_rate=Config.DEFAULT_COMMISSION_RATE
                 )
 
                 # Извлекаем все данные из результата
@@ -2386,7 +2419,14 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                     debug_stats['still_open'] += 1
 
             else:
-                # СУЩЕСТВУЮЩАЯ ЛОГИКА Fixed TP/SL
+                # СУЩЕСТВУЮЩАЯ ЛОГИКА Fixed TP/SL с учетом комиссий
+                # Расчет комиссий
+                commission_rate = Config.DEFAULT_COMMISSION_RATE
+                effective_position = position_size * leverage
+                entry_commission = effective_position * commission_rate
+                exit_commission = effective_position * commission_rate
+                total_commission = entry_commission + exit_commission
+
                 is_closed = False
                 close_reason = None
                 close_price = None
@@ -2416,7 +2456,8 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                         if low_price < best_price_reached:
                             best_price_reached = low_price
                             temp_profit_percent = ((entry_price - best_price_reached) / entry_price) * 100
-                            temp_profit_usd = position_size * (temp_profit_percent / 100) * leverage
+                            gross_temp_profit = effective_position * (temp_profit_percent / 100)
+                            temp_profit_usd = gross_temp_profit - total_commission  # Вычитаем комиссии
                             if temp_profit_usd > max_profit_usd:
                                 max_profit_percent = temp_profit_percent
                                 max_profit_usd = temp_profit_usd
@@ -2442,7 +2483,8 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                         if high_price > best_price_reached:
                             best_price_reached = high_price
                             temp_profit_percent = ((best_price_reached - entry_price) / entry_price) * 100
-                            temp_profit_usd = position_size * (temp_profit_percent / 100) * leverage
+                            gross_temp_profit = effective_position * (temp_profit_percent / 100)
+                            temp_profit_usd = gross_temp_profit - total_commission  # Вычитаем комиссии
                             if temp_profit_usd > max_profit_usd:
                                 max_profit_percent = temp_profit_percent
                                 max_profit_usd = temp_profit_usd
@@ -2482,12 +2524,13 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                         hours_to_close = hours_passed
                         debug_stats['still_open'] += 1
 
-                # Рассчитываем финальный P&L
+                # Рассчитываем финальный P&L с учетом комиссий
                 if signal['signal_action'] in ['SELL', 'SHORT']:
                     final_pnl_percent = ((entry_price - close_price) / entry_price) * 100
                 else:
                     final_pnl_percent = ((close_price - entry_price) / entry_price) * 100
-                final_pnl_usd = position_size * (final_pnl_percent / 100) * leverage
+                gross_final_pnl = effective_position * (final_pnl_percent / 100)
+                final_pnl_usd = gross_final_pnl - total_commission  # NET PnL после комиссий
 
             # Добавляем в batch с КОРРЕКТНЫМИ данными
             batch_data.append((

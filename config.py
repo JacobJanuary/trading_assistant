@@ -66,6 +66,9 @@ class Config:
     DEFAULT_LEVERAGE = int(os.getenv('DEFAULT_LEVERAGE', 5))
     DEFAULT_STOP_LOSS_PERCENT = float(os.getenv('DEFAULT_STOP_LOSS_PERCENT', 3.0))
     DEFAULT_TAKE_PROFIT_PERCENT = float(os.getenv('DEFAULT_TAKE_PROFIT_PERCENT', 4.0))
+
+    # Комиссии (0.06% = 0.0006)
+    DEFAULT_COMMISSION_RATE = float(os.getenv('DEFAULT_COMMISSION_RATE', 0.0006))
     
     # Trailing Stop параметры
     DEFAULT_TRAILING_DISTANCE_PCT = float(os.getenv('DEFAULT_TRAILING_DISTANCE_PCT', 2.0))
