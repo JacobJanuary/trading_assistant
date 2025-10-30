@@ -3843,10 +3843,153 @@ def api_backtest_combo_details():
         }), 500
 
 
+# ============================================================================
+# WHALE FUTURES - Restored from nginx logs
+# ============================================================================
+
+@app.route('/whale_futures')
+@login_required
+def whale_futures():
+    """Whale Futures tracking page"""
+    return render_template('whale_futures.html')
+
+
+@app.route('/api/whale_futures/stats', methods=['GET'])
+@login_required
+def api_whale_futures_stats():
+    """API: Get aggregated whale statistics"""
+    try:
+        time_filter = request.args.get('time_filter', '24h')
+        min_size_usd = float(request.args.get('min_size_usd', 10000000))
+
+        # Parse time filter
+        hours = int(time_filter.replace('h', ''))
+
+        # Query aggregated stats
+        stats_query = """
+            SELECT
+                COUNT(*) as total_positions,
+                COUNT(DISTINCT symbol) as unique_symbols,
+                SUM(CASE WHEN side = 'LONG' THEN 1 ELSE 0 END) as long_count,
+                SUM(CASE WHEN side = 'SHORT' THEN 1 ELSE 0 END) as short_count,
+                SUM(CASE WHEN side = 'LONG' THEN size_usd ELSE 0 END) as long_volume_usd,
+                SUM(CASE WHEN side = 'SHORT' THEN size_usd ELSE 0 END) as short_volume_usd,
+                SUM(size_usd) as total_volume_usd
+            FROM web.whale_positions
+            WHERE trade_timestamp >= NOW() - INTERVAL '%s hours'
+                AND size_usd >= %s
+        """
+
+        result = db.execute_query(stats_query, (hours, min_size_usd), fetch=True)
+
+        if result:
+            stats = result[0]
+            return jsonify({
+                'status': 'success',
+                'stats': {
+                    'total_positions': int(stats['total_positions'] or 0),
+                    'unique_symbols': int(stats['unique_symbols'] or 0),
+                    'long_count': int(stats['long_count'] or 0),
+                    'short_count': int(stats['short_count'] or 0),
+                    'long_volume_usd': float(stats['long_volume_usd'] or 0),
+                    'short_volume_usd': float(stats['short_volume_usd'] or 0),
+                    'total_volume_usd': float(stats['total_volume_usd'] or 0)
+                }
+            })
+        else:
+            return jsonify({'status': 'success', 'stats': {}})
+
+    except Exception as e:
+        logger.error(f"Error in whale_futures_stats: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/whale_futures/data', methods=['GET'])
+@login_required
+def api_whale_futures_data():
+    """API: Get whale positions data"""
+    try:
+        time_filter = request.args.get('time_filter', '24h')
+        min_size_usd = float(request.args.get('min_size_usd', 10000000))
+        side = request.args.get('side', 'both')
+        exchange = request.args.get('exchange', 'all')
+        limit = int(request.args.get('limit', 100))
+
+        # Parse time filter
+        hours = int(time_filter.replace('h', ''))
+
+        # Build query
+        query = """
+            SELECT
+                id,
+                exchange,
+                symbol,
+                side,
+                size_usd,
+                price,
+                trade_timestamp,
+                wallet_address,
+                trade_count,
+                duration_sec,
+                source,
+                net_position_usd,
+                is_market_maker,
+                created_at
+            FROM web.whale_positions
+            WHERE trade_timestamp >= NOW() - INTERVAL '%s hours'
+                AND size_usd >= %s
+        """
+        params = [hours, min_size_usd]
+
+        # Add side filter
+        if side != 'both':
+            query += " AND side = %s"
+            params.append(side.upper())
+
+        # Add exchange filter
+        if exchange != 'all':
+            query += " AND exchange = %s"
+            params.append(exchange)
+
+        query += " ORDER BY trade_timestamp DESC LIMIT %s"
+        params.append(limit)
+
+        results = db.execute_query(query, tuple(params), fetch=True)
+
+        positions = []
+        if results:
+            for row in results:
+                positions.append({
+                    'id': row['id'],
+                    'exchange': row['exchange'],
+                    'symbol': row['symbol'],
+                    'side': row['side'],
+                    'size_usd': float(row['size_usd']),
+                    'price': float(row['price']) if row['price'] else None,
+                    'trade_timestamp': row['trade_timestamp'].isoformat() if row['trade_timestamp'] else None,
+                    'wallet_address': row['wallet_address'],
+                    'trade_count': int(row['trade_count']) if row['trade_count'] else None,
+                    'duration_sec': float(row['duration_sec']) if row['duration_sec'] else None,
+                    'source': row['source'],
+                    'net_position_usd': float(row['net_position_usd']) if row['net_position_usd'] else None,
+                    'is_market_maker': row['is_market_maker']
+                })
+
+        return jsonify({
+            'status': 'success',
+            'data': positions,
+            'count': len(positions)
+        })
+
+    except Exception as e:
+        logger.error(f"Error in whale_futures_data: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 # Запуск приложения
 if __name__ == '__main__':
     port = Config.PORT
     debug = Config.FLASK_DEBUG
-    
+
     logger.info(f"Запуск приложения на порту {port}")
     app.run(host='0.0.0.0', port=port, debug=debug)
