@@ -3876,7 +3876,7 @@ def api_whale_futures_stats():
                 SUM(CASE WHEN side = 'SHORT' THEN size_usd ELSE 0 END) as short_volume_usd,
                 SUM(size_usd) as total_volume_usd
             FROM web.whale_positions
-            WHERE trade_timestamp >= NOW() - INTERVAL '%s hours'
+            WHERE trade_timestamp >= NOW() - INTERVAL '1 hour' * %s
                 AND size_usd >= %s
         """
 
@@ -3936,7 +3936,7 @@ def api_whale_futures_data():
                 is_market_maker,
                 created_at
             FROM web.whale_positions
-            WHERE trade_timestamp >= NOW() - INTERVAL '%s hours'
+            WHERE trade_timestamp >= NOW() - INTERVAL '1 hour' * %s
                 AND size_usd >= %s
         """
         params = [hours, min_size_usd]
