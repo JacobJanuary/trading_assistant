@@ -177,8 +177,19 @@ async function loadSymbolsChart() {
     const minSize = document.getElementById('min-size').value;
 
     try {
-        const resp = await fetch(`/api/whale_futures/symbols?time_filter=${timeFilter}&min_size_usd=${minSize}`);
+        const url = `/api/whale_futures/symbols?time_filter=${timeFilter}&min_size_usd=${minSize}`;
+        console.log('Fetching symbols from:', url);
+
+        const resp = await fetch(url);
+        console.log('Response status:', resp.status);
+
+        if (!resp.ok) {
+            console.error('Response not OK:', resp.status, resp.statusText);
+            return;
+        }
+
         const data = await resp.json();
+        console.log('Symbols data:', data);
 
         if (data.status === 'success' && data.data && data.data.length > 0) {
             const ctx = document.getElementById('longShortChart').getContext('2d');
@@ -191,6 +202,8 @@ async function loadSymbolsChart() {
             const symbols = data.data.map(d => d.symbol);
             const longVolumes = data.data.map(d => d.long_volume);
             const shortVolumes = data.data.map(d => d.short_volume);
+
+            console.log('Creating chart with', symbols.length, 'symbols');
 
             longShortChart = new Chart(ctx, {
                 type: 'bar',
@@ -250,6 +263,26 @@ async function loadSymbolsChart() {
                                 }
                             }
                         }
+                    }
+                }
+            });
+        } else {
+            console.warn('No symbols data available:', data);
+            // Show empty state
+            const ctx = document.getElementById('longShortChart').getContext('2d');
+            if (longShortChart) {
+                longShortChart.destroy();
+            }
+            longShortChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: []
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false }
                     }
                 }
             });
