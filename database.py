@@ -3377,3 +3377,302 @@ def get_user_scoring_filters(db, user_id):
         return filters
 
     return []
+
+
+def get_best_scoring_signals_with_backtest_params(db):
+    """
+    Получение сигналов с оптимальными параметрами из backtest_summary_binance/bybit.
+    Автоматически находит лучшие параметры фильтрации на основе результатов бэктестов.
+
+    Логика выбора лучших параметров:
+    1. Для Binance и Bybit отдельно находим summary с max(total_pnl_usd)
+    2. Берем записи где total_pnl_usd >= 85% от максимального
+    3. Из этих записей выбираем ту, у которой максимальный win_rate
+    4. Используем все параметры из этой записи (SL, TS, max_trades)
+
+    Возвращает: (signals, params_by_exchange)
+        signals: список сигналов
+        params_by_exchange: dict с параметрами для каждой биржи {exchange_id: {...}}
+    """
+
+    print(f"\n[BEST SIGNALS] ========== ПОЛУЧЕНИЕ СИГНАЛОВ С ОПТИМАЛЬНЫМИ ПАРАМЕТРАМИ ==========")
+    print(f"[BEST SIGNALS] Период: последние 48 часов")
+    print(f"[BEST SIGNALS] Все параметры берутся из оптимального backtest для каждой биржи")
+
+    # SQL запрос для получения сигналов с оптимальными параметрами
+    query = """
+    -- 1. CTE для поиска ЛУЧШЕГО ID для Binance
+    WITH best_binance_id AS (
+        WITH FilteredSummaries AS (
+            SELECT DISTINCT ON (total_pnl_usd)
+                summary_id,
+                win_rate,
+                total_pnl_usd
+            FROM
+                web.backtest_summary_binance
+            WHERE
+                total_pnl_usd >= (
+                    SELECT MAX(total_pnl_usd)
+                    FROM web.backtest_summary_binance
+                ) * 0.85
+            ORDER BY
+                total_pnl_usd DESC,
+                win_rate DESC
+        )
+        SELECT
+            summary_id
+        FROM
+            FilteredSummaries
+        ORDER BY
+            win_rate DESC
+        LIMIT 1
+    ),
+
+    -- 2. CTE для поиска ЛУЧШЕГО ID для Bybit
+    best_bybit_id AS (
+        WITH FilteredSummaries AS (
+            SELECT DISTINCT ON (total_pnl_usd)
+                summary_id,
+                win_rate,
+                total_pnl_usd
+            FROM
+                web.backtest_summary_bybit
+            WHERE
+                total_pnl_usd >= (
+                    SELECT MAX(total_pnl_usd)
+                    FROM web.backtest_summary_bybit
+                ) * 0.85
+            ORDER BY
+                total_pnl_usd DESC,
+                win_rate DESC
+        )
+        SELECT
+            summary_id
+        FROM
+            FilteredSummaries
+        ORDER BY
+            win_rate DESC
+        LIMIT 1
+    ),
+
+    -- 3. CTE с ПАРАМЕТРАМИ из лучших ID
+    all_best_params AS (
+        ( -- Параметры для Binance
+            SELECT
+                1 AS exchange_id,
+                score_week_filter,
+                score_month_filter,
+                max_trades_filter,
+                stop_loss_filter,
+                trailing_activation_filter,
+                trailing_distance_filter
+            FROM web.backtest_summary_binance
+            WHERE summary_id = (SELECT summary_id FROM best_binance_id)
+        )
+
+        UNION ALL
+
+        ( -- Параметры для Bybit
+            SELECT
+                2 AS exchange_id,
+                score_week_filter,
+                score_month_filter,
+                max_trades_filter,
+                stop_loss_filter,
+                trailing_activation_filter,
+                trailing_distance_filter
+            FROM web.backtest_summary_bybit
+            WHERE summary_id = (SELECT summary_id FROM best_bybit_id)
+        )
+    ),
+
+    -- 4. CTE для market regime
+    market_regime_data AS (
+        SELECT DISTINCT ON (DATE_TRUNC('hour', timestamp))
+            DATE_TRUNC('hour', timestamp) as hour_bucket,
+            regime,
+            timestamp
+        FROM fas.market_regime
+        WHERE timeframe = '4h'
+            AND timestamp >= NOW() - INTERVAL '48 hours'
+        ORDER BY DATE_TRUNC('hour', timestamp), timestamp DESC
+    )
+
+    -- 5. Основной запрос к сигналам
+    SELECT
+        sc.id as signal_id,
+        sc.pair_symbol,
+        sc.recommended_action as signal_action,
+        sc.score_week,
+        sc.score_month,
+        sc.timestamp,
+        sc.created_at,
+        sc.trading_pair_id,
+        sc.total_score,
+        sc.indicator_score,
+        sc.pattern_score,
+        sc.combination_score,
+        tp.exchange_id,
+        ex.exchange_name,
+        COALESCE(mr.regime, 'NEUTRAL') AS market_regime,
+
+        -- Выводим параметры из CTE для информации
+        bp.score_week_filter,
+        bp.score_month_filter,
+        bp.max_trades_filter,
+        bp.stop_loss_filter,
+        bp.trailing_activation_filter,
+        bp.trailing_distance_filter
+
+    FROM fas.scoring_history AS sc
+    JOIN public.trading_pairs AS tp ON sc.trading_pair_id = tp.id
+    JOIN public.exchanges AS ex ON ex.id = tp.exchange_id
+    JOIN all_best_params AS bp ON tp.exchange_id = bp.exchange_id
+    LEFT JOIN LATERAL (
+        SELECT regime
+        FROM market_regime_data mr
+        WHERE mr.hour_bucket <= DATE_TRUNC('hour', sc.timestamp)
+        ORDER BY mr.hour_bucket DESC
+        LIMIT 1
+    ) AS mr ON true
+
+    WHERE
+        sc.timestamp >= NOW() - INTERVAL '48 hours'
+        AND sc.is_active = true
+        AND tp.is_active = true
+        AND tp.contract_type_id = 1
+        AND tp.exchange_id IN (1, 2)
+        AND sc.score_week > bp.score_week_filter
+        AND sc.score_month > bp.score_month_filter
+        AND EXTRACT(HOUR FROM sc.timestamp) NOT BETWEEN 0 AND 1
+    """
+
+    query += " ORDER BY sc.timestamp DESC"
+
+    try:
+        results = db.execute_query(query, fetch=True)
+
+        if results:
+            print(f"[BEST SIGNALS] Найдено {len(results)} сигналов после фильтрации по оптимальным параметрам")
+
+            # Собираем параметры для каждой биржи
+            params_by_exchange = {}
+
+            for signal in results:
+                exchange_id = signal.get('exchange_id')
+                if exchange_id not in params_by_exchange:
+                    params_by_exchange[exchange_id] = {
+                        'exchange_id': exchange_id,
+                        'exchange_name': signal.get('exchange_name'),
+                        'score_week_filter': signal.get('score_week_filter'),
+                        'score_month_filter': signal.get('score_month_filter'),
+                        'max_trades_filter': signal.get('max_trades_filter'),
+                        'stop_loss_filter': float(signal.get('stop_loss_filter', 0)),
+                        'trailing_activation_filter': float(signal.get('trailing_activation_filter', 0)),
+                        'trailing_distance_filter': float(signal.get('trailing_distance_filter', 0))
+                    }
+
+            # Выводим найденные оптимальные параметры для каждой биржи
+            print(f"\n[BEST SIGNALS] Оптимальные параметры для каждой биржи:")
+            for exchange_id, params in params_by_exchange.items():
+                print(f"\n  {params['exchange_name']}:")
+                print(f"    Score Week: {params['score_week_filter']}")
+                print(f"    Score Month: {params['score_month_filter']}")
+                print(f"    Max Trades/15min: {params['max_trades_filter']}")
+                print(f"    Stop Loss: {params['stop_loss_filter']}%")
+                print(f"    Trailing Activation: {params['trailing_activation_filter']}%")
+                print(f"    Trailing Distance: {params['trailing_distance_filter']}%")
+
+            # Группируем по биржам для статистики
+            exchanges_count = {}
+            actions_count = {'BUY': 0, 'SELL': 0, 'LONG': 0, 'SHORT': 0, 'NEUTRAL': 0}
+
+            for signal in results:
+                exchange = signal.get('exchange_name', 'Unknown')
+                exchanges_count[exchange] = exchanges_count.get(exchange, 0) + 1
+
+                action = signal.get('signal_action', 'NEUTRAL')
+                if action in actions_count:
+                    actions_count[action] += 1
+
+            print("\n[BEST SIGNALS] Распределение по биржам:")
+            for exchange, count in exchanges_count.items():
+                print(f"  {exchange}: {count} сигналов")
+
+            print("\n[BEST SIGNALS] Распределение по типам сигналов:")
+            for action, count in actions_count.items():
+                if count > 0:
+                    print(f"  {action}: {count}")
+
+            # Применяем фильтр по 15-минутным интервалам ОТДЕЛЬНО для каждой биржи
+            signals_by_exchange = {}
+            for signal in results:
+                exchange_id = signal.get('exchange_id')
+                if exchange_id not in signals_by_exchange:
+                    signals_by_exchange[exchange_id] = []
+                signals_by_exchange[exchange_id].append(signal)
+
+            filtered_signals = []
+            for exchange_id, signals in signals_by_exchange.items():
+                params = params_by_exchange[exchange_id]
+                max_trades = params['max_trades_filter']
+
+                print(f"\n[BEST SIGNALS] Применение фильтра для {params['exchange_name']}: не более {max_trades} сделок за 15 минут")
+                filtered = apply_15min_filter(signals, max_trades)
+                filtered_signals.extend(filtered)
+                print(f"[BEST SIGNALS] {params['exchange_name']}: {len(signals)} → {len(filtered)} сигналов")
+
+            # Сортируем по времени
+            filtered_signals.sort(key=lambda x: x.get('timestamp'), reverse=True)
+            print(f"\n[BEST SIGNALS] Итого после фильтрации: {len(filtered_signals)} сигналов")
+
+            return filtered_signals, params_by_exchange
+        else:
+            print("[BEST SIGNALS] Сигналов не найдено")
+            return [], {}
+
+    except Exception as e:
+        print(f"[BEST SIGNALS] Ошибка при получении сигналов: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return [], {}
+
+
+def apply_15min_filter(signals, max_trades_per_15min):
+    """
+    Применяет фильтр по 15-минутным интервалам.
+    Выбирает топ N сигналов с максимальным score_week из каждого 15-минутного интервала.
+    """
+    from datetime import datetime, timedelta
+
+    signals_by_interval = {}
+
+    for signal in signals:
+        if not isinstance(signal, dict):
+            continue
+
+        timestamp = signal.get('timestamp')
+        if not timestamp:
+            continue
+
+        # Округляем до 15 минут
+        minutes = timestamp.minute
+        rounded_minutes = (minutes // 15) * 15
+        interval_key = timestamp.replace(minute=rounded_minutes, second=0, microsecond=0)
+
+        if interval_key not in signals_by_interval:
+            signals_by_interval[interval_key] = []
+        signals_by_interval[interval_key].append(signal)
+
+    # Выбираем топ N сигналов из каждого интервала
+    filtered_signals = []
+
+    for interval, interval_signals in sorted(signals_by_interval.items()):
+        sorted_signals = sorted(interval_signals, key=lambda x: x.get('score_week', 0), reverse=True)
+        top_signals = sorted_signals[:max_trades_per_15min]
+        filtered_signals.extend(top_signals)
+
+    # Сортируем по timestamp
+    filtered_signals.sort(key=lambda x: x['timestamp'], reverse=True)
+
+    return filtered_signals

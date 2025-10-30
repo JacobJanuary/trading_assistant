@@ -558,92 +558,28 @@ def signal_performance():
             
             filters = default_filters
 
-        # Получаем параметры из URL для динамического пересчета
-        hide_younger = request.args.get('hide_younger', type=int, default=filters['hide_younger_than_hours'])
-        hide_older = request.args.get('hide_older', type=int, default=filters['hide_older_than_hours'])
-        display_leverage = request.args.get('leverage', type=int, default=filters['leverage'])
-        display_position_size = request.args.get('position_size', type=float,
-                                                 default=float(filters['position_size_usd']))
-        
-        # Получаем параметры Score Week и Score Month из URL или БД
-        score_week_min = request.args.get('score_week', type=int, 
-                                         default=filters.get('score_week_min', 0))
-        score_month_min = request.args.get('score_month', type=int, 
-                                          default=filters.get('score_month_min', 0))
-        
-        # Получаем разрешенные часы
-        allowed_hours = filters.get('allowed_hours', list(range(24)))
-        if not allowed_hours:
-            allowed_hours = list(range(24))
+        # Используем параметры по умолчанию (без пользовательских фильтров)
+        hide_younger = filters['hide_younger_than_hours']
+        hide_older = filters['hide_older_than_hours']
+        display_leverage = filters['leverage']
+        display_position_size = float(filters['position_size_usd'])
 
-        # ========== НОВЫЙ ЗАПРОС НАПРЯМУЮ ИЗ FAS.SCORING_HISTORY ==========
-        # Получаем сигналы с фильтрацией по скорингу и часам
-        signals_query = """
-            SELECT
-                sh.id as signal_id,
-                sh.pair_symbol,
-                sh.trading_pair_id,
-                sh.recommended_action as signal_action,
-                sh.timestamp as signal_timestamp,
-                sh.total_score,
-                sh.indicator_score,
-                sh.pattern_score,
-                sh.combination_score,
-                sh.score_week,
-                sh.score_month,
-                tp.exchange_id,
-                ex.exchange_name
-            FROM fas.scoring_history sh
-            JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
-            JOIN public.exchanges ex ON ex.id = tp.exchange_id
-            WHERE sh.score_week > %s
-                AND sh.score_month > %s
-                AND EXTRACT(hour FROM sh.timestamp AT TIME ZONE 'UTC') = ANY(%s)
-                AND sh.timestamp >= NOW() - INTERVAL '48 hours'
-                AND tp.contract_type_id = 1
-                AND tp.exchange_id IN (1, 2)
-            ORDER BY sh.timestamp DESC
-        """
+        # ========== ИСПОЛЬЗУЕМ АВТОМАТИЧЕСКИЙ ПОДБОР ОПТИМАЛЬНЫХ ПАРАМЕТРОВ ИЗ БЭКТЕСТОВ ==========
+        from database import get_best_scoring_signals_with_backtest_params
+        from datetime import datetime, date, timedelta
 
-        raw_signals = db.execute_query(signals_query, (score_week_min, score_month_min, allowed_hours), fetch=True)
+        print(f"[SIGNAL_PERFORMANCE] Получаем сигналы с оптимальными параметрами из бэктестов")
+        print(f"[SIGNAL_PERFORMANCE] Период: последние 48 часов")
+        print(f"[SIGNAL_PERFORMANCE] Все параметры (SL, TS, max_trades) берутся из оптимальных backtest для каждой биржи")
 
-        print(f"[SIGNAL_PERFORMANCE] Найдено {len(raw_signals) if raw_signals else 0} сигналов из scoring_history до фильтрации")
+        raw_signals, params_by_exchange = get_best_scoring_signals_with_backtest_params(db)
 
-        # Получаем max_trades_per_15min из фильтров
-        max_trades_per_15min = filters.get('max_trades_per_15min', 3)
-        print(f"[SIGNAL_PERFORMANCE] Применяем ограничение: макс. {max_trades_per_15min} сделок за 15 минут")
-        
-        # Применяем фильтрацию по 15-минутным интервалам если есть сигналы
-        if raw_signals and max_trades_per_15min:
-            from collections import defaultdict
-            from datetime import datetime, timedelta
-            
-            # Группируем сигналы по 15-минутным интервалам
-            signals_by_interval = defaultdict(list)
-            
-            for signal in raw_signals:
-                signal_time = signal['signal_timestamp']
-                # Округляем до 15-минутного интервала
-                interval_minutes = (signal_time.minute // 15) * 15
-                interval_key = signal_time.replace(minute=interval_minutes, second=0, microsecond=0)
-                signals_by_interval[interval_key].append(signal)
-            
-            # Фильтруем: оставляем топ N по score_week в каждом интервале
-            filtered_signals = []
-            for interval, signals in signals_by_interval.items():
-                # Сортируем по score_week (убывание)
-                sorted_signals = sorted(signals, key=lambda x: float(x.get('score_week', 0)), reverse=True)
-                # Берем только первые max_trades_per_15min
-                top_signals = sorted_signals[:max_trades_per_15min]
-                filtered_signals.extend(top_signals)
-                
-                if len(signals) > max_trades_per_15min:
-                    print(f"[SIGNAL_PERFORMANCE] Интервал {interval}: {len(signals)} → {len(top_signals)} сигналов")
-            
-            # Сортируем обратно по времени
-            filtered_signals.sort(key=lambda x: x['signal_timestamp'], reverse=True)
-            raw_signals = filtered_signals
-            print(f"[SIGNAL_PERFORMANCE] После фильтрации осталось {len(raw_signals)} сигналов")
+        print(f"[SIGNAL_PERFORMANCE] Получено {len(raw_signals) if raw_signals else 0} сигналов с оптимальными параметрами")
+        print(f"[SIGNAL_PERFORMANCE] Оптимальные параметры для каждой биржи:")
+        for exchange_id, params in params_by_exchange.items():
+            print(f"  {params['exchange_name']} (ID={exchange_id}):")
+            print(f"    SL: {params['stop_loss_filter']}%, TS Activation: {params['trailing_activation_filter']}%, TS Distance: {params['trailing_distance_filter']}%")
+            print(f"    Max trades/15min: {params['max_trades_filter']}, Score week: {params['score_week_filter']}, Score month: {params['score_month_filter']}")
 
         # Инициализируем пустые данные
         signals_data = []
@@ -729,23 +665,27 @@ def signal_performance():
                         'pair_symbol': signal['pair_symbol'],
                         'trading_pair_id': signal['trading_pair_id'],
                         'signal_action': signal['signal_action'],
-                        'signal_timestamp': make_aware(signal['signal_timestamp']),
+                        'signal_timestamp': make_aware(signal['timestamp']),
                         'exchange_name': signal.get('exchange_name', 'Unknown'),
                         'score_week': signal.get('score_week', 0),
                         'score_month': signal.get('score_month', 0)
                     }
 
-                    # Обрабатываем сигнал с учетом настроек пользователя
+                    # Получаем параметры для биржи этого сигнала
+                    exchange_id = signal.get('exchange_id')
+                    exchange_params = params_by_exchange.get(exchange_id, {})
+
+                    # Обрабатываем сигнал с оптимальными параметрами из бэктеста для биржи
                     result = process_signal_complete(
                         db,
                         signal_data,
                         tp_percent=float(filters.get('take_profit_percent') or 4.0),
-                        sl_percent=float(filters.get('stop_loss_percent') or 3.0),
+                        sl_percent=exchange_params.get('stop_loss_filter', 3.0),
                         position_size=display_position_size,
                         leverage=display_leverage,
-                        use_trailing_stop=filters.get('use_trailing_stop', False),
-                        trailing_distance_pct=float(filters.get('trailing_distance_pct') or 2.0),
-                        trailing_activation_pct=float(filters.get('trailing_activation_pct') or 1.0)
+                        use_trailing_stop=True,  # Всегда используем TS (параметры из backtest)
+                        trailing_distance_pct=exchange_params.get('trailing_distance_filter', 2.0),
+                        trailing_activation_pct=exchange_params.get('trailing_activation_filter', 1.0)
                     )
 
                     if result['success']:
@@ -756,7 +696,7 @@ def signal_performance():
                             'signal_id': signal['signal_id'],
                             'pair_symbol': signal['pair_symbol'],
                             'signal_action': signal['signal_action'],
-                            'signal_timestamp': signal['signal_timestamp'],
+                            'signal_timestamp': signal['timestamp'],
                             'exchange_name': signal.get('exchange_name'),
                             'total_score': float(signal.get('total_score', 0)),
                             'indicator_score': float(signal.get('indicator_score', 0)),
@@ -1078,13 +1018,13 @@ def signal_performance():
                 'leverage': display_leverage,
                 'saved_leverage': filters.get('leverage') or 5,
                 'saved_position_size': float(filters.get('position_size_usd') or 100.0),
-                'use_trailing_stop': filters.get('use_trailing_stop', False),
-                'trailing_distance_pct': float(filters.get('trailing_distance_pct') or 2.0),
-                'trailing_activation_pct': float(filters.get('trailing_activation_pct') or 1.0),
-                'score_week_min': score_week_min,
-                'score_month_min': score_month_min,
-                'allowed_hours': allowed_hours,
-                'max_trades_per_15min': filters.get('max_trades_per_15min', 3)  # Добавляем параметр
+                'use_trailing_stop': True,  # Всегда используем trailing stop с оптимальными параметрами
+                'trailing_distance_pct': 0.0,  # Устанавливается автоматически для каждой биржи
+                'trailing_activation_pct': 0.0,  # Устанавливается автоматически для каждой биржи
+                'score_week_min': 0,  # Фильтруется автоматически в SQL запросе
+                'score_month_min': 0,  # Фильтруется автоматически в SQL запросе
+                'allowed_hours': list(range(24)),  # Все часы разрешены (без фильтрации)
+                'max_trades_per_15min': 0  # Устанавливается автоматически для каждой биржи
             },
             last_update=datetime.now()
         )
