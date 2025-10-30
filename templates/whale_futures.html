@@ -64,6 +64,15 @@
         </div>
     </div>
 
+    <!-- Long/Short Chart by Symbol -->
+    <div class="bg-white rounded-lg shadow p-6 mb-6">
+        <h2 class="text-xl font-bold text-gray-900 mb-4">
+            <i class="fas fa-chart-bar mr-2 text-blue-600"></i>
+            Long vs Short Volume by Asset (Top 20)
+        </h2>
+        <canvas id="longShortChart" height="80"></canvas>
+    </div>
+
     <!-- Whale Positions Table -->
     <div class="bg-white rounded-lg shadow overflow-hidden">
         <table class="min-w-full divide-y divide-gray-200">
@@ -160,8 +169,110 @@ document.getElementById('min-size').addEventListener('change', loadData);
 document.getElementById('side-filter').addEventListener('change', loadData);
 document.getElementById('exchange-filter').addEventListener('change', loadData);
 
+// Chart instance
+let longShortChart = null;
+
+async function loadSymbolsChart() {
+    const timeFilter = document.getElementById('time-filter').value;
+    const minSize = document.getElementById('min-size').value;
+
+    try {
+        const resp = await fetch(`/api/whale_futures/symbols?time_filter=${timeFilter}&min_size_usd=${minSize}`);
+        const data = await resp.json();
+
+        if (data.status === 'success' && data.data && data.data.length > 0) {
+            const ctx = document.getElementById('longShortChart').getContext('2d');
+
+            // Destroy previous chart if exists
+            if (longShortChart) {
+                longShortChart.destroy();
+            }
+
+            const symbols = data.data.map(d => d.symbol);
+            const longVolumes = data.data.map(d => d.long_volume);
+            const shortVolumes = data.data.map(d => d.short_volume);
+
+            longShortChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: symbols,
+                    datasets: [
+                        {
+                            label: 'LONG Volume',
+                            data: longVolumes,
+                            backgroundColor: 'rgba(34, 197, 94, 0.7)',
+                            borderColor: 'rgb(34, 197, 94)',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'SHORT Volume',
+                            data: shortVolumes,
+                            backgroundColor: 'rgba(239, 68, 68, 0.7)',
+                            borderColor: 'rgb(239, 68, 68)',
+                            borderWidth: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    scales: {
+                        x: {
+                            stacked: false
+                        },
+                        y: {
+                            stacked: false,
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    if (value >= 1e9) return '$' + (value / 1e9).toFixed(1) + 'B';
+                                    if (value >= 1e6) return '$' + (value / 1e6).toFixed(1) + 'M';
+                                    if (value >= 1e3) return '$' + (value / 1e3).toFixed(1) + 'K';
+                                    return '$' + value;
+                                }
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    label += '$' + formatNumber(context.parsed.y);
+                                    return label;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Error loading symbols chart:', error);
+    }
+}
+
+// Modified loadData to also refresh chart
+async function loadDataAndChart() {
+    await loadData();
+    await loadSymbolsChart();
+}
+
+// Update event listeners
+document.getElementById('time-filter').addEventListener('change', loadDataAndChart);
+document.getElementById('min-size').addEventListener('change', loadDataAndChart);
+document.getElementById('side-filter').addEventListener('change', loadData);
+document.getElementById('exchange-filter').addEventListener('change', loadData);
+
 // Initial load and auto-refresh
-loadData();
-refreshInterval = setInterval(loadData, 60000); // Refresh every 60 seconds
+loadDataAndChart();
+refreshInterval = setInterval(loadDataAndChart, 60000); // Refresh every 60 seconds
 </script>
 {% endblock %}

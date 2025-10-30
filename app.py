@@ -3904,6 +3904,69 @@ def api_whale_futures_stats():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
+@app.route('/api/whale_futures/symbols', methods=['GET'])
+@login_required
+def api_whale_futures_symbols():
+    """API: Get aggregated Long/Short by normalized symbols"""
+    try:
+        time_filter = request.args.get('time_filter', '24h')
+        min_size_usd = float(request.args.get('min_size_usd', 10000000))
+
+        # Parse time filter
+        hours = int(time_filter.replace('h', ''))
+
+        # Normalize symbols: BTC-PERP, BTCUSDT -> BTC
+        symbols_query = """
+            WITH normalized_symbols AS (
+                SELECT
+                    CASE
+                        WHEN symbol LIKE '%-PERP' THEN SUBSTRING(symbol FROM 1 FOR POSITION('-' IN symbol) - 1)
+                        WHEN symbol LIKE '%USDT' THEN SUBSTRING(symbol FROM 1 FOR LENGTH(symbol) - 4)
+                        WHEN symbol LIKE '%USDC' THEN SUBSTRING(symbol FROM 1 FOR LENGTH(symbol) - 4)
+                        ELSE symbol
+                    END as normalized_symbol,
+                    side,
+                    size_usd
+                FROM web.whale_positions
+                WHERE trade_timestamp >= NOW() - INTERVAL '1 hour' * %s
+                    AND size_usd >= %s
+            )
+            SELECT
+                normalized_symbol,
+                SUM(CASE WHEN side = 'LONG' THEN size_usd ELSE 0 END) as long_volume,
+                SUM(CASE WHEN side = 'SHORT' THEN size_usd ELSE 0 END) as short_volume,
+                COUNT(*) as total_positions
+            FROM normalized_symbols
+            GROUP BY normalized_symbol
+            HAVING SUM(size_usd) > 0
+            ORDER BY (SUM(CASE WHEN side = 'LONG' THEN size_usd ELSE 0 END) +
+                     SUM(CASE WHEN side = 'SHORT' THEN size_usd ELSE 0 END)) DESC
+            LIMIT 20
+        """
+
+        results = db.execute_query(symbols_query, (hours, min_size_usd), fetch=True)
+
+        symbols_data = []
+        if results:
+            for row in results:
+                symbols_data.append({
+                    'symbol': row['normalized_symbol'],
+                    'long_volume': float(row['long_volume']),
+                    'short_volume': float(row['short_volume']),
+                    'total_positions': int(row['total_positions']),
+                    'net_volume': float(row['long_volume']) - float(row['short_volume'])
+                })
+
+        return jsonify({
+            'status': 'success',
+            'data': symbols_data
+        })
+
+    except Exception as e:
+        logger.error(f"Error in whale_futures_symbols: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 @app.route('/api/whale_futures/data', methods=['GET'])
 @login_required
 def api_whale_futures_data():
