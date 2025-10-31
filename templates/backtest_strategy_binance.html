@@ -170,29 +170,32 @@ function updateCombinationsTable(combos) {
     const tbody = document.getElementById('combinationsTable');
 
     tbody.innerHTML = combos.map((combo, index) => {
-        const winRate = (combo.win_rate || 0).toFixed(2);
-        const totalPnl = (combo.total_pnl || 0).toFixed(2);
-        const finalEquity = (combo.final_equity || 0).toFixed(2);
-        const wlRatio = `${combo.win_count || 0}/${combo.loss_count || 0}`;
+        // Ensure all values are numbers, handle null/undefined/string cases
+        const winRateNum = Number(combo.win_rate) || 0;
+        const totalPnlNum = Number(combo.total_pnl) || 0;
+        const finalEquityNum = Number(combo.final_equity) || 0;
 
-        const pnlValue = combo.total_pnl || 0;
-        const equityValue = combo.final_equity || 0;
-        const pnlColor = pnlValue >= 0 ? 'text-green-600' : 'text-red-600';
-        const equityColor = equityValue >= 1000 ? 'text-green-600' : 'text-red-600';
+        const winRate = winRateNum.toFixed(2);
+        const totalPnl = totalPnlNum.toFixed(2);
+        const finalEquity = finalEquityNum.toFixed(2);
+        const wlRatio = `${Number(combo.win_count) || 0}/${Number(combo.loss_count) || 0}`;
+
+        const pnlColor = totalPnlNum >= 0 ? 'text-green-600' : 'text-red-600';
+        const equityColor = finalEquityNum >= 1000 ? 'text-green-600' : 'text-red-600';
 
         return `
             <tr class="hover:bg-gray-50 transition-colors">
                 <td class="px-4 py-3 text-sm text-gray-900">${index + 1}</td>
-                <td class="px-4 py-3 text-sm text-gray-900">${combo.score_week || 0}</td>
-                <td class="px-4 py-3 text-sm text-gray-900">${combo.score_month || 0}</td>
-                <td class="px-4 py-3 text-sm text-gray-900">${combo.max_trades || 0}</td>
-                <td class="px-4 py-3 text-sm text-gray-900">${(combo.stop_loss || 0).toFixed(1)}</td>
-                <td class="px-4 py-3 text-sm text-gray-900">${(combo.trailing_activation || 0).toFixed(1)}</td>
-                <td class="px-4 py-3 text-sm text-gray-900">${(combo.trailing_distance || 0).toFixed(1)}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${Number(combo.score_week) || 0}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${Number(combo.score_month) || 0}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${Number(combo.max_trades) || 0}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${(Number(combo.stop_loss) || 0).toFixed(1)}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${(Number(combo.trailing_activation) || 0).toFixed(1)}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${(Number(combo.trailing_distance) || 0).toFixed(1)}</td>
                 <td class="px-4 py-3 text-sm font-semibold text-blue-600">${winRate}%</td>
                 <td class="px-4 py-3 text-sm font-semibold ${pnlColor}">$${totalPnl}</td>
                 <td class="px-4 py-3 text-sm font-semibold ${equityColor}">$${finalEquity}</td>
-                <td class="px-4 py-3 text-sm text-gray-900">${combo.total_trades || 0}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${Number(combo.total_trades) || 0}</td>
                 <td class="px-4 py-3 text-sm text-gray-600">${wlRatio}</td>
                 <td class="px-4 py-3 text-sm">
                     <button onclick='showDetails(${JSON.stringify(combo)})'
