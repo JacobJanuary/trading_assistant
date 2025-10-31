@@ -8,6 +8,9 @@ from collections import defaultdict
 from config import Config
 import math
 
+# Константа для slippage на stop-loss
+SLIPPAGE_PERCENT = 0.05  # 0.05% проскальзывание на stop-loss
+
 
 class TradingSimulation:
     """
@@ -69,6 +72,34 @@ class TradingSimulation:
             'skipped_duplicate': 0,
             'skipped_wave_limit': 0,
         }
+
+    def cap_loss_to_margin(self, gross_pnl, entry_commission, exit_commission):
+        """
+        Ограничивает убыток размером изолированной маржи
+
+        При isolated margin максимальный убыток = размер маржи минус entry_commission
+        (т.к. entry_commission уже была списана при открытии)
+
+        Args:
+            gross_pnl: Валовая прибыль/убыток до комиссий
+            entry_commission: Комиссия при входе
+            exit_commission: Комиссия при выходе
+
+        Returns:
+            float: Чистый PnL, ограниченный размером маржи
+        """
+        # Общие комиссии
+        total_commission = entry_commission + exit_commission
+
+        # Чистый PnL после комиссий
+        net_pnl = gross_pnl - total_commission
+
+        # Максимально возможный убыток = маржа минус входная комиссия
+        # (входная комиссия уже списана, поэтому она не входит в убыток)
+        max_loss = -(self.position_size - entry_commission)
+
+        # Возвращаем большее из двух значений (ограничение убытка)
+        return max(net_pnl, max_loss)
 
     def can_open_position(self, pair_symbol):
         """
@@ -250,7 +281,9 @@ class TradingSimulation:
                     elif high_price >= sl_price:
                         is_closed = True
                         close_reason = 'stop_loss'
-                        close_price = sl_price
+                        # Применяем slippage (исполнение хуже на 0.05%)
+                        close_price = sl_price * (1 + SLIPPAGE_PERCENT / 100)
+                        print(f"[SLIPPAGE SHORT] SL at {sl_price:.4f}, executed at {close_price:.4f}")
                         close_time = current_time
                 else:  # LONG
                     if high_price >= tp_price:
@@ -261,7 +294,9 @@ class TradingSimulation:
                     elif low_price <= sl_price:
                         is_closed = True
                         close_reason = 'stop_loss'
-                        close_price = sl_price
+                        # Применяем slippage (исполнение хуже на 0.05%)
+                        close_price = sl_price * (1 - SLIPPAGE_PERCENT / 100)
+                        print(f"[SLIPPAGE LONG] SL at {sl_price:.4f}, executed at {close_price:.4f}")
                         close_time = current_time
 
                 if is_closed:
@@ -288,7 +323,14 @@ class TradingSimulation:
                 pnl_percent = ((close_price - entry_price) / entry_price) * 100
 
             gross_pnl = effective_position * (pnl_percent / 100)
-            pnl_usd = gross_pnl - total_commission
+
+            # Применяем ограничение isolated margin
+            pnl_usd = self.cap_loss_to_margin(gross_pnl, entry_commission, exit_commission)
+
+            # Логирование для отладки (опционально)
+            if pnl_usd < gross_pnl - total_commission:
+                print(f"[CAP APPLIED] Original loss: {gross_pnl - total_commission:.2f}, "
+                      f"Capped to: {pnl_usd:.2f}")
 
         # Расчет PnL percent для возврата
         pnl_percent = 0
@@ -323,12 +365,26 @@ class TradingSimulation:
 
     def _close_position_internal(self, position_info):
         """Внутренняя функция закрытия позиции (освобождение капитала, учет PnL)"""
-        # Освобождаем капитал
-        self.available_capital += self.position_size
+        # PnL уже должен быть ограничен, но проверяем на всякий случай
+        if 'pnl_usd' in position_info and position_info['pnl_usd'] is not None:
+            entry_commission = position_info.get('entry_commission',
+                                                self.position_size * self.leverage * 0.0006)
+            exit_commission = self.position_size * self.leverage * 0.0006
 
-        # Учитываем PnL
-        pnl = position_info['pnl_usd']
-        self.total_pnl += pnl
+            # Дополнительная проверка ограничения
+            max_loss = -(self.position_size - entry_commission)
+            actual_pnl = max(position_info['pnl_usd'], max_loss)
+
+            if actual_pnl != position_info['pnl_usd']:
+                print(f"[CLOSE DUE CAP] Adjusting PnL from {position_info['pnl_usd']:.2f} "
+                      f"to {actual_pnl:.2f}")
+
+            self.total_pnl += actual_pnl
+            # Освобождаем капитал и добавляем PnL
+            self.available_capital += self.position_size + actual_pnl
+        else:
+            # Если PnL не определен, просто возвращаем капитал
+            self.available_capital += self.position_size
 
         # Учитываем комиссии
         commission = position_info['simulation_result'].get('commission_usd', 0)
@@ -397,6 +453,15 @@ class TradingSimulation:
 
                         effective_position = self.position_size * self.leverage
                         unrealized_pnl = effective_position * (unrealized_pnl_percent / 100)
+
+                        # Ограничиваем floating убыток 95% маржи
+                        # (5% резерв так как позиция еще не закрыта)
+                        max_floating_loss = -self.position_size * 0.95
+                        if unrealized_pnl < max_floating_loss:
+                            print(f"[FLOATING CAP] {pair}: Capping from {unrealized_pnl:.2f} "
+                                  f"to {max_floating_loss:.2f}")
+                            unrealized_pnl = max_floating_loss
+
                         floating_pnl += unrealized_pnl
 
         # Рассчитываем текущий equity
@@ -448,13 +513,20 @@ class TradingSimulation:
                     exit_commission = effective_position * commission_rate
                     total_commission = entry_commission + exit_commission
 
-                    net_pnl = gross_pnl - total_commission
+                    # Применяем ограничение isolated margin при принудительном закрытии
+                    capped_pnl = self.cap_loss_to_margin(gross_pnl, entry_commission, exit_commission)
+
+                    # Логирование
+                    if capped_pnl != gross_pnl - total_commission:
+                        print(f"[FORCE CLOSE CAP] Position {pair}: "
+                              f"Original PnL: {gross_pnl - total_commission:.2f}, "
+                              f"Capped to: {capped_pnl:.2f}")
 
                     # Обновляем simulation_result
                     result['close_price'] = last_price
                     result['close_time'] = simulation_end_time
                     result['close_reason'] = 'period_end'
-                    result['pnl_usd'] = net_pnl
+                    result['pnl_usd'] = capped_pnl
                     result['pnl_percent'] = pnl_percent
                     result['commission_usd'] = total_commission
                     result['is_closed'] = True
@@ -464,7 +536,7 @@ class TradingSimulation:
                     position['close_reason'] = 'period_end'
                     position['close_time'] = simulation_end_time
                     position['close_price'] = last_price
-                    position['pnl_usd'] = net_pnl
+                    position['pnl_usd'] = capped_pnl
 
                     self._close_position_internal(position)
                 else:

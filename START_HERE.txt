@@ -1,0 +1,216 @@
+================================================================================
+SIGNAL PROCESSING COMPARISON - START HERE
+================================================================================
+
+You have requested a detailed comparison of signal processing logic between:
+  - REFERENCE: /home/elcrypto/calk_wk/backtest_both.py (correct)
+  - CURRENT:   /home/elcrypto/trading_assistant/ (with bugs)
+
+RESULT: 6 CRITICAL BUGS FOUND
+
+================================================================================
+WHAT'S WRONG WITH CURRENT IMPLEMENTATION?
+================================================================================
+
+The current implementation has bugs that make back-test results INCORRECT:
+
+  1. Trailing stops move UP instead of DOWN (violates basic semantics)
+  2. Floating PnL always 0 (all equity metrics are wrong)
+  3. Losses can exceed account margin (isolated margin violation)
+  4. No realistic slippage on stop loss orders
+  5. Period-end closures can cause negative equity
+  6. No validation of signal filtering
+
+This means: Back-test results CANNOT BE TRUSTED until these are fixed.
+
+================================================================================
+DOCUMENTS AVAILABLE
+================================================================================
+
+Choose based on your needs:
+
+FOR DEVELOPERS IMPLEMENTING FIXES:
+  → Start with: BUGS_AND_FIXES.md
+    - All 6 bugs with complete code examples
+    - WRONG code and CORRECT code side-by-side
+    - Priority order for fixes
+    - Testing checklist
+
+FOR MANAGERS/DECISION MAKERS:
+  → Start with: COMPARISON_SUMMARY.md
+    - Executive summary
+    - What each bug means
+    - Impact on results
+    - Action items by priority
+
+FOR QUICK LOOKUP:
+  → Use: QUICK_REFERENCE.txt
+    - All 6 bugs on 1-2 pages
+    - Current vs should-be code
+    - Easy to scan
+
+FOR DEEP TECHNICAL ANALYSIS:
+  → Read: IMPLEMENTATION_COMPARISON.md
+    - 8 areas analyzed in detail
+    - Line-by-line code comparison
+    - ~400 lines of detailed analysis
+
+FOR NAVIGATION:
+  → Read: README_COMPARISON.md
+    - Guide to all documents
+    - How to use them
+    - Testing strategy
+
+================================================================================
+ABSOLUTE MINIMUM: 5 MINUTE READ
+================================================================================
+
+Open QUICK_REFERENCE.txt and read:
+  - The 6 bugs summary table
+  - The "CURRENT (WRONG)" code for each bug
+  - The "SHOULD BE (CORRECT)" code
+  - The fix priority order
+
+That's all you need to understand what's wrong.
+
+================================================================================
+30 MINUTE EXECUTIVE BRIEFING
+================================================================================
+
+1. Read: README_COMPARISON.md (5 min)
+2. Read: COMPARISON_SUMMARY.md (15 min)
+3. Scan: QUICK_REFERENCE.txt (10 min)
+
+Now you understand:
+  - What bugs exist
+  - Why they matter
+  - How to fix them
+
+================================================================================
+IMPLEMENTING THE FIXES
+================================================================================
+
+Use BUGS_AND_FIXES.md as your implementation guide:
+
+1. Bug #2 (Floating PnL) - 10 lines
+   - Most critical, affects everything
+   - Fix first
+
+2. Bug #3 (Loss capping in _simulate_fixed_tp_sl) - 5 lines
+   - Prevents margin violations
+   - Fix second
+
+3. Bug #5 (Loss capping in force_close_all_positions) - 20 lines
+   - Prevents period-end issues
+   - Fix third
+
+4. Bug #1 (Trailing stop ratcheting) - 2 lines
+   - Simple fix
+   - Fix fourth
+
+5. Bug #4 (Slippage) - 5 lines
+   - Nice-to-have
+   - Fix fifth
+
+6. Bug #6 (Signal filtering) - 5 lines
+   - Validation
+   - Fix last
+
+================================================================================
+VERIFICATION CHECKLIST
+================================================================================
+
+After fixes, check:
+
+  [ ] Trailing stops don't move UP for LONG
+  [ ] Floating PnL uses real market data
+  [ ] No losses exceed margin
+  [ ] Period-end closures properly capped
+  [ ] Stop loss orders have slippage
+  [ ] No negative equity
+  [ ] Results match reference implementation
+
+================================================================================
+WHERE TO FIND THINGS
+================================================================================
+
+Bug Details:
+  → BUGS_AND_FIXES.md (detailed with code)
+  → QUICK_REFERENCE.txt (summary)
+
+Code to Fix:
+  → Line numbers in QUICK_REFERENCE.txt
+  → Complete fixes in BUGS_AND_FIXES.md
+
+Reference Code:
+  → /home/elcrypto/calk_wk/backtest_both.py
+  → Functions: cap_loss_to_margin, simulate_position_lifecycle
+
+Testing Guidance:
+  → README_COMPARISON.md
+  → COMPARISON_SUMMARY.md
+
+================================================================================
+THE BOTTOM LINE
+================================================================================
+
+Current implementation has 6 bugs that make results unreliable.
+
+Most critical:
+  1. Floating PnL always 0 (makes equity metrics wrong)
+  2. Losses can exceed margin (violates account rules)
+  3. Trailing stops move wrong way (violates semantics)
+
+Fixes required: YES, NOT OPTIONAL
+Complexity: LOW (mostly 2-20 line fixes)
+Severity: CRITICAL (back-test results are incorrect)
+
+Reference implementation in backtest_both.py is the gold standard.
+
+================================================================================
+HOW TO GET HELP
+================================================================================
+
+If you need:
+
+Quick overview:
+  → QUICK_REFERENCE.txt
+
+Understanding the bugs:
+  → COMPARISON_SUMMARY.md
+
+Implementation details:
+  → BUGS_AND_FIXES.md
+
+Technical deep dive:
+  → IMPLEMENTATION_COMPARISON.md
+
+Navigation:
+  → README_COMPARISON.md
+
+Correct code:
+  → /home/elcrypto/calk_wk/backtest_both.py
+
+================================================================================
+NEXT ACTION
+================================================================================
+
+1. If you want a quick read:
+   → Open: QUICK_REFERENCE.txt (5 minutes)
+
+2. If you want full context:
+   → Open: README_COMPARISON.md (starts navigation)
+
+3. If you want to fix it:
+   → Open: BUGS_AND_FIXES.md (implementation guide)
+
+4. If you need to understand reference:
+   → Open: /home/elcrypto/calk_wk/backtest_both.py (line 106-803)
+
+================================================================================
+
+ALL DOCUMENTS ARE IN: /home/elcrypto/trading_assistant/
+
+CHOOSE YOUR PATH ABOVE AND START READING.
+
+================================================================================

@@ -14,6 +14,9 @@ from typing import Optional
 from datetime import datetime, timezone
 from config import Config
 
+# Константа для slippage на stop-loss
+SLIPPAGE_PERCENT = 0.05  # 0.05% проскальзывание на stop-loss
+
 
 def make_aware(dt):
     """Преобразует naive datetime в aware (UTC)"""
@@ -1528,7 +1531,12 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
                 if (is_long and low_price <= sl_price) or (is_short and high_price >= sl_price):
                     is_closed = True
                     close_reason = 'stop_loss'
-                    close_price = sl_price
+                    # Применяем slippage на stop-loss
+                    if is_long:
+                        close_price = sl_price * (1 - SLIPPAGE_PERCENT / 100)
+                    else:
+                        close_price = sl_price * (1 + SLIPPAGE_PERCENT / 100)
+                    print(f"[SLIPPAGE] SL: {sl_price:.4f} -> Executed: {close_price:.4f}")
                     close_time = candle_time
                     continue
 
@@ -1548,8 +1556,11 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
                     # Обновление trailing stop
                     if is_trailing_active:
                         new_stop = best_price_for_trailing * (1 + trailing_distance_pct / 100)
-                        if new_stop < trailing_stop_price:
+                        # Для SHORT: trailing stop может только ПОНИЖАТЬСЯ
+                        # (защищает прибыль при падении цены)
+                        if trailing_stop_price is None or new_stop < trailing_stop_price:
                             trailing_stop_price = new_stop
+                            print(f"  [TRAILING SHORT] Stop lowered to {trailing_stop_price:.4f}")
 
                     # Срабатывание trailing stop
                     if is_trailing_active and candle_time != activation_candle_time and high_price >= trailing_stop_price:
@@ -1573,8 +1584,11 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
                     # Обновление trailing stop
                     if is_trailing_active:
                         new_stop = best_price_for_trailing * (1 - trailing_distance_pct / 100)
-                        if new_stop > trailing_stop_price:
+                        # Для LONG: trailing stop может только ПОВЫШАТЬСЯ
+                        # (защищает прибыль при росте цены)
+                        if trailing_stop_price is None or new_stop > trailing_stop_price:
                             trailing_stop_price = new_stop
+                            print(f"  [TRAILING LONG] Stop raised to {trailing_stop_price:.4f}")
 
                     # Срабатывание trailing stop
                     if is_trailing_active and candle_time != activation_candle_time and low_price <= trailing_stop_price:
@@ -1635,7 +1649,15 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
 
         # Расчет PnL с учетом комиссий
         gross_pnl = effective_position * (result['pnl_percent'] / 100)
-        result['pnl_usd'] = gross_pnl - total_commission  # NET PnL
+        net_pnl = gross_pnl - total_commission
+
+        # Применяем ограничение isolated margin
+        max_loss = -(position_size - entry_commission)
+        if net_pnl < max_loss:
+            print(f"[TRAILING CAP] Capping loss from {net_pnl:.2f} to {max_loss:.2f}")
+            net_pnl = max_loss
+
+        result['pnl_usd'] = net_pnl  # NET PnL
         result['gross_pnl_usd'] = gross_pnl
         result['commission_usd'] = total_commission
         result['entry_commission_usd'] = entry_commission
@@ -2943,8 +2965,34 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
             print(f"[SCORING V2] Закрыто позиций: {len(closed_pairs)} ({', '.join(closed_pairs[:5])}{'...' if len(closed_pairs) > 5 else ''})")
 
         # 2. Обновляем метрики equity (с учетом floating PnL открытых позиций)
-        # TODO: Передать market_data_by_pair для расчета текущих цен
-        sim.update_equity_metrics(wave_time, market_data_by_pair=None)
+        # Подготавливаем market_data для расчета floating PnL
+        market_data_by_pair = {}
+        for pair, position in sim.open_positions.items():
+            # Получаем market_data из кэша
+            signal_id = position.get('signal_id')
+            trading_pair_id = position.get('trading_pair_id')
+            signal_timestamp = position.get('signal_timestamp')
+
+            # Пробуем получить из кэша
+            if signal_id and signal_id in market_data_cache:
+                market_data_by_pair[pair] = market_data_cache[signal_id]
+            elif trading_pair_id and signal_timestamp:
+                # Если нет в кэше, получаем данные
+                cache_key = f"{trading_pair_id}_{signal_timestamp}"
+                if cache_key in market_data_cache:
+                    market_data_by_pair[pair] = market_data_cache[cache_key]
+                else:
+                    # Загружаем market_data
+                    market_data = get_market_data(trading_pair_id, signal_timestamp)
+                    if market_data:
+                        market_data_cache[cache_key] = market_data
+                        market_data_by_pair[pair] = market_data
+
+        # Теперь передаем реальные данные для расчета floating PnL
+        sim.update_equity_metrics(wave_time, market_data_by_pair)
+
+        print(f"[EQUITY UPDATE] Positions: {len(sim.open_positions)}, "
+              f"Market data: {len(market_data_by_pair)}")
 
         # 3. Обрабатываем сигналы текущей волны
         wave_candidates = signals_by_wave[wave_time]

@@ -1,0 +1,215 @@
+================================================================================
+SIGNAL PROCESSING COMPARISON - QUICK REFERENCE
+================================================================================
+
+6 CRITICAL BUGS FOUND IN CURRENT IMPLEMENTATION
+
+================================================================================
+BUG #1: TRAILING STOP RATCHETS UP INSTEAD OF DOWN
+================================================================================
+File: database.py, Line: 1575-1577
+Severity: CRITICAL
+
+CURRENT (WRONG):
+  if new_stop > trailing_stop_price:  # <-- WRONG!
+      trailing_stop_price = new_stop
+
+SHOULD BE:
+  if new_stop < trailing_stop_price:  # Correct for LONG
+      trailing_stop_price = new_stop
+
+IMPACT: Trailing stop can move UP, allowing more losses (violates semantics)
+
+================================================================================
+BUG #2: FLOATING PnL ALWAYS ZERO
+================================================================================
+File: database.py, Line: 2947
+Severity: CRITICAL
+
+CURRENT (WRONG):
+  sim.update_equity_metrics(wave_time, market_data_by_pair=None)
+
+SHOULD BE:
+  market_data_by_pair = {}
+  for pair, position in sim.open_positions.items():
+      signal_id = position['signal_id']
+      if signal_id in market_data_cached:
+          market_data_by_pair[pair] = market_data_cached[signal_id]
+  sim.update_equity_metrics(wave_time, market_data_by_pair=market_data_by_pair)
+
+IMPACT: Equity metrics are wrong, min_equity understated, max_drawdown wrong
+
+================================================================================
+BUG #3: NO LOSS CAPPING IN _simulate_fixed_tp_sl()
+================================================================================
+File: trading_simulation.py, Line: 282-291
+Severity: CRITICAL
+
+CURRENT (WRONG):
+  gross_pnl = effective_position * (pnl_percent / 100)
+  pnl_usd = gross_pnl - total_commission  # NO CAPPING!
+
+SHOULD BE:
+  gross_pnl = effective_position * (pnl_percent / 100)
+  max_loss = -(self.position_size - entry_commission)
+  net_pnl = gross_pnl - total_commission
+  pnl_usd = max(net_pnl, max_loss)  # CAPPED!
+
+IMPACT: Losses can exceed account margin (isolated margin violation)
+
+================================================================================
+BUG #4: NO SLIPPAGE ON STOP LOSS
+================================================================================
+File: trading_simulation.py, Line: 252-254, 262-264
+File: database.py, Line: 1528-1531
+Severity: HIGH
+
+CURRENT (WRONG):
+  close_price = sl_price  # Exact price!
+
+SHOULD BE:
+  slippage = 0.05 / 100  # 0.05%
+  if is_long:
+      close_price = sl_price * (1 - slippage)
+  else:
+      close_price = sl_price * (1 + slippage)
+
+IMPACT: Back-test results too optimistic (doesn't match real trading)
+
+================================================================================
+BUG #5: force_close_all_positions() DOESN'T CAP LOSS
+================================================================================
+File: trading_simulation.py, Line: 451
+Severity: CRITICAL
+
+CURRENT (WRONG):
+  net_pnl = gross_pnl - total_commission  # NO CAPPING!
+
+SHOULD BE:
+  # Cap to 95% of margin
+  max_loss_percent = (self.position_size * 0.95) / effective_position * 100
+  if pnl_percent < -max_loss_percent:
+      if is_long:
+          last_price = entry_price * (1 - max_loss_percent / 100)
+      else:
+          last_price = entry_price * (1 + max_loss_percent / 100)
+  
+  gross_pnl = effective_position * (pnl_percent / 100)
+  net_pnl = gross_pnl - total_commission
+  
+  # Final cap
+  max_loss = -(self.position_size - entry_commission)
+  net_pnl = max(net_pnl, max_loss)
+
+IMPACT: Period-end closures can have losses > margin, negative equity
+
+================================================================================
+BUG #6: NO EXPLICIT SIGNAL FILTERING CHECK
+================================================================================
+File: database.py, Line: 3259, 3309
+Severity: MEDIUM
+
+CURRENT (WRONG):
+  all_signals = get_scoring_signals(db, ...)
+  sorted_signals = sorted(signals, key=lambda x: x.get('score_week', 0), ...)
+  # No check that score_month >= score_month_min!
+
+SHOULD BE:
+  filtered_signals = [
+      s for s in all_signals
+      if s.get('score_week', 0) >= score_week_min and 
+         s.get('score_month', 0) >= score_month_min
+  ]
+
+IMPACT: May allow signals with low score_month to pass through
+
+================================================================================
+KEY METRICS COMPARISON
+================================================================================
+
+Signal Filtering:
+  Reference: Explicit 2-check (score_week AND score_month)
+  Current:   Assumes filtering in get_scoring_signals()
+
+Position Duplicate Check:
+  Reference: Checks if pos_info['close_time'] > wave_time
+  Current:   Only checks if pair_symbol in open_positions
+
+Floating PnL:
+  Reference: Fully calculated with market data
+  Current:   Always 0 (BUG)
+
+Trailing Stop Logic:
+  Reference: max() ensures only DOWN movement
+  Current:   if new_stop > trailing_stop_price (WRONG)
+
+Loss Capping:
+  Reference: cap_loss_to_margin() applied in 3 places
+  Current:   NOT applied anywhere (BUG)
+
+Slippage:
+  Reference: 0.05% on stop loss execution
+  Current:   Not applied (BUG)
+
+Min Equity Tracking:
+  Reference: With floating PnL included
+  Current:   Without floating PnL (always wrong)
+
+Liquidation Capping:
+  Reference: Loss = (margin - entry_commission) / effective_position
+  Current:   Uses actual candle price (can exceed margin)
+
+Period-End Closure:
+  Reference: Caps to 95% of margin
+  Current:   No capping
+
+================================================================================
+PRIORITY FIX ORDER
+================================================================================
+
+1. BUG #2 (Floating PnL) - Affects ALL equity calculations
+2. BUG #3 (Loss capping in _simulate_fixed_tp_sl) - Prevents margin violations
+3. BUG #5 (Loss capping in force_close_all_positions) - Prevents period-end violations
+4. BUG #1 (Trailing stop ratcheting) - Fixes exit logic
+5. BUG #4 (Slippage) - Adds realism
+6. BUG #6 (Signal filtering) - Adds validation
+
+================================================================================
+FILES TO MODIFY
+================================================================================
+
+/home/elcrypto/trading_assistant/database.py:
+  - calculate_trailing_stop_exit() [BUG #1, #4]
+  - process_scoring_signals_batch_v2() [BUG #2, #6]
+
+/home/elcrypto/trading_assistant/trading_simulation.py:
+  - _simulate_fixed_tp_sl() [BUG #3, #4]
+  - force_close_all_positions() [BUG #5]
+
+================================================================================
+VERIFICATION AFTER FIXES
+================================================================================
+
+[ ] Trailing stop only DOWN for LONG, only UP for SHORT
+[ ] Floating PnL uses actual market data
+[ ] All losses capped to (margin - entry_commission)
+[ ] Period-end closures cap loss to 95% of margin
+[ ] Stop loss has 0.05% slippage
+[ ] No negative equity in results
+[ ] Min equity matches reference
+[ ] Equity curve similar to reference
+[ ] Win/loss ratios similar to reference
+[ ] Max drawdown includes floating losses
+
+================================================================================
+DOCUMENTATION LOCATION
+================================================================================
+
+Main Analysis:    /home/elcrypto/trading_assistant/IMPLEMENTATION_COMPARISON.md
+Code Fixes:       /home/elcrypto/trading_assistant/BUGS_AND_FIXES.md
+Executive Summary: /home/elcrypto/trading_assistant/COMPARISON_SUMMARY.md
+Quick Reference:  /home/elcrypto/trading_assistant/QUICK_REFERENCE.txt (this file)
+
+Reference Code:   /home/elcrypto/calk_wk/backtest_both.py
+
+================================================================================
