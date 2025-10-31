@@ -143,15 +143,9 @@ function loadData() {
     fetch(`/api/backtest_bybit/latest_session?sort_by=${sortBy}&limit=50`)
         .then(response => response.json())
         .then(result => {
-            console.log('API Response:', result); // Debug log
             if (result.status === 'success') {
                 currentSession = result.session;
                 combinations = result.combinations;
-
-                console.log('Combinations data:', result.combinations); // Debug log
-                if (result.combinations && result.combinations.length > 0) {
-                    console.log('First combo:', result.combinations[0]); // Debug log
-                }
 
                 updateSessionInfo(result.session);
                 updateCombinationsTable(result.combinations);

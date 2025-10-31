@@ -3844,7 +3844,17 @@ def api_backtest_binance_latest_session():
             'parameters': session['parameters']
         }
 
-        combinations = [dict(row) for row in combos_result] if combos_result else []
+        combinations = []
+        if combos_result:
+            for row in combos_result:
+                combo_dict = {}
+                for key, value in dict(row).items():
+                    # Convert Decimal to float for JSON serialization
+                    if hasattr(value, 'is_finite'):  # Check if it's a Decimal
+                        combo_dict[key] = float(value)
+                    else:
+                        combo_dict[key] = value
+                combinations.append(combo_dict)
 
         return jsonify({
             'status': 'success',
@@ -3924,7 +3934,17 @@ def api_backtest_bybit_latest_session():
             'parameters': session['parameters']
         }
 
-        combinations = [dict(row) for row in combos_result] if combos_result else []
+        combinations = []
+        if combos_result:
+            for row in combos_result:
+                combo_dict = {}
+                for key, value in dict(row).items():
+                    # Convert Decimal to float for JSON serialization
+                    if hasattr(value, 'is_finite'):  # Check if it's a Decimal
+                        combo_dict[key] = float(value)
+                    else:
+                        combo_dict[key] = value
+                combinations.append(combo_dict)
 
         return jsonify({
             'status': 'success',
