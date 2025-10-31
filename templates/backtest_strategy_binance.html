@@ -170,27 +170,29 @@ function updateCombinationsTable(combos) {
     const tbody = document.getElementById('combinationsTable');
 
     tbody.innerHTML = combos.map((combo, index) => {
-        const winRate = combo.win_rate.toFixed(2);
-        const totalPnl = combo.total_pnl.toFixed(2);
-        const finalEquity = combo.final_equity.toFixed(2);
-        const wlRatio = `${combo.win_count}/${combo.loss_count}`;
+        const winRate = (combo.win_rate || 0).toFixed(2);
+        const totalPnl = (combo.total_pnl || 0).toFixed(2);
+        const finalEquity = (combo.final_equity || 0).toFixed(2);
+        const wlRatio = `${combo.win_count || 0}/${combo.loss_count || 0}`;
 
-        const pnlColor = combo.total_pnl >= 0 ? 'text-green-600' : 'text-red-600';
-        const equityColor = combo.final_equity >= 1000 ? 'text-green-600' : 'text-red-600';
+        const pnlValue = combo.total_pnl || 0;
+        const equityValue = combo.final_equity || 0;
+        const pnlColor = pnlValue >= 0 ? 'text-green-600' : 'text-red-600';
+        const equityColor = equityValue >= 1000 ? 'text-green-600' : 'text-red-600';
 
         return `
             <tr class="hover:bg-gray-50 transition-colors">
                 <td class="px-4 py-3 text-sm text-gray-900">${index + 1}</td>
-                <td class="px-4 py-3 text-sm text-gray-900">${combo.score_week}</td>
-                <td class="px-4 py-3 text-sm text-gray-900">${combo.score_month}</td>
-                <td class="px-4 py-3 text-sm text-gray-900">${combo.max_trades}</td>
-                <td class="px-4 py-3 text-sm text-gray-900">${combo.stop_loss.toFixed(1)}</td>
-                <td class="px-4 py-3 text-sm text-gray-900">${combo.trailing_activation.toFixed(1)}</td>
-                <td class="px-4 py-3 text-sm text-gray-900">${combo.trailing_distance.toFixed(1)}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${combo.score_week || 0}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${combo.score_month || 0}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${combo.max_trades || 0}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${(combo.stop_loss || 0).toFixed(1)}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${(combo.trailing_activation || 0).toFixed(1)}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${(combo.trailing_distance || 0).toFixed(1)}</td>
                 <td class="px-4 py-3 text-sm font-semibold text-blue-600">${winRate}%</td>
                 <td class="px-4 py-3 text-sm font-semibold ${pnlColor}">$${totalPnl}</td>
                 <td class="px-4 py-3 text-sm font-semibold ${equityColor}">$${finalEquity}</td>
-                <td class="px-4 py-3 text-sm text-gray-900">${combo.total_trades}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${combo.total_trades || 0}</td>
                 <td class="px-4 py-3 text-sm text-gray-600">${wlRatio}</td>
                 <td class="px-4 py-3 text-sm">
                     <button onclick='showDetails(${JSON.stringify(combo)})'
@@ -241,19 +243,20 @@ function updateDailyStatsTable(dailyStats) {
     const tbody = document.getElementById('dailyStatsTable');
 
     tbody.innerHTML = dailyStats.map(stat => {
-        const dayPnlColor = stat.day_pnl >= 0 ? 'text-green-600' : 'text-red-600';
-        const dayPnlSign = stat.day_pnl >= 0 ? '+' : '';
+        const dayPnlValue = stat.day_pnl || 0;
+        const dayPnlColor = dayPnlValue >= 0 ? 'text-green-600' : 'text-red-600';
+        const dayPnlSign = dayPnlValue >= 0 ? '+' : '';
 
         return `
             <tr class="hover:bg-gray-50">
-                <td class="px-4 py-3 text-sm text-gray-900">${stat.day}</td>
-                <td class="px-4 py-3 text-sm text-right text-gray-900">${stat.total_trades}</td>
-                <td class="px-4 py-3 text-sm text-right text-red-600">${stat.sl_count} / $${stat.sl_loss}</td>
-                <td class="px-4 py-3 text-sm text-right text-green-600">${stat.ts_count} / $${stat.ts_profit}</td>
-                <td class="px-4 py-3 text-sm text-right text-orange-600">${stat.timeout_count} / $${stat.timeout_loss}</td>
-                <td class="px-4 py-3 text-sm text-right font-semibold ${dayPnlColor}">${dayPnlSign}$${stat.day_pnl}</td>
-                <td class="px-4 py-3 text-sm text-right text-gray-900">$${stat.balance_start}</td>
-                <td class="px-4 py-3 text-sm text-right font-semibold text-gray-900">$${stat.balance_end}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${stat.day || ''}</td>
+                <td class="px-4 py-3 text-sm text-right text-gray-900">${stat.total_trades || 0}</td>
+                <td class="px-4 py-3 text-sm text-right text-red-600">${stat.sl_count || 0} / $${stat.sl_loss || 0}</td>
+                <td class="px-4 py-3 text-sm text-right text-green-600">${stat.ts_count || 0} / $${stat.ts_profit || 0}</td>
+                <td class="px-4 py-3 text-sm text-right text-orange-600">${stat.timeout_count || 0} / $${stat.timeout_loss || 0}</td>
+                <td class="px-4 py-3 text-sm text-right font-semibold ${dayPnlColor}">${dayPnlSign}$${dayPnlValue}</td>
+                <td class="px-4 py-3 text-sm text-right text-gray-900">$${stat.balance_start || 0}</td>
+                <td class="px-4 py-3 text-sm text-right font-semibold text-gray-900">$${stat.balance_end || 0}</td>
             </tr>
         `;
     }).join('');
