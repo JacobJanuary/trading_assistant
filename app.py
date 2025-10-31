@@ -3681,6 +3681,20 @@ def backtest_strategy():
     return render_template('backtest_strategy.html')
 
 
+@app.route('/backtest_strategy_binance')
+@login_required
+def backtest_strategy_binance():
+    """Страница анализа backtest стратегии - Binance only"""
+    return render_template('backtest_strategy_binance.html')
+
+
+@app.route('/backtest_strategy_bybit')
+@login_required
+def backtest_strategy_bybit():
+    """Страница анализа backtest стратегии - Bybit only"""
+    return render_template('backtest_strategy_bybit.html')
+
+
 @app.route('/api/backtest/latest_session', methods=['GET'])
 @login_required
 def api_backtest_latest_session():
@@ -3763,6 +3777,166 @@ def api_backtest_latest_session():
         }), 500
 
 
+@app.route('/api/backtest_binance/latest_session', methods=['GET'])
+@login_required
+def api_backtest_binance_latest_session():
+    """API: Get latest backtest session for Binance"""
+    try:
+        sort_by = request.args.get('sort_by', 'final_equity')
+        limit = int(request.args.get('limit', 50))
+
+        # Validate sort_by
+        if sort_by not in ['final_equity', 'win_rate']:
+            sort_by = 'final_equity'
+
+        # Get latest session from binance table
+        session_query = """
+            SELECT session_id, start_time, end_time, status, parameters, description
+            FROM web.backtest_sessions_binance
+            ORDER BY start_time DESC
+            LIMIT 1
+        """
+
+        session_result = db.execute_query(session_query, fetch=True)
+
+        if not session_result:
+            return jsonify({'status': 'success', 'session': None, 'combinations': []})
+
+        session = session_result[0]
+        session_id = session['session_id']
+
+        # Get top combinations
+        sort_column = 'final_equity DESC' if sort_by == 'final_equity' else 'win_rate DESC'
+
+        combos_query = f"""
+            SELECT
+                score_week_filter as score_week,
+                score_month_filter as score_month,
+                max_trades_filter as max_trades,
+                stop_loss_filter as stop_loss,
+                trailing_activation_filter as trailing_activation,
+                trailing_distance_filter as trailing_distance,
+                win_rate,
+                total_pnl_usd as total_pnl,
+                final_equity,
+                total_trades,
+                win_count,
+                loss_count,
+                breakeven_count,
+                max_concurrent_positions as max_concurrent,
+                min_equity,
+                total_commission_usd as total_commission
+            FROM web.backtest_summary_binance
+            WHERE session_id = %s
+            ORDER BY {sort_column}, total_pnl_usd DESC
+            LIMIT %s
+        """
+
+        combos_result = db.execute_query(combos_query, (session_id, limit), fetch=True)
+
+        # Format response
+        session_data = {
+            'session_id': str(session['session_id']),
+            'start_time': session['start_time'].isoformat() if session['start_time'] else None,
+            'end_time': session['end_time'].isoformat() if session['end_time'] else None,
+            'status': session['status'],
+            'description': session['description'],
+            'parameters': session['parameters']
+        }
+
+        combinations = [dict(row) for row in combos_result] if combos_result else []
+
+        return jsonify({
+            'status': 'success',
+            'session': session_data,
+            'combinations': combinations
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_backtest_binance_latest_session: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/backtest_bybit/latest_session', methods=['GET'])
+@login_required
+def api_backtest_bybit_latest_session():
+    """API: Get latest backtest session for Bybit"""
+    try:
+        sort_by = request.args.get('sort_by', 'final_equity')
+        limit = int(request.args.get('limit', 50))
+
+        # Validate sort_by
+        if sort_by not in ['final_equity', 'win_rate']:
+            sort_by = 'final_equity'
+
+        # Get latest session from bybit table
+        session_query = """
+            SELECT session_id, start_time, end_time, status, parameters, description
+            FROM web.backtest_sessions_bybit
+            ORDER BY start_time DESC
+            LIMIT 1
+        """
+
+        session_result = db.execute_query(session_query, fetch=True)
+
+        if not session_result:
+            return jsonify({'status': 'success', 'session': None, 'combinations': []})
+
+        session = session_result[0]
+        session_id = session['session_id']
+
+        # Get top combinations
+        sort_column = 'final_equity DESC' if sort_by == 'final_equity' else 'win_rate DESC'
+
+        combos_query = f"""
+            SELECT
+                score_week_filter as score_week,
+                score_month_filter as score_month,
+                max_trades_filter as max_trades,
+                stop_loss_filter as stop_loss,
+                trailing_activation_filter as trailing_activation,
+                trailing_distance_filter as trailing_distance,
+                win_rate,
+                total_pnl_usd as total_pnl,
+                final_equity,
+                total_trades,
+                win_count,
+                loss_count,
+                breakeven_count,
+                max_concurrent_positions as max_concurrent,
+                min_equity,
+                total_commission_usd as total_commission
+            FROM web.backtest_summary_bybit
+            WHERE session_id = %s
+            ORDER BY {sort_column}, total_pnl_usd DESC
+            LIMIT %s
+        """
+
+        combos_result = db.execute_query(combos_query, (session_id, limit), fetch=True)
+
+        # Format response
+        session_data = {
+            'session_id': str(session['session_id']),
+            'start_time': session['start_time'].isoformat() if session['start_time'] else None,
+            'end_time': session['end_time'].isoformat() if session['end_time'] else None,
+            'status': session['status'],
+            'description': session['description'],
+            'parameters': session['parameters']
+        }
+
+        combinations = [dict(row) for row in combos_result] if combos_result else []
+
+        return jsonify({
+            'status': 'success',
+            'session': session_data,
+            'combinations': combinations
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_backtest_bybit_latest_session: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 @app.route('/api/backtest/combo_details', methods=['POST'])
 @login_required
 def api_backtest_combo_details():
@@ -3841,6 +4015,160 @@ def api_backtest_combo_details():
             'status': 'error',
             'message': str(e)
         }), 500
+
+
+@app.route('/api/backtest_binance/combo_details', methods=['POST'])
+@login_required
+def api_backtest_binance_combo_details():
+    """API: Get detailed daily stats for Binance combination"""
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        score_week = data.get('score_week')
+        score_month = data.get('score_month')
+        max_trades = data.get('max_trades')
+        stop_loss = data.get('stop_loss')
+        trailing_activation = data.get('trailing_activation')
+        trailing_distance = data.get('trailing_distance')
+
+        # Query daily stats from binance results table
+        query = """
+            SELECT
+                DATE(signal_timestamp) as day,
+                COUNT(*) as total_trades,
+                SUM(pnl_usd) as day_pnl,
+                COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_count,
+                SUM(CASE WHEN close_reason = 'stop_loss' THEN pnl_usd ELSE 0 END) as sl_loss,
+                COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as ts_count,
+                SUM(CASE WHEN close_reason = 'trailing_stop' THEN pnl_usd ELSE 0 END) as ts_profit,
+                COUNT(CASE WHEN close_reason = 'smart_loss' THEN 1 END) as timeout_count,
+                SUM(CASE WHEN close_reason = 'smart_loss' THEN pnl_usd ELSE 0 END) as timeout_loss
+            FROM web.backtest_results_binance
+            WHERE session_id = %s
+                AND score_week_filter = %s
+                AND score_month_filter = %s
+                AND max_trades_filter = %s
+                AND stop_loss_filter = %s
+                AND trailing_activation_filter = %s
+                AND trailing_distance_filter = %s
+            GROUP BY DATE(signal_timestamp)
+            ORDER BY day
+        """
+
+        daily_stats = db.execute_query(query, (
+            session_id, score_week, score_month, max_trades,
+            stop_loss, trailing_activation, trailing_distance
+        ), fetch=True)
+
+        # Calculate cumulative balance
+        initial_capital = 1000.0
+        balance = initial_capital
+        result_data = []
+
+        for stat in daily_stats:
+            day_pnl = float(stat['day_pnl'] or 0)
+            balance_start = balance
+            balance += day_pnl
+
+            result_data.append({
+                'day': stat['day'].isoformat(),
+                'balance_start': round(balance_start, 2),
+                'balance_end': round(balance, 2),
+                'day_pnl': round(day_pnl, 2),
+                'total_trades': stat['total_trades'],
+                'sl_count': stat['sl_count'],
+                'sl_loss': round(float(stat['sl_loss'] or 0), 2),
+                'ts_count': stat['ts_count'],
+                'ts_profit': round(float(stat['ts_profit'] or 0), 2),
+                'timeout_count': stat['timeout_count'],
+                'timeout_loss': round(float(stat['timeout_loss'] or 0), 2)
+            })
+
+        return jsonify({
+            'status': 'success',
+            'daily_stats': result_data
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_backtest_binance_combo_details: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/backtest_bybit/combo_details', methods=['POST'])
+@login_required
+def api_backtest_bybit_combo_details():
+    """API: Get detailed daily stats for Bybit combination"""
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        score_week = data.get('score_week')
+        score_month = data.get('score_month')
+        max_trades = data.get('max_trades')
+        stop_loss = data.get('stop_loss')
+        trailing_activation = data.get('trailing_activation')
+        trailing_distance = data.get('trailing_distance')
+
+        # Query daily stats from bybit results table
+        query = """
+            SELECT
+                DATE(signal_timestamp) as day,
+                COUNT(*) as total_trades,
+                SUM(pnl_usd) as day_pnl,
+                COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_count,
+                SUM(CASE WHEN close_reason = 'stop_loss' THEN pnl_usd ELSE 0 END) as sl_loss,
+                COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as ts_count,
+                SUM(CASE WHEN close_reason = 'trailing_stop' THEN pnl_usd ELSE 0 END) as ts_profit,
+                COUNT(CASE WHEN close_reason = 'smart_loss' THEN 1 END) as timeout_count,
+                SUM(CASE WHEN close_reason = 'smart_loss' THEN pnl_usd ELSE 0 END) as timeout_loss
+            FROM web.backtest_results_bybit
+            WHERE session_id = %s
+                AND score_week_filter = %s
+                AND score_month_filter = %s
+                AND max_trades_filter = %s
+                AND stop_loss_filter = %s
+                AND trailing_activation_filter = %s
+                AND trailing_distance_filter = %s
+            GROUP BY DATE(signal_timestamp)
+            ORDER BY day
+        """
+
+        daily_stats = db.execute_query(query, (
+            session_id, score_week, score_month, max_trades,
+            stop_loss, trailing_activation, trailing_distance
+        ), fetch=True)
+
+        # Calculate cumulative balance
+        initial_capital = 1000.0
+        balance = initial_capital
+        result_data = []
+
+        for stat in daily_stats:
+            day_pnl = float(stat['day_pnl'] or 0)
+            balance_start = balance
+            balance += day_pnl
+
+            result_data.append({
+                'day': stat['day'].isoformat(),
+                'balance_start': round(balance_start, 2),
+                'balance_end': round(balance, 2),
+                'day_pnl': round(day_pnl, 2),
+                'total_trades': stat['total_trades'],
+                'sl_count': stat['sl_count'],
+                'sl_loss': round(float(stat['sl_loss'] or 0), 2),
+                'ts_count': stat['ts_count'],
+                'ts_profit': round(float(stat['ts_profit'] or 0), 2),
+                'timeout_count': stat['timeout_count'],
+                'timeout_loss': round(float(stat['timeout_loss'] or 0), 2)
+            })
+
+        return jsonify({
+            'status': 'success',
+            'daily_stats': result_data
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_backtest_bybit_combo_details: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 # ============================================================================

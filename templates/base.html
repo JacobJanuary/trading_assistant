@@ -109,7 +109,15 @@
                         <div class="p-2 space-y-1">
                             <a href="{{ url_for('backtest_strategy') }}" class="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors">
                                 <i class="fas fa-chart-line text-blue-500"></i>
-                                <span class="font-medium">Backtest Analysis</span>
+                                <span class="font-medium">Combined (Binance+Bybit)</span>
+                            </a>
+                            <a href="{{ url_for('backtest_strategy_binance') }}" class="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-700 hover:bg-yellow-50 hover:text-yellow-700 transition-colors">
+                                <i class="fas fa-coins text-yellow-500"></i>
+                                <span class="font-medium">Binance only</span>
+                            </a>
+                            <a href="{{ url_for('backtest_strategy_bybit') }}" class="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-700 hover:bg-purple-50 hover:text-purple-700 transition-colors">
+                                <i class="fas fa-database text-purple-500"></i>
+                                <span class="font-medium">Bybit only</span>
                             </a>
                         </div>
                     </div>
@@ -184,7 +192,13 @@
                     </a>
                     <div class="border-t border-white/10 my-2"></div>
                     <a href="{{ url_for('backtest_strategy') }}" class="block px-4 py-3 text-white hover:bg-white/10 rounded-lg transition-colors">
-                        <i class="fas fa-chart-line mr-3"></i>Backtest Analysis
+                        <i class="fas fa-chart-line mr-3"></i>Combined (Binance+Bybit)
+                    </a>
+                    <a href="{{ url_for('backtest_strategy_binance') }}" class="block px-4 py-3 text-white hover:bg-white/10 rounded-lg transition-colors">
+                        <i class="fas fa-coins mr-3 text-yellow-400"></i>Binance only
+                    </a>
+                    <a href="{{ url_for('backtest_strategy_bybit') }}" class="block px-4 py-3 text-white hover:bg-white/10 rounded-lg transition-colors">
+                        <i class="fas fa-database mr-3 text-purple-400"></i>Bybit only
                     </a>
                     {% if current_user.is_admin %}
                     <a href="{{ url_for('admin') }}" class="block px-4 py-3 text-yellow-300 hover:bg-yellow-500/20 rounded-lg transition-colors">
