@@ -1322,6 +1322,13 @@ def process_signal_complete(db, signal,
                 gross_pnl = effective_position * (pnl_percent / 100)
                 realized_pnl = gross_pnl - total_commission  # NET PnL после комиссий
 
+                # Применяем ограничение isolated margin
+                # КРИТИЧНО: При isolated margin максимальный убыток = начальная маржа + все комиссии
+                max_loss = -(position_size + entry_commission + exit_commission)
+                if realized_pnl < max_loss:
+                    print(f"[ISOLATED MARGIN CAP] Capping loss from ${realized_pnl:.2f} to ${max_loss:.2f} (position: ${position_size}, entry_fee: ${entry_commission:.2f}, exit_fee: ${exit_commission:.2f})")
+                    realized_pnl = max_loss
+
             # Рассчитываем unrealized PnL если открыта
             unrealized_pnl = 0
             if not is_closed:
@@ -1759,9 +1766,12 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
         net_pnl = gross_pnl - total_commission
 
         # Применяем ограничение isolated margin
-        max_loss = -(position_size - entry_commission)
+        # КРИТИЧНО: При isolated margin максимальный убыток = начальная маржа + все комиссии
+        # Начальная маржа = position_size (не умноженная на leverage)
+        # Максимальный убыток = -(position_size + entry_commission + exit_commission)
+        max_loss = -(position_size + entry_commission + exit_commission)
         if net_pnl < max_loss:
-            print(f"[TRAILING CAP] Capping loss from {net_pnl:.2f} to {max_loss:.2f}")
+            print(f"[ISOLATED MARGIN CAP] Capping loss from ${net_pnl:.2f} to ${max_loss:.2f} (position: ${position_size}, entry_fee: ${entry_commission:.2f}, exit_fee: ${exit_commission:.2f})")
             net_pnl = max_loss
 
         result['pnl_usd'] = net_pnl  # NET PnL
@@ -2002,14 +2012,29 @@ def process_signal_with_trailing(db, signal, user_settings):
                 close_price = last_price
                 close_time = history[-1]['timestamp']
 
-        # Рассчитываем финальный PnL
-        if is_closed:
+        # Рассчитываем финальный PnL (если use_trailing=False, т.к. для trailing это уже сделано в calculate_trailing_stop_exit)
+        if not use_trailing and is_closed:
+            # Рассчитываем комиссии для Fixed TP/SL режима
+            commission_rate = Config.DEFAULT_COMMISSION_RATE
+            effective_position = position_size * leverage
+            entry_commission = effective_position * commission_rate
+            exit_commission = effective_position * commission_rate
+            total_commission = entry_commission + exit_commission
+
             if signal_action in ['SELL', 'SHORT']:
                 pnl_percent = ((entry_price - close_price) / entry_price) * 100
             else:
                 pnl_percent = ((close_price - entry_price) / entry_price) * 100
-            realized_pnl = position_size * (pnl_percent / 100) * leverage
-        else:
+
+            gross_pnl = effective_position * (pnl_percent / 100)
+            realized_pnl = gross_pnl - total_commission  # NET PnL после комиссий
+
+            # Применяем ограничение isolated margin
+            max_loss = -(position_size + entry_commission + exit_commission)
+            if realized_pnl < max_loss:
+                print(f"[ISOLATED MARGIN CAP] Capping loss from ${realized_pnl:.2f} to ${max_loss:.2f} (position: ${position_size}, fees: ${total_commission:.2f})")
+                realized_pnl = max_loss
+        elif not is_closed:
             realized_pnl = 0
 
         # Рассчитываем unrealized PnL
