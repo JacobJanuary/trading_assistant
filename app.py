@@ -9,7 +9,8 @@ from flask_login import LoginManager, login_user, logout_user, login_required, c
 from dotenv import load_dotenv
 import logging
 # Импорт модулей приложения
-from database import Database, initialize_signals_with_params, process_signal_complete
+from database import (Database, initialize_signals_with_params, process_signal_complete,
+                      get_raw_signals, get_signal_details, get_raw_signals_stats)
 from models import User, TradingData, TradingStats
 from config import Config
 
@@ -4470,6 +4471,234 @@ def api_whale_futures_data():
     except Exception as e:
         logger.error(f"Error in whale_futures_data: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+# =============================================================================
+# RAW SIGNALS FEATURE - Endpoints for displaying signals from fas_v2.scoring_history
+# =============================================================================
+
+@app.route('/raw_signals')
+@login_required
+def raw_signals():
+    """Страница отображения сырых сигналов"""
+    return render_template('raw_signals.html')
+
+
+@app.route('/api/raw_signals/list', methods=['POST'])
+@login_required
+def api_get_raw_signals():
+    """
+    API для получения списка сырых сигналов с фильтрацией и пагинацией
+
+    POST Body:
+    {
+        "filters": {
+            "time_range": "24h",
+            "score_week_min": -100,
+            "score_week_max": 100,
+            "score_month_min": -100,
+            "score_month_max": 100,
+            "actions": ["BUY", "SELL", "LONG", "SHORT", "NEUTRAL", "NO_TRADE"],
+            "patterns": ["OI_EXPLOSION", ...],
+            "regimes": ["BULL", "BEAR", "NEUTRAL"],
+            "exchanges": [1, 2]
+        },
+        "page": 1,
+        "per_page": 50
+    }
+
+    Returns:
+    {
+        "signals": [...],
+        "total": int,
+        "page": int,
+        "pages": int
+    }
+    """
+    try:
+        data = request.get_json()
+        filters = data.get('filters', {})
+        page = data.get('page', 1)
+        per_page = data.get('per_page', 50)
+
+        # Валидация параметров
+        page = max(1, int(page))
+        per_page = max(1, min(int(per_page), 100))  # Максимум 100 на страницу
+
+        # Получаем данные
+        result = get_raw_signals(db, filters, page, per_page)
+
+        # Конвертируем datetime в строки для JSON
+        for signal in result['signals']:
+            if signal.get('timestamp'):
+                signal['timestamp'] = signal['timestamp'].isoformat()
+
+        return jsonify(result)
+
+    except Exception as e:
+        logger.error(f"Error in api_get_raw_signals: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'error': 'Failed to fetch signals',
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/raw_signals/details/<int:signal_id>')
+@login_required
+def api_get_signal_details(signal_id):
+    """
+    API для получения детальной информации о сигнале
+
+    Args:
+        signal_id: int - ID сигнала из scoring_history
+
+    Returns:
+    {
+        "signal": {...},
+        "patterns": [...],
+        "indicators": {...},
+        "poc": {...},
+        "regime": {...}
+    }
+    """
+    try:
+        details = get_signal_details(db, signal_id)
+
+        if not details:
+            return jsonify({
+                'error': 'Signal not found',
+                'signal_id': signal_id
+            }), 404
+
+        # Конвертируем datetime в строки для JSON
+        def convert_dates(obj):
+            if obj is None:
+                return None
+            if isinstance(obj, dict):
+                return {k: convert_dates(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [convert_dates(item) for item in obj]
+            if hasattr(obj, 'isoformat'):
+                return obj.isoformat()
+            return obj
+
+        details = convert_dates(details)
+
+        return jsonify(details)
+
+    except Exception as e:
+        logger.error(f"Error in api_get_signal_details for ID {signal_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'error': 'Failed to fetch signal details',
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/raw_signals/stats', methods=['POST'])
+@login_required
+def api_get_raw_signals_stats():
+    """
+    API для получения статистики по сырым сигналам
+
+    POST Body:
+    {
+        "filters": {...}  // Те же фильтры что и в /list
+    }
+
+    Returns:
+    {
+        "total": int,
+        "by_action": {"BUY": 123, "SELL": 456, ...},
+        "by_regime": {"BULL": 234, "BEAR": 345, ...},
+        "avg_score_week": float,
+        "avg_score_month": float,
+        "last_signal_time": "2025-11-05T12:00:00+00:00",
+        "pattern_distribution": {"OI_EXPLOSION": 45, ...}
+    }
+    """
+    try:
+        data = request.get_json()
+        filters = data.get('filters', {})
+
+        stats = get_raw_signals_stats(db, filters)
+
+        # Конвертируем datetime в строки для JSON
+        if stats.get('last_signal_time'):
+            stats['last_signal_time'] = stats['last_signal_time'].isoformat()
+
+        return jsonify(stats)
+
+    except Exception as e:
+        logger.error(f"Error in api_get_raw_signals_stats: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'error': 'Failed to fetch statistics',
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/raw_signals/export/<int:signal_id>')
+@login_required
+def api_export_signal(signal_id):
+    """
+    API для экспорта сигнала в JSON файл
+
+    Args:
+        signal_id: int - ID сигнала из scoring_history
+
+    Returns:
+        JSON file download
+    """
+    try:
+        details = get_signal_details(db, signal_id)
+
+        if not details:
+            return jsonify({
+                'error': 'Signal not found',
+                'signal_id': signal_id
+            }), 404
+
+        # Конвертируем datetime в строки для JSON
+        def convert_dates(obj):
+            if obj is None:
+                return None
+            if isinstance(obj, dict):
+                return {k: convert_dates(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [convert_dates(item) for item in obj]
+            if hasattr(obj, 'isoformat'):
+                return obj.isoformat()
+            # Конвертируем Decimal в float
+            if hasattr(obj, '__float__'):
+                return float(obj)
+            return obj
+
+        details = convert_dates(details)
+
+        # Создаем JSON с отступами для читаемости
+        import json
+        json_data = json.dumps(details, indent=2, ensure_ascii=False)
+
+        # Создаем response для скачивания
+        response = make_response(json_data)
+        response.headers['Content-Type'] = 'application/json; charset=utf-8'
+        response.headers['Content-Disposition'] = f'attachment; filename=signal_{signal_id}.json'
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error in api_export_signal for ID {signal_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'error': 'Failed to export signal',
+            'message': str(e)
+        }), 500
 
 
 # Запуск приложения

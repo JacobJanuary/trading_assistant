@@ -3840,3 +3840,554 @@ def apply_15min_filter(signals, max_trades_per_15min):
     filtered_signals.sort(key=lambda x: x['timestamp'], reverse=True)
 
     return filtered_signals
+
+
+# =============================================================================
+# RAW SIGNALS FEATURE - Functions for displaying signals from fas_v2.scoring_history
+# =============================================================================
+
+def get_raw_signals(db, filters, page=1, per_page=50):
+    """
+    Получение списка сырых сигналов из fas_v2.scoring_history с фильтрацией и пагинацией
+
+    Args:
+        db: Database instance
+        filters: dict with filter parameters
+            {
+                'time_range': '1h' | '3h' | '6h' | '12h' | '24h' | 'custom',
+                'custom_start': datetime (optional),
+                'custom_end': datetime (optional),
+                'score_week_min': int,
+                'score_week_max': int,
+                'score_month_min': int,
+                'score_month_max': int,
+                'actions': ['BUY', 'SELL', 'NEUTRAL', ...],
+                'patterns': ['OI_EXPLOSION', ...] (optional),
+                'regimes': ['BULL', 'BEAR', 'NEUTRAL'] (optional),
+                'exchanges': [1, 2] (optional, Binance=1, Bybit=2)
+            }
+        page: int - page number (1-indexed)
+        per_page: int - items per page
+
+    Returns:
+        dict {
+            'signals': [...],
+            'total': int,
+            'page': int,
+            'pages': int
+        }
+    """
+    try:
+        # Построение WHERE условий
+        where_clauses = ["sh.is_active = true"]
+        params = []
+        param_counter = 1
+
+        # Временной диапазон
+        time_range = filters.get('time_range', '24h')
+        if time_range == 'custom':
+            if filters.get('custom_start'):
+                where_clauses.append(f"sh.timestamp >= ${param_counter}")
+                params.append(filters['custom_start'])
+                param_counter += 1
+            if filters.get('custom_end'):
+                where_clauses.append(f"sh.timestamp <= ${param_counter}")
+                params.append(filters['custom_end'])
+                param_counter += 1
+        else:
+            # Предустановленные диапазоны
+            hours_map = {'1h': 1, '3h': 3, '6h': 6, '12h': 12, '24h': 24}
+            hours = hours_map.get(time_range, 24)
+            where_clauses.append(f"sh.timestamp >= NOW() - INTERVAL '{hours} hours'")
+
+        # Score Week фильтр
+        if filters.get('score_week_min') is not None:
+            where_clauses.append(f"sh.score_week >= ${param_counter}")
+            params.append(filters['score_week_min'])
+            param_counter += 1
+
+        if filters.get('score_week_max') is not None:
+            where_clauses.append(f"sh.score_week <= ${param_counter}")
+            params.append(filters['score_week_max'])
+            param_counter += 1
+
+        # Score Month фильтр
+        if filters.get('score_month_min') is not None:
+            where_clauses.append(f"sh.score_month >= ${param_counter}")
+            params.append(filters['score_month_min'])
+            param_counter += 1
+
+        if filters.get('score_month_max') is not None:
+            where_clauses.append(f"sh.score_month <= ${param_counter}")
+            params.append(filters['score_month_max'])
+            param_counter += 1
+
+        # Действие фильтр
+        if filters.get('actions') and len(filters['actions']) > 0:
+            where_clauses.append(f"sh.recommended_action = ANY(${param_counter})")
+            params.append(filters['actions'])
+            param_counter += 1
+
+        # Биржа фильтр
+        if filters.get('exchanges') and len(filters['exchanges']) > 0:
+            where_clauses.append(f"tp.exchange_id = ANY(${param_counter})")
+            params.append(filters['exchanges'])
+            param_counter += 1
+
+        # Паттерны фильтр (через EXISTS подзапрос)
+        if filters.get('patterns') and len(filters['patterns']) > 0:
+            where_clauses.append(f"""
+                EXISTS (
+                    SELECT 1 FROM fas_v2.sh_patterns shp
+                    JOIN fas_v2.signal_patterns sp ON sp.id = shp.signal_patterns_id
+                    WHERE shp.scoring_history_id = sh.id
+                    AND sp.pattern_type = ANY(${param_counter})
+                )
+            """)
+            params.append(filters['patterns'])
+            param_counter += 1
+
+        # Режим рынка фильтр
+        if filters.get('regimes') and len(filters['regimes']) > 0:
+            where_clauses.append(f"mr.regime = ANY(${param_counter})")
+            params.append(filters['regimes'])
+            param_counter += 1
+
+        where_sql = " AND ".join(where_clauses)
+
+        # Подсчет общего количества (для пагинации)
+        count_query = f"""
+            SELECT COUNT(DISTINCT sh.id) as total
+            FROM fas_v2.scoring_history sh
+            JOIN trading_pairs tp ON tp.id = sh.trading_pair_id
+            LEFT JOIN fas_v2.sh_regime shr ON shr.scoring_history_id = sh.id
+            LEFT JOIN fas_v2.market_regime mr ON mr.id = shr.signal_regime_id
+            WHERE {where_sql}
+        """
+
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(count_query, params)
+                total = cur.fetchone()['total']
+
+                # Расчет пагинации
+                pages = (total + per_page - 1) // per_page if total > 0 else 1
+                page = max(1, min(page, pages))
+                offset = (page - 1) * per_page
+
+                # Основной запрос с пагинацией
+                query = f"""
+                    SELECT
+                        sh.id,
+                        sh.timestamp,
+                        sh.pair_symbol,
+                        sh.recommended_action,
+                        sh.score_week,
+                        sh.score_month,
+                        sh.total_score,
+                        sh.pattern_score,
+                        sh.combination_score,
+                        sh.indicator_score,
+                        sh.patterns_details,
+                        sh.combinations_details,
+                        tp.exchange_id,
+                        ex.name as exchange_name,
+                        mr.regime as market_regime,
+                        mr.strength as regime_strength,
+                        COUNT(DISTINCT shp.id) as patterns_count,
+                        COUNT(DISTINCT shi.id) as indicators_count,
+                        CASE
+                            WHEN COUNT(DISTINCT shpoc.id) > 0 THEN true
+                            ELSE false
+                        END as has_poc
+                    FROM fas_v2.scoring_history sh
+                    JOIN trading_pairs tp ON tp.id = sh.trading_pair_id
+                    JOIN exchanges ex ON ex.id = tp.exchange_id
+                    LEFT JOIN fas_v2.sh_regime shr ON shr.scoring_history_id = sh.id
+                    LEFT JOIN fas_v2.market_regime mr ON mr.id = shr.signal_regime_id
+                    LEFT JOIN fas_v2.sh_patterns shp ON shp.scoring_history_id = sh.id
+                    LEFT JOIN fas_v2.sh_indicators shi ON shi.scoring_history_id = sh.id
+                    LEFT JOIN fas_v2.sh_poc shpoc ON shpoc.scoring_history_id = sh.id
+                    WHERE {where_sql}
+                    GROUP BY sh.id, tp.exchange_id, ex.name, mr.regime, mr.strength
+                    ORDER BY sh.timestamp DESC
+                    LIMIT {per_page} OFFSET {offset}
+                """
+
+                cur.execute(query, params)
+                signals = cur.fetchall()
+
+                return {
+                    'signals': signals,
+                    'total': total,
+                    'page': page,
+                    'pages': pages
+                }
+
+    except Exception as e:
+        logger.error(f"Error getting raw signals: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'signals': [],
+            'total': 0,
+            'page': 1,
+            'pages': 1
+        }
+
+
+def get_signal_details(db, signal_id):
+    """
+    Получение полной информации о сигнале со всеми связанными данными
+
+    Args:
+        db: Database instance
+        signal_id: int - ID сигнала из scoring_history
+
+    Returns:
+        dict {
+            'signal': {...},  # основные данные сигнала
+            'patterns': [...],  # список паттернов с деталями
+            'indicators': {...},  # индикаторы по таймфреймам
+            'poc': {...},  # POC levels (если есть)
+            'regime': {...}  # режим рынка (если есть)
+        } или None если сигнал не найден
+    """
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Основная информация о сигнале
+                signal_query = """
+                    SELECT
+                        sh.*,
+                        tp.exchange_id,
+                        ex.name as exchange_name
+                    FROM fas_v2.scoring_history sh
+                    JOIN trading_pairs tp ON tp.id = sh.trading_pair_id
+                    JOIN exchanges ex ON ex.id = tp.exchange_id
+                    WHERE sh.id = %s
+                """
+                cur.execute(signal_query, (signal_id,))
+                signal = cur.fetchone()
+
+                if not signal:
+                    return None
+
+                # Паттерны
+                patterns_query = """
+                    SELECT
+                        sp.id,
+                        sp.pattern_type,
+                        sp.timeframe,
+                        sp.strength,
+                        sp.confidence,
+                        sp.score_impact,
+                        sp.details,
+                        sp.trigger_values,
+                        sp.pattern_start,
+                        sp.pattern_end,
+                        sp.duration_minutes
+                    FROM fas_v2.sh_patterns shp
+                    JOIN fas_v2.signal_patterns sp ON sp.id = shp.signal_patterns_id
+                    WHERE shp.scoring_history_id = %s
+                    ORDER BY ABS(sp.score_impact) DESC
+                """
+                cur.execute(patterns_query, (signal_id,))
+                patterns = cur.fetchall()
+
+                # Индикаторы (все таймфреймы)
+                indicators_query = """
+                    SELECT
+                        ind.timeframe,
+                        ind.close_price,
+                        ind.price_change_pct,
+                        ind.buy_ratio,
+                        ind.buy_ratio_weighted,
+                        ind.volume_zscore,
+                        ind.normalized_imbalance,
+                        ind.smoothed_imbalance,
+                        ind.cvd_delta,
+                        ind.cvd_cumulative,
+                        ind.oi_delta_pct,
+                        ind.funding_rate_avg,
+                        ind.rsi,
+                        ind.atr,
+                        ind.macd_line,
+                        ind.macd_signal,
+                        ind.macd_histogram,
+                        ind.rs_value,
+                        ind.rs_momentum
+                    FROM fas_v2.sh_indicators shi
+                    JOIN fas_v2.indicators ind ON (
+                        ind.trading_pair_id = shi.indicators_trading_pair_id
+                        AND ind.timestamp = shi.indicators_timestamp
+                        AND ind.timeframe = shi.indicators_timeframe
+                    )
+                    WHERE shi.scoring_history_id = %s
+                    ORDER BY
+                        CASE ind.timeframe::text
+                            WHEN '5m' THEN 1
+                            WHEN '15m' THEN 2
+                            WHEN '1h' THEN 3
+                            WHEN '4h' THEN 4
+                            WHEN '1d' THEN 5
+                            ELSE 99
+                        END
+                """
+                cur.execute(indicators_query, (signal_id,))
+                indicators_list = cur.fetchall()
+
+                # Преобразуем список индикаторов в словарь по таймфреймам
+                indicators = {}
+                for ind in indicators_list:
+                    timeframe = str(ind['timeframe'])
+                    indicators[timeframe] = ind
+
+                # POC levels
+                poc_query = """
+                    SELECT
+                        poc.poc_24h,
+                        poc.poc_7d,
+                        poc.poc_30d,
+                        poc.volume_24h,
+                        poc.volume_7d,
+                        poc.data_points_24h,
+                        poc.data_points_7d,
+                        poc.data_points_30d,
+                        poc.calculation_quality,
+                        poc.calculated_at
+                    FROM fas_v2.sh_poc shpoc
+                    JOIN fas_v2.poc_levels poc ON (
+                        poc.trading_pair_id = shpoc.poc_trading_pair_id
+                        AND poc.calculated_at = shpoc.poc_calculated_at
+                    )
+                    WHERE shpoc.scoring_history_id = %s
+                    LIMIT 1
+                """
+                cur.execute(poc_query, (signal_id,))
+                poc = cur.fetchone()
+
+                # Режим рынка
+                regime_query = """
+                    SELECT
+                        mr.regime,
+                        mr.strength,
+                        mr.btc_change_1h,
+                        mr.btc_change_4h,
+                        mr.btc_change_24h,
+                        mr.alt_change_1h,
+                        mr.alt_change_4h,
+                        mr.alt_change_24h,
+                        mr.volume_factor,
+                        mr.timestamp as regime_timestamp
+                    FROM fas_v2.sh_regime shr
+                    JOIN fas_v2.market_regime mr ON mr.id = shr.signal_regime_id
+                    WHERE shr.scoring_history_id = %s
+                    LIMIT 1
+                """
+                cur.execute(regime_query, (signal_id,))
+                regime = cur.fetchone()
+
+                return {
+                    'signal': signal,
+                    'patterns': patterns,
+                    'indicators': indicators,
+                    'poc': poc,
+                    'regime': regime
+                }
+
+    except Exception as e:
+        logger.error(f"Error getting signal details for ID {signal_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def get_raw_signals_stats(db, filters):
+    """
+    Получение статистики по сырым сигналам с учетом фильтров
+
+    Args:
+        db: Database instance
+        filters: dict - те же фильтры что и в get_raw_signals
+
+    Returns:
+        dict {
+            'total': int,
+            'by_action': {'BUY': 123, 'SELL': 456, ...},
+            'by_regime': {'BULL': 234, 'BEAR': 345, 'NEUTRAL': 123},
+            'avg_score_week': float,
+            'avg_score_month': float,
+            'last_signal_time': datetime,
+            'pattern_distribution': {'OI_EXPLOSION': 45, ...}
+        }
+    """
+    try:
+        # Строим те же WHERE условия что и в get_raw_signals
+        where_clauses = ["sh.is_active = true"]
+        params = []
+        param_counter = 1
+
+        # Временной диапазон
+        time_range = filters.get('time_range', '24h')
+        if time_range == 'custom':
+            if filters.get('custom_start'):
+                where_clauses.append(f"sh.timestamp >= ${param_counter}")
+                params.append(filters['custom_start'])
+                param_counter += 1
+            if filters.get('custom_end'):
+                where_clauses.append(f"sh.timestamp <= ${param_counter}")
+                params.append(filters['custom_end'])
+                param_counter += 1
+        else:
+            hours_map = {'1h': 1, '3h': 3, '6h': 6, '12h': 12, '24h': 24}
+            hours = hours_map.get(time_range, 24)
+            where_clauses.append(f"sh.timestamp >= NOW() - INTERVAL '{hours} hours'")
+
+        # Score Week фильтр
+        if filters.get('score_week_min') is not None:
+            where_clauses.append(f"sh.score_week >= ${param_counter}")
+            params.append(filters['score_week_min'])
+            param_counter += 1
+
+        if filters.get('score_week_max') is not None:
+            where_clauses.append(f"sh.score_week <= ${param_counter}")
+            params.append(filters['score_week_max'])
+            param_counter += 1
+
+        # Score Month фильтр
+        if filters.get('score_month_min') is not None:
+            where_clauses.append(f"sh.score_month >= ${param_counter}")
+            params.append(filters['score_month_min'])
+            param_counter += 1
+
+        if filters.get('score_month_max') is not None:
+            where_clauses.append(f"sh.score_month <= ${param_counter}")
+            params.append(filters['score_month_max'])
+            param_counter += 1
+
+        # Действие фильтр
+        if filters.get('actions') and len(filters['actions']) > 0:
+            where_clauses.append(f"sh.recommended_action = ANY(${param_counter})")
+            params.append(filters['actions'])
+            param_counter += 1
+
+        # Биржа фильтр
+        if filters.get('exchanges') and len(filters['exchanges']) > 0:
+            where_clauses.append(f"tp.exchange_id = ANY(${param_counter})")
+            params.append(filters['exchanges'])
+            param_counter += 1
+
+        # Паттерны фильтр
+        if filters.get('patterns') and len(filters['patterns']) > 0:
+            where_clauses.append(f"""
+                EXISTS (
+                    SELECT 1 FROM fas_v2.sh_patterns shp
+                    JOIN fas_v2.signal_patterns sp ON sp.id = shp.signal_patterns_id
+                    WHERE shp.scoring_history_id = sh.id
+                    AND sp.pattern_type = ANY(${param_counter})
+                )
+            """)
+            params.append(filters['patterns'])
+            param_counter += 1
+
+        # Режим рынка фильтр
+        if filters.get('regimes') and len(filters['regimes']) > 0:
+            where_clauses.append(f"mr.regime = ANY(${param_counter})")
+            params.append(filters['regimes'])
+            param_counter += 1
+
+        where_sql = " AND ".join(where_clauses)
+
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Основная статистика
+                main_stats_query = f"""
+                    SELECT
+                        COUNT(DISTINCT sh.id) as total,
+                        AVG(sh.score_week) as avg_score_week,
+                        AVG(sh.score_month) as avg_score_month,
+                        MAX(sh.timestamp) as last_signal_time
+                    FROM fas_v2.scoring_history sh
+                    JOIN trading_pairs tp ON tp.id = sh.trading_pair_id
+                    LEFT JOIN fas_v2.sh_regime shr ON shr.scoring_history_id = sh.id
+                    LEFT JOIN fas_v2.market_regime mr ON mr.id = shr.signal_regime_id
+                    WHERE {where_sql}
+                """
+                cur.execute(main_stats_query, params)
+                main_stats = cur.fetchone()
+
+                # Статистика по действиям
+                action_stats_query = f"""
+                    SELECT
+                        sh.recommended_action,
+                        COUNT(DISTINCT sh.id) as count
+                    FROM fas_v2.scoring_history sh
+                    JOIN trading_pairs tp ON tp.id = sh.trading_pair_id
+                    LEFT JOIN fas_v2.sh_regime shr ON shr.scoring_history_id = sh.id
+                    LEFT JOIN fas_v2.market_regime mr ON mr.id = shr.signal_regime_id
+                    WHERE {where_sql}
+                    GROUP BY sh.recommended_action
+                """
+                cur.execute(action_stats_query, params)
+                action_stats_list = cur.fetchall()
+                by_action = {row['recommended_action']: row['count'] for row in action_stats_list}
+
+                # Статистика по режимам рынка
+                regime_stats_query = f"""
+                    SELECT
+                        COALESCE(mr.regime, 'UNKNOWN') as regime,
+                        COUNT(DISTINCT sh.id) as count
+                    FROM fas_v2.scoring_history sh
+                    JOIN trading_pairs tp ON tp.id = sh.trading_pair_id
+                    LEFT JOIN fas_v2.sh_regime shr ON shr.scoring_history_id = sh.id
+                    LEFT JOIN fas_v2.market_regime mr ON mr.id = shr.signal_regime_id
+                    WHERE {where_sql}
+                    GROUP BY mr.regime
+                """
+                cur.execute(regime_stats_query, params)
+                regime_stats_list = cur.fetchall()
+                by_regime = {row['regime']: row['count'] for row in regime_stats_list}
+
+                # Распределение паттернов
+                pattern_dist_query = f"""
+                    SELECT
+                        sp.pattern_type,
+                        COUNT(*) as count
+                    FROM fas_v2.scoring_history sh
+                    JOIN trading_pairs tp ON tp.id = sh.trading_pair_id
+                    LEFT JOIN fas_v2.sh_regime shr ON shr.scoring_history_id = sh.id
+                    LEFT JOIN fas_v2.market_regime mr ON mr.id = shr.signal_regime_id
+                    JOIN fas_v2.sh_patterns shp ON shp.scoring_history_id = sh.id
+                    JOIN fas_v2.signal_patterns sp ON sp.id = shp.signal_patterns_id
+                    WHERE {where_sql}
+                    GROUP BY sp.pattern_type
+                    ORDER BY count DESC
+                """
+                cur.execute(pattern_dist_query, params)
+                pattern_dist_list = cur.fetchall()
+                pattern_distribution = {row['pattern_type']: row['count'] for row in pattern_dist_list}
+
+                return {
+                    'total': main_stats['total'],
+                    'by_action': by_action,
+                    'by_regime': by_regime,
+                    'avg_score_week': float(main_stats['avg_score_week']) if main_stats['avg_score_week'] else 0.0,
+                    'avg_score_month': float(main_stats['avg_score_month']) if main_stats['avg_score_month'] else 0.0,
+                    'last_signal_time': main_stats['last_signal_time'],
+                    'pattern_distribution': pattern_distribution
+                }
+
+    except Exception as e:
+        logger.error(f"Error getting raw signals stats: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'total': 0,
+            'by_action': {},
+            'by_regime': {},
+            'avg_score_week': 0.0,
+            'avg_score_month': 0.0,
+            'last_signal_time': None,
+            'pattern_distribution': {}
+        }

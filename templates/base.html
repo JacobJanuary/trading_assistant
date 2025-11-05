@@ -63,6 +63,10 @@
 
                     <div class="absolute top-full left-0 mt-2 w-56 bg-white/95 backdrop-blur-sm rounded-xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 border border-white/20">
                         <div class="p-2 space-y-1">
+                            <a href="{{ url_for('raw_signals') }}" class="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors">
+                                <i class="fas fa-database text-blue-500"></i>
+                                <span class="font-medium">Сырые Сигналы</span>
+                            </a>
                             <a href="{{ url_for('signal_performance') }}" class="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-700 hover:bg-green-50 hover:text-green-700 transition-colors">
                                 <i class="fas fa-signal text-green-500"></i>
                                 <span class="font-medium">Сигналы</span>
@@ -177,6 +181,9 @@
             <div class="px-4 py-6 space-y-4">
                 <!-- Мобильные ссылки -->
                 <div class="space-y-2">
+                    <a href="{{ url_for('raw_signals') }}" class="block px-4 py-3 text-white hover:bg-white/10 rounded-lg transition-colors">
+                        <i class="fas fa-database mr-3"></i>Сырые Сигналы
+                    </a>
                     <a href="{{ url_for('signal_performance') }}" class="block px-4 py-3 text-white hover:bg-white/10 rounded-lg transition-colors">
                         <i class="fas fa-signal mr-3"></i>Сигналы
                     </a>
