@@ -3977,12 +3977,26 @@ def api_backtest_combo_details():
                 DATE(signal_timestamp) as day,
                 COUNT(*) as total_trades,
                 SUM(pnl_usd) as day_pnl,
+
+                -- Liquidation (критический убыток)
+                COUNT(CASE WHEN close_reason = 'liquidation' THEN 1 END) as liquidation_count,
+                SUM(CASE WHEN close_reason = 'liquidation' THEN pnl_usd ELSE 0 END) as liquidation_loss,
+
+                -- Stop Loss (защитный механизм фазы 1)
                 COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_count,
                 SUM(CASE WHEN close_reason = 'stop_loss' THEN pnl_usd ELSE 0 END) as sl_loss,
+
+                -- Trailing Stop (WIN механизм)
                 COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as ts_count,
                 SUM(CASE WHEN close_reason = 'trailing_stop' THEN pnl_usd ELSE 0 END) as ts_profit,
-                COUNT(CASE WHEN close_reason = 'smart_loss' THEN 1 END) as timeout_count,
-                SUM(CASE WHEN close_reason = 'smart_loss' THEN pnl_usd ELSE 0 END) as timeout_loss
+
+                -- Breakeven (нейтральное закрытие фазы 2)
+                COUNT(CASE WHEN close_reason = 'breakeven' THEN 1 END) as breakeven_count,
+                SUM(CASE WHEN close_reason = 'breakeven' THEN pnl_usd ELSE 0 END) as breakeven_pnl,
+
+                -- Smart Loss (прогрессивный убыток фазы 3)
+                COUNT(CASE WHEN close_reason = 'smart_loss' THEN 1 END) as smart_loss_count,
+                SUM(CASE WHEN close_reason = 'smart_loss' THEN pnl_usd ELSE 0 END) as smart_loss_amount
             FROM web.backtest_results
             WHERE session_id = %s
                 AND score_week_filter = %s
@@ -4016,12 +4030,22 @@ def api_backtest_combo_details():
                 'balance_end': round(balance, 2),
                 'day_pnl': round(day_pnl, 2),
                 'total_trades': stat['total_trades'],
-                'sl_count': stat['sl_count'],
+
+                # Exit reasons
+                'liquidation_count': stat['liquidation_count'] or 0,
+                'liquidation_loss': round(float(stat['liquidation_loss'] or 0), 2),
+
+                'sl_count': stat['sl_count'] or 0,
                 'sl_loss': round(float(stat['sl_loss'] or 0), 2),
-                'ts_count': stat['ts_count'],
+
+                'ts_count': stat['ts_count'] or 0,
                 'ts_profit': round(float(stat['ts_profit'] or 0), 2),
-                'timeout_count': stat['timeout_count'],
-                'timeout_loss': round(float(stat['timeout_loss'] or 0), 2)
+
+                'breakeven_count': stat['breakeven_count'] or 0,
+                'breakeven_pnl': round(float(stat['breakeven_pnl'] or 0), 2),
+
+                'smart_loss_count': stat['smart_loss_count'] or 0,
+                'smart_loss_amount': round(float(stat['smart_loss_amount'] or 0), 2)
             })
 
         return jsonify({
@@ -4057,12 +4081,26 @@ def api_backtest_binance_combo_details():
                 DATE(signal_timestamp) as day,
                 COUNT(*) as total_trades,
                 SUM(pnl_usd) as day_pnl,
+
+                -- Liquidation (критический убыток)
+                COUNT(CASE WHEN close_reason = 'liquidation' THEN 1 END) as liquidation_count,
+                SUM(CASE WHEN close_reason = 'liquidation' THEN pnl_usd ELSE 0 END) as liquidation_loss,
+
+                -- Stop Loss (защитный механизм фазы 1)
                 COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_count,
                 SUM(CASE WHEN close_reason = 'stop_loss' THEN pnl_usd ELSE 0 END) as sl_loss,
+
+                -- Trailing Stop (WIN механизм)
                 COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as ts_count,
                 SUM(CASE WHEN close_reason = 'trailing_stop' THEN pnl_usd ELSE 0 END) as ts_profit,
-                COUNT(CASE WHEN close_reason = 'smart_loss' THEN 1 END) as timeout_count,
-                SUM(CASE WHEN close_reason = 'smart_loss' THEN pnl_usd ELSE 0 END) as timeout_loss
+
+                -- Breakeven (нейтральное закрытие фазы 2)
+                COUNT(CASE WHEN close_reason = 'breakeven' THEN 1 END) as breakeven_count,
+                SUM(CASE WHEN close_reason = 'breakeven' THEN pnl_usd ELSE 0 END) as breakeven_pnl,
+
+                -- Smart Loss (прогрессивный убыток фазы 3)
+                COUNT(CASE WHEN close_reason = 'smart_loss' THEN 1 END) as smart_loss_count,
+                SUM(CASE WHEN close_reason = 'smart_loss' THEN pnl_usd ELSE 0 END) as smart_loss_amount
             FROM web.backtest_results_binance
             WHERE session_id = %s
                 AND score_week_filter = %s
@@ -4096,12 +4134,22 @@ def api_backtest_binance_combo_details():
                 'balance_end': round(balance, 2),
                 'day_pnl': round(day_pnl, 2),
                 'total_trades': stat['total_trades'],
-                'sl_count': stat['sl_count'],
+
+                # Exit reasons
+                'liquidation_count': stat['liquidation_count'] or 0,
+                'liquidation_loss': round(float(stat['liquidation_loss'] or 0), 2),
+
+                'sl_count': stat['sl_count'] or 0,
                 'sl_loss': round(float(stat['sl_loss'] or 0), 2),
-                'ts_count': stat['ts_count'],
+
+                'ts_count': stat['ts_count'] or 0,
                 'ts_profit': round(float(stat['ts_profit'] or 0), 2),
-                'timeout_count': stat['timeout_count'],
-                'timeout_loss': round(float(stat['timeout_loss'] or 0), 2)
+
+                'breakeven_count': stat['breakeven_count'] or 0,
+                'breakeven_pnl': round(float(stat['breakeven_pnl'] or 0), 2),
+
+                'smart_loss_count': stat['smart_loss_count'] or 0,
+                'smart_loss_amount': round(float(stat['smart_loss_amount'] or 0), 2)
             })
 
         return jsonify({
@@ -4134,12 +4182,26 @@ def api_backtest_bybit_combo_details():
                 DATE(signal_timestamp) as day,
                 COUNT(*) as total_trades,
                 SUM(pnl_usd) as day_pnl,
+
+                -- Liquidation (критический убыток)
+                COUNT(CASE WHEN close_reason = 'liquidation' THEN 1 END) as liquidation_count,
+                SUM(CASE WHEN close_reason = 'liquidation' THEN pnl_usd ELSE 0 END) as liquidation_loss,
+
+                -- Stop Loss (защитный механизм фазы 1)
                 COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_count,
                 SUM(CASE WHEN close_reason = 'stop_loss' THEN pnl_usd ELSE 0 END) as sl_loss,
+
+                -- Trailing Stop (WIN механизм)
                 COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as ts_count,
                 SUM(CASE WHEN close_reason = 'trailing_stop' THEN pnl_usd ELSE 0 END) as ts_profit,
-                COUNT(CASE WHEN close_reason = 'smart_loss' THEN 1 END) as timeout_count,
-                SUM(CASE WHEN close_reason = 'smart_loss' THEN pnl_usd ELSE 0 END) as timeout_loss
+
+                -- Breakeven (нейтральное закрытие фазы 2)
+                COUNT(CASE WHEN close_reason = 'breakeven' THEN 1 END) as breakeven_count,
+                SUM(CASE WHEN close_reason = 'breakeven' THEN pnl_usd ELSE 0 END) as breakeven_pnl,
+
+                -- Smart Loss (прогрессивный убыток фазы 3)
+                COUNT(CASE WHEN close_reason = 'smart_loss' THEN 1 END) as smart_loss_count,
+                SUM(CASE WHEN close_reason = 'smart_loss' THEN pnl_usd ELSE 0 END) as smart_loss_amount
             FROM web.backtest_results_bybit
             WHERE session_id = %s
                 AND score_week_filter = %s
@@ -4173,12 +4235,22 @@ def api_backtest_bybit_combo_details():
                 'balance_end': round(balance, 2),
                 'day_pnl': round(day_pnl, 2),
                 'total_trades': stat['total_trades'],
-                'sl_count': stat['sl_count'],
+
+                # Exit reasons
+                'liquidation_count': stat['liquidation_count'] or 0,
+                'liquidation_loss': round(float(stat['liquidation_loss'] or 0), 2),
+
+                'sl_count': stat['sl_count'] or 0,
                 'sl_loss': round(float(stat['sl_loss'] or 0), 2),
-                'ts_count': stat['ts_count'],
+
+                'ts_count': stat['ts_count'] or 0,
                 'ts_profit': round(float(stat['ts_profit'] or 0), 2),
-                'timeout_count': stat['timeout_count'],
-                'timeout_loss': round(float(stat['timeout_loss'] or 0), 2)
+
+                'breakeven_count': stat['breakeven_count'] or 0,
+                'breakeven_pnl': round(float(stat['breakeven_pnl'] or 0), 2),
+
+                'smart_loss_count': stat['smart_loss_count'] or 0,
+                'smart_loss_amount': round(float(stat['smart_loss_amount'] or 0), 2)
             })
 
         return jsonify({

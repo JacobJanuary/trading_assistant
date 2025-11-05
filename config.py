@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 
 # Загрузка переменных окружения из .env файла
-load_dotenv()
+load_dotenv(override=True)
 
 class Config:
     """Основной класс конфигурации"""
@@ -144,9 +144,13 @@ class Config:
     SCORING_ANALYSIS_DEFAULT_DAYS_BACK = int(os.getenv('SCORING_ANALYSIS_DEFAULT_DAYS_BACK', 30))
     SCORING_ANALYSIS_BATCH_SIZE = int(os.getenv('SCORING_ANALYSIS_BATCH_SIZE', 50))
 
-    # 3-фазная торговая система
-    PHASE1_DURATION_HOURS = int(os.getenv('PHASE1_DURATION_HOURS', 24))  # Фаза 1: Активная торговля
-    PHASE2_DURATION_HOURS = int(os.getenv('PHASE2_DURATION_HOURS', 8))   # Фаза 2: Breakeven Window
+    # 3-фазная торговая система с ранним переходом
+    # Фаза 1 (0-3ч): Активная торговля (TS + SL). Если TS не активирован через 3ч -> Фаза 2
+    # Фаза 2 (3-11ч): Breakeven Window (8 часов на выход в безубыток)
+    # Фаза 3 (11-23ч): Smart Loss ИЛИ SL (что раньше). Максимум 12 часов.
+    PHASE1_DURATION_HOURS = int(os.getenv('PHASE1_DURATION_HOURS', 3))  # Фаза 1: Активная торговля (0-3ч)
+    PHASE2_DURATION_HOURS = int(os.getenv('PHASE2_DURATION_HOURS', 8))   # Фаза 2: Breakeven Window (8ч)
+    PHASE3_MAX_DURATION_HOURS = int(os.getenv('PHASE3_MAX_DURATION_HOURS', 12))  # Фаза 3: Максимум 12 часов
     SMART_LOSS_RATE_PER_HOUR = float(os.getenv('SMART_LOSS_RATE_PER_HOUR', 0.5))  # Фаза 3: 0.5% в час
 
     # Ликвидация

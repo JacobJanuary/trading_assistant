@@ -880,7 +880,7 @@ def get_trading_stats(db, time_filter=None, min_value_usd=None, operation_type=N
     return result[0] if result else None
 
 
-def initialize_signals_with_params(db, hours_back=48, tp_percent=4.0, sl_percent=3.0):
+def initialize_signals_with_params(db, hours_back=24, tp_percent=4.0, sl_percent=3.0):
     """
     Полная инициализация системы с использованием fas.market_data_aggregated
     """
@@ -1132,18 +1132,18 @@ def process_signal_complete(db, signal,
         # Устанавливаем last_price = entry_price по умолчанию
         last_price = entry_price
 
-        # Получаем историю
+        # Получаем историю (24 часа от signal_timestamp для полной симуляции)
         history_query = """
             SELECT timestamp, open_price, high_price, low_price, close_price
             FROM fas.market_data_aggregated
             WHERE trading_pair_id = %s
                 AND timeframe = '5m'
                 AND timestamp >= %s
-                AND timestamp <= NOW()
+                AND timestamp <= %s + INTERVAL '24 hours'
             ORDER BY timestamp ASC
         """
 
-        history = db.execute_query(history_query, (trading_pair_id, signal_timestamp), fetch=True)
+        history = db.execute_query(history_query, (trading_pair_id, signal_timestamp, signal_timestamp), fetch=True)
 
         if not history:
             # Сохраняем с начальными данными (с обработкой дубликатов)
@@ -1175,13 +1175,18 @@ def process_signal_complete(db, signal,
 
         # ВЫБОР ЛОГИКИ: Trailing Stop или Fixed TP/SL
         if use_trailing_stop:
+            # Вычисляем simulation_end_time (24 часа от signal_timestamp)
+            from datetime import timedelta
+            simulation_end_time = signal_timestamp + timedelta(hours=24) if signal_timestamp else None
+
             # Используем новую функцию trailing stop
             result = calculate_trailing_stop_exit(
                 entry_price, history, signal_action,
                 trailing_distance_pct, trailing_activation_pct,
                 sl_percent, position_size, leverage,
                 signal_timestamp,  # Передаем timestamp для корректного расчета таймаута
-                Config.DEFAULT_COMMISSION_RATE  # Передаем commission_rate
+                Config.DEFAULT_COMMISSION_RATE,  # Передаем commission_rate
+                simulation_end_time  # КРИТИЧНО: передаем simulation_end_time!
             )
 
             is_closed = result['is_closed']
@@ -1299,10 +1304,10 @@ def process_signal_complete(db, signal,
                             close_price = sl_price
                             close_time = current_time
 
-            # Если не закрылась, проверяем таймаут (48 часов)
+            # Если не закрылась, проверяем таймаут (24 часа)
             if not is_closed:
                 hours_passed = (history[-1]['timestamp'] - signal_timestamp).total_seconds() / 3600
-                if hours_passed >= 48:
+                if hours_passed >= 24:
                     is_closed = True
                     close_reason = 'timeout'
                     close_price = last_price
@@ -1430,24 +1435,53 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
     total_commission = entry_commission + exit_commission
 
     # Параметры 3-фазной системы
-    phase1_hours = Config.PHASE1_DURATION_HOURS  # 24
+    phase1_hours = Config.PHASE1_DURATION_HOURS  # 3
     phase2_hours = Config.PHASE2_DURATION_HOURS  # 8
+    phase3_max_hours = Config.PHASE3_MAX_DURATION_HOURS  # 12
     smart_loss_rate = Config.SMART_LOSS_RATE_PER_HOUR  # 0.5
+
+    # DEBUG: Логируем параметры в отдельный файл для отладки
+    try:
+        with open('/home/elcrypto/trading_assistant/phase_debug.log', 'a') as f:
+            f.write(f"\n[DEBUG CALC_TS] ===== START =====\n")
+            f.write(f"[DEBUG CALC_TS] signal_timestamp: {signal_timestamp}\n")
+            f.write(f"[DEBUG CALC_TS] history length: {len(history) if history else 0}\n")
+            f.write(f"[DEBUG CALC_TS] simulation_end_time: {simulation_end_time}\n")
+            if history and len(history) > 0:
+                f.write(f"[DEBUG CALC_TS] First candle: {history[0]['timestamp']}\n")
+                f.write(f"[DEBUG CALC_TS] Last candle: {history[-1]['timestamp']}\n")
+                if signal_timestamp:
+                    duration = (history[-1]['timestamp'] - signal_timestamp).total_seconds() / 3600
+                    f.write(f"[DEBUG CALC_TS] History duration: {duration:.2f} hours\n")
+            f.write(f"[DEBUG CALC_TS] phase1_hours={phase1_hours}, phase2_hours={phase2_hours}, phase3_max_hours={phase3_max_hours}\n")
+    except:
+        pass
 
     # Временные границы фаз
     if signal_timestamp:
-        phase1_end = signal_timestamp + timedelta(hours=phase1_hours)
-        phase2_end = signal_timestamp + timedelta(hours=phase1_hours + phase2_hours)
+        phase1_end = signal_timestamp + timedelta(hours=phase1_hours)  # +3ч
+        phase2_end = signal_timestamp + timedelta(hours=phase1_hours + phase2_hours)  # +11ч
+        phase3_end = phase2_end + timedelta(hours=phase3_max_hours)  # +23ч (максимум)
+        print(f"[DEBUG CALC_TS] Phase boundaries:")
+        print(f"[DEBUG CALC_TS]   Phase 1: {signal_timestamp} → {phase1_end}")
+        print(f"[DEBUG CALC_TS]   Phase 2: {phase1_end} → {phase2_end}")
+        print(f"[DEBUG CALC_TS]   Phase 3: {phase2_end} → {phase3_end}")
     else:
         # Если timestamp не передан, используем старую логику (только для совместимости)
         phase1_end = None
         phase2_end = None
+        phase3_end = None
+        print(f"[DEBUG CALC_TS] WARNING: signal_timestamp is None!")
 
     # Переменные для отслеживания trailing stop
     is_trailing_active = False
     trailing_stop_price = None
     best_price_for_trailing = entry_price
     activation_candle_time = None
+
+    # Переменная для отслеживания перехода в Фазу 2 из-за неактивации TS
+    phase2_forced_entry = False
+    phase2_forced_entry_time = None
 
     # ВАЖНО: Отдельная переменная для АБСОЛЮТНОГО максимума за весь период
     absolute_best_price = entry_price
@@ -1525,8 +1559,16 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
                 close_time = candle_time
                 continue
 
-            # ФАЗА 1: Активная торговля (0-24ч) - TS/SL
-            if phase1_end is None or candle_time <= phase1_end:
+            # ПРОВЕРКА ПЕРЕХОДА В ФАЗУ 2: ДОЛЖНА БЫТЬ ДО проверки Phase 1!
+            # Если прошло 3 часа и TS не активирован -> принудительный переход в Фазу 2
+            if not phase2_forced_entry and not is_trailing_active and phase1_end and candle_time >= phase1_end:
+                phase2_forced_entry = True
+                phase2_forced_entry_time = candle_time
+                print(f"[PHASE TRANSITION] TS не активирован через {phase1_hours}ч. Принудительный переход в Фазу 2 (Breakeven Window)")
+
+            # ФАЗА 1: Активная торговля (0-3ч) - TS/SL
+            # ВАЖНО: Если TS не активирован через 3 часа -> переход в Фазу 2
+            if not phase2_forced_entry and (phase1_end is None or candle_time <= phase1_end):
                 # Stop Loss
                 if (is_long and low_price <= sl_price) or (is_short and high_price >= sl_price):
                     is_closed = True
@@ -1597,40 +1639,102 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
                         close_price = trailing_stop_price
                         close_time = candle_time
 
-            # ФАЗА 2: Breakeven Window (24-32ч)
-            elif phase1_end < candle_time <= phase2_end:
+            # ФАЗА 2: Breakeven Window (3-11ч)
+            # Может начаться РАНЬШЕ если TS не активирован через 3 часа
+            # ВАЖНО: используем if вместо elif, чтобы проверить сразу после установки phase2_forced_entry
+            # КРИТИЧНО: phase2_forced_entry должен работать только ДО phase2_end!
+            if ((phase1_end < candle_time <= phase2_end) or (phase2_forced_entry and candle_time <= phase2_end)) and not is_closed:
+                try:
+                    with open('/home/elcrypto/trading_assistant/phase_debug.log', 'a') as f:
+                        f.write(f"[DEBUG PHASE 2] Вошли в Phase 2: candle_time={candle_time}, phase2_forced_entry={phase2_forced_entry}, is_long={is_long}, entry_price={entry_price}, high_price={high_price}, low_price={low_price}\n")
+                except:
+                    pass
+
+                # ВАЖНО: Stop Loss ПРОДОЛЖАЕТ работать в Фазе 2
+                if (is_long and low_price <= sl_price) or (is_short and high_price >= sl_price):
+                    is_closed = True
+                    close_reason = 'stop_loss'
+                    if is_long:
+                        close_price = sl_price * (1 - SLIPPAGE_PERCENT / 100)
+                    else:
+                        close_price = sl_price * (1 + SLIPPAGE_PERCENT / 100)
+                    close_time = candle_time
+                    print(f"[PHASE 2] Закрытие по SL: {close_price:.8f}")
+                    break
+
                 # Закрытие в безубыток при касании entry_price
-                if (is_long and high_price >= entry_price) or (is_short and low_price <= entry_price):
+                breakeven_condition = (is_long and high_price >= entry_price) or (is_short and low_price <= entry_price)
+                print(f"[DEBUG PHASE 2] Breakeven check: condition={breakeven_condition}, is_long={is_long}, high>entry={high_price >= entry_price if is_long else 'N/A'}, low<entry={low_price <= entry_price if not is_long else 'N/A'}")
+
+                if breakeven_condition:
                     is_closed = True
                     close_reason = 'breakeven'
                     close_price = entry_price
                     close_time = candle_time
+                    print(f"[PHASE 2] ✓✓✓ Закрытие в безубыток: {close_price:.8f}")
+                    break
 
-            # ФАЗА 3: Smart Loss (32ч+)
-            elif candle_time > phase2_end:
-                # Рассчитываем накопленный убыток
-                hours_into_loss = (candle_time - phase2_end).total_seconds() / 3600
+                # Сброс флага принудительного входа после первой проверки
+                if phase2_forced_entry and candle_time > phase2_end:
+                    phase2_forced_entry = False
+
+            # ФАЗА 3: Smart Loss ИЛИ SL (11-23ч, максимум 12 часов)
+            # ВАЖНО: SL имеет приоритет над Smart Loss
+            if candle_time > phase2_end and not is_closed:
+                hours_into_phase3 = (candle_time - phase2_end).total_seconds() / 3600
+                try:
+                    with open('/home/elcrypto/trading_assistant/phase_debug.log', 'a') as f:
+                        f.write(f"[DEBUG PHASE 3] Вошли в Phase 3: candle_time={candle_time}, phase2_end={phase2_end}, is_long={is_long}\n")
+                        f.write(f"[DEBUG PHASE 3] hours_into_phase3={hours_into_phase3:.2f}, phase3_max_hours={phase3_max_hours}\n")
+                except:
+                    pass
+
+                # Проверяем максимальную длительность Фазы 3 (12 часов)
+                if hours_into_phase3 > phase3_max_hours or candle_time >= phase3_end:
+                    is_closed = True
+                    close_reason = 'period_end'
+                    close_price = float(candle['close_price'])
+                    close_time = candle_time
+                    print(f"[PHASE 3] Принудительное закрытие: достигнут лимит {phase3_max_hours}ч")
+                    break
+
+                # ПРИОРИТЕТ 1: Stop Loss (проверяем ПЕРВЫМ)
+                if (is_long and low_price <= sl_price) or (is_short and high_price >= sl_price):
+                    is_closed = True
+                    close_reason = 'stop_loss'
+                    if is_long:
+                        close_price = sl_price * (1 - SLIPPAGE_PERCENT / 100)
+                    else:
+                        close_price = sl_price * (1 + SLIPPAGE_PERCENT / 100)
+                    close_time = candle_time
+                    print(f"[PHASE 3] Закрытие по SL: {close_price:.8f}")
+                    break
+
+                # ПРИОРИТЕТ 2: Smart Loss (если SL не сработал)
+                hours_into_loss = hours_into_phase3
                 loss_multiplier = max(1, math.ceil(hours_into_loss))
                 loss_percent = smart_loss_rate * loss_multiplier
 
                 # Вычисляем цену закрытия с убытком
                 if is_long:
-                    close_price = entry_price * (1 - loss_percent / 100)
+                    smart_loss_price = entry_price * (1 - loss_percent / 100)
                 else:  # SHORT
-                    close_price = entry_price * (1 + loss_percent / 100)
+                    smart_loss_price = entry_price * (1 + loss_percent / 100)
 
-                is_closed = True
-                close_reason = 'smart_loss'
-                close_time = candle_time
-                break  # Выходим, т.к. smart loss - окончательное закрытие
+                # Проверяем, достигнута ли цена Smart Loss
+                smart_loss_triggered = False
+                if is_long and low_price <= smart_loss_price:
+                    smart_loss_triggered = True
+                elif is_short and high_price >= smart_loss_price:
+                    smart_loss_triggered = True
 
-            # КРИТИЧНО: Принудительное закрытие в конце периода симуляции (как в check_wr_final.py:316-318)
-            if simulation_end_time and candle_time >= simulation_end_time:
-                is_closed = True
-                close_reason = 'period_end'
-                close_price = float(candle['close_price'])
-                close_time = candle_time
-                break
+                if smart_loss_triggered:
+                    is_closed = True
+                    close_reason = 'smart_loss'
+                    close_price = smart_loss_price
+                    close_time = candle_time
+                    print(f"[PHASE 3] Закрытие по Smart Loss: {close_price:.8f} (убыток {loss_percent:.2f}%)")
+                    break
 
     # КРИТИЧНО: Если позиция все еще открыта - закрываем с data_end (как в check_wr_final.py:321-323)
     if not is_closed and history and len(history) > 0:
@@ -1639,6 +1743,9 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
         close_reason = 'data_end'
         close_price = float(last_candle['close_price'])
         close_time = last_candle['timestamp']
+        duration_hours = (close_time - signal_timestamp).total_seconds() / 3600 if signal_timestamp else 0
+        print(f"[DEBUG CALC_TS] ❌ Closed as data_end at {close_time} after {duration_hours:.2f}h (all history processed, no exit triggered)")
+        print(f"[DEBUG CALC_TS] phase2_forced_entry was: {phase2_forced_entry}, is_trailing_active was: {is_trailing_active}")
 
     # Формируем результат
     if is_closed:
@@ -1758,31 +1865,36 @@ def process_signal_with_trailing(db, signal, user_settings):
 
         entry_price = float(price_result[0]['open_price'])
 
-        # Получаем историю
+        # Получаем историю (24 часа от signal_timestamp для полной симуляции)
         history_query = """
             SELECT timestamp, open_price, high_price, low_price, close_price
             FROM fas.market_data_aggregated
             WHERE trading_pair_id = %s
                 AND timeframe = '5m'
                 AND timestamp >= %s
-                AND timestamp <= NOW()
+                AND timestamp <= %s + INTERVAL '24 hours'
             ORDER BY timestamp ASC
         """
 
-        history = db.execute_query(history_query, (trading_pair_id, signal_timestamp), fetch=True)
+        history = db.execute_query(history_query, (trading_pair_id, signal_timestamp, signal_timestamp), fetch=True)
 
         if not history:
             return {'success': False, 'error': 'No history data'}
 
         # ВЫБОР ЛОГИКИ: Trailing Stop или Fixed TP/SL
         if use_trailing:
+            # Вычисляем simulation_end_time (24 часа от signal_timestamp)
+            from datetime import timedelta
+            simulation_end_time = signal_timestamp + timedelta(hours=24) if signal_timestamp else None
+
             # Используем trailing stop
             result = calculate_trailing_stop_exit(
                 entry_price, history, signal_action,
                 trailing_distance, trailing_activation,
                 sl_percent, position_size, leverage,
                 signal_timestamp,  # Передаем timestamp для таймаута
-                Config.DEFAULT_COMMISSION_RATE  # Передаем commission_rate
+                Config.DEFAULT_COMMISSION_RATE,  # Передаем commission_rate
+                simulation_end_time  # КРИТИЧНО: передаем simulation_end_time!
             )
 
             is_closed = result['is_closed']
@@ -1881,10 +1993,10 @@ def process_signal_with_trailing(db, signal, user_settings):
         # Последняя известная цена
         last_price = float(history[-1]['close_price'])
 
-        # Если не закрылась, проверяем таймаут (48 часов)
+        # Если не закрылась, проверяем таймаут (24 часа)
         if not is_closed:
             hours_passed = (history[-1]['timestamp'] - signal_timestamp).total_seconds() / 3600
-            if hours_passed >= 48:
+            if hours_passed >= 24:
                 is_closed = True
                 close_reason = 'timeout'
                 close_price = last_price
@@ -2487,7 +2599,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                 WHERE trading_pair_id = %s
                     AND timeframe = '5m'
                     AND timestamp >= %s
-                    AND timestamp <= %s + INTERVAL '48 hours'
+                    AND timestamp <= %s + INTERVAL '24 hours'
                 ORDER BY timestamp ASC
             """
 
@@ -2505,6 +2617,9 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
 
             # ВЫБОР ЛОГИКИ: Trailing Stop или Fixed TP/SL
             if use_trailing_stop:
+                # Вычисляем simulation_end_time для этого конкретного сигнала
+                signal_simulation_end_time = signal['timestamp'] + timedelta(hours=24) if signal.get('timestamp') else simulation_end_time
+
                 # Используем функцию trailing stop с передачей timestamp
                 result = calculate_trailing_stop_exit(
                     entry_price,
@@ -2516,7 +2631,8 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                     position_size,
                     leverage,
                     signal_timestamp=signal['timestamp'],
-                    commission_rate=Config.DEFAULT_COMMISSION_RATE
+                    commission_rate=Config.DEFAULT_COMMISSION_RATE,
+                    simulation_end_time=signal_simulation_end_time  # КРИТИЧНО: передаем simulation_end_time!
                 )
 
                 # Извлекаем все данные из результата
@@ -2884,7 +3000,7 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
     # КРИТИЧНО: Вычисляем simulation_end_time В НАЧАЛЕ (как в check_wr_final.py:385)
     if signals:
         last_signal_time = max(s['timestamp'] for s in signals)
-        simulation_end_time = last_signal_time + timedelta(hours=48)
+        simulation_end_time = last_signal_time + timedelta(hours=24)
     else:
         simulation_end_time = None
 
@@ -2941,7 +3057,7 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
             WHERE trading_pair_id = %s
                 AND timeframe = '5m'
                 AND timestamp >= %s
-                AND timestamp <= %s + INTERVAL '48 hours'
+                AND timestamp <= %s + INTERVAL '24 hours'
             ORDER BY timestamp ASC
         """
         history = db.execute_query(
@@ -3444,7 +3560,7 @@ def get_best_scoring_signals_with_backtest_params(db):
     """
 
     print(f"\n[BEST SIGNALS] ========== ПОЛУЧЕНИЕ СИГНАЛОВ С ОПТИМАЛЬНЫМИ ПАРАМЕТРАМИ ==========")
-    print(f"[BEST SIGNALS] Период: последние 48 часов")
+    print(f"[BEST SIGNALS] Период: последние 24 часа")
     print(f"[BEST SIGNALS] Все параметры берутся из оптимального backtest для каждой биржи")
 
     # SQL запрос для получения сигналов с оптимальными параметрами
@@ -3542,7 +3658,7 @@ def get_best_scoring_signals_with_backtest_params(db):
             timestamp
         FROM fas.market_regime
         WHERE timeframe = '4h'
-            AND timestamp >= NOW() - INTERVAL '48 hours'
+            AND timestamp >= NOW() - INTERVAL '24 hours'
         ORDER BY DATE_TRUNC('hour', timestamp), timestamp DESC
     )
 
@@ -3585,7 +3701,7 @@ def get_best_scoring_signals_with_backtest_params(db):
     ) AS mr ON true
 
     WHERE
-        sc.timestamp >= NOW() - INTERVAL '48 hours'
+        sc.timestamp >= NOW() - INTERVAL '24 hours'
         AND sc.is_active = true
         AND tp.is_active = true
         AND tp.contract_type_id = 1

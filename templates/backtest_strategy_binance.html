@@ -103,12 +103,13 @@
                         <tr>
                             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                             <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Trades</th>
-                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">SL (Count/Loss)</th>
-                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">TS (Count/Profit)</th>
-                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Timeout (Count/Loss)</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase" title="Liquidation">💀 Liq</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase" title="Stop Loss">✗ SL</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase" title="Trailing Stop (WIN)">✓ TS</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase" title="Breakeven">≈ BE</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase" title="Smart Loss">↓ SmartL</th>
                             <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Day PnL</th>
-                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Balance Start</th>
-                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Balance End</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Balance</th>
                         </tr>
                     </thead>
                     <tbody id="dailyStatsTable" class="bg-white divide-y divide-gray-200">
@@ -245,21 +246,40 @@ function showDetails(combo) {
 function updateDailyStatsTable(dailyStats) {
     const tbody = document.getElementById('dailyStatsTable');
 
+    // Функция форматирования ячейки с count/amount
+    const formatCell = (count, amount, color, showZero = false) => {
+        if (!showZero && (!count || count === 0)) {
+            return `<td class="px-4 py-3 text-sm text-right text-gray-300">-</td>`;
+        }
+        const displayAmount = Math.abs(amount).toFixed(2);
+        return `<td class="px-4 py-3 text-sm text-right ${color}">
+            <div class="flex flex-col items-end">
+                <span class="font-medium">${count || 0}</span>
+                <span class="text-xs">$${displayAmount}</span>
+            </div>
+        </td>`;
+    };
+
     tbody.innerHTML = dailyStats.map(stat => {
         const dayPnlValue = stat.day_pnl || 0;
         const dayPnlColor = dayPnlValue >= 0 ? 'text-green-600' : 'text-red-600';
         const dayPnlSign = dayPnlValue >= 0 ? '+' : '';
 
         return `
-            <tr class="hover:bg-gray-50">
+            <tr class="hover:bg-gray-50 transition-colors">
                 <td class="px-4 py-3 text-sm text-gray-900">${stat.day || ''}</td>
-                <td class="px-4 py-3 text-sm text-right text-gray-900">${stat.total_trades || 0}</td>
-                <td class="px-4 py-3 text-sm text-right text-red-600">${stat.sl_count || 0} / $${stat.sl_loss || 0}</td>
-                <td class="px-4 py-3 text-sm text-right text-green-600">${stat.ts_count || 0} / $${stat.ts_profit || 0}</td>
-                <td class="px-4 py-3 text-sm text-right text-orange-600">${stat.timeout_count || 0} / $${stat.timeout_loss || 0}</td>
-                <td class="px-4 py-3 text-sm text-right font-semibold ${dayPnlColor}">${dayPnlSign}$${dayPnlValue}</td>
-                <td class="px-4 py-3 text-sm text-right text-gray-900">$${stat.balance_start || 0}</td>
-                <td class="px-4 py-3 text-sm text-right font-semibold text-gray-900">$${stat.balance_end || 0}</td>
+                <td class="px-4 py-3 text-sm text-right font-semibold text-gray-900">${stat.total_trades || 0}</td>
+                ${formatCell(stat.liquidation_count, stat.liquidation_loss, 'text-purple-700 font-semibold')}
+                ${formatCell(stat.sl_count, stat.sl_loss, 'text-red-600')}
+                ${formatCell(stat.ts_count, stat.ts_profit, 'text-green-600 font-semibold')}
+                ${formatCell(stat.breakeven_count, stat.breakeven_pnl, 'text-blue-600')}
+                ${formatCell(stat.smart_loss_count, stat.smart_loss_amount, 'text-red-800')}
+                <td class="px-4 py-3 text-sm text-right font-bold ${dayPnlColor}">
+                    ${dayPnlSign}$${Math.abs(dayPnlValue).toFixed(2)}
+                </td>
+                <td class="px-4 py-3 text-sm text-right font-semibold text-gray-900">
+                    $${(stat.balance_end || 0).toFixed(2)}
+                </td>
             </tr>
         `;
     }).join('');
