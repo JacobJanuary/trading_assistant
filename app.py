@@ -1048,7 +1048,7 @@ def scoring_analysis_v2():
             SELECT 
                 MIN(timestamp)::date as min_date,
                 (CURRENT_DATE - INTERVAL '2 days')::date as max_date
-            FROM fas.scoring_history
+            FROM fas_v2.scoring_history
         """, fetch=True)[0]
 
         # Получаем выбранную дату или используем максимальную
@@ -1346,7 +1346,7 @@ def api_scoring_get_date_info_v2():
         # Получаем общее количество сигналов
         count_query = """
             SELECT COUNT(*) as total
-            FROM fas.scoring_history sh
+            FROM fas_v2.scoring_history sh
             JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
             WHERE sh.timestamp::date = %s
                 AND sh.score_week >= %s
@@ -3359,7 +3359,7 @@ def _calculate_efficiency_pnl(score_type='total_score', score_min=60):
                     shr.signal_type
                 FROM web.scoring_history_results_v2 shr
                 WHERE shr.scoring_history_id IN (
-                    SELECT id FROM fas.scoring_history
+                    SELECT id FROM fas_v2.scoring_history
                     WHERE {score_type} >= %s
                 )
                 AND shr.signal_timestamp >= NOW() - INTERVAL '32 days'
@@ -3434,7 +3434,7 @@ def _calculate_efficiency_pnl_combined(total_score_min=60, indicator_score_min=6
                     shr.signal_type
                 FROM web.scoring_history_results_v2 shr
                 WHERE shr.scoring_history_id IN (
-                    SELECT id FROM fas.scoring_history
+                    SELECT id FROM fas_v2.scoring_history
                     WHERE total_score >= %s AND indicator_score >= %s
                 )
                 AND shr.signal_timestamp >= NOW() - INTERVAL '32 days'
@@ -4516,10 +4516,24 @@ def api_get_raw_signals():
     }
     """
     try:
+        # DEBUG
+        with open('/tmp/api_debug.log', 'a') as f:
+            import datetime
+            f.write(f"\n{datetime.datetime.now()}: API endpoint called\n")
+            f.flush()
+
         data = request.get_json()
         filters = data.get('filters', {})
         page = data.get('page', 1)
         per_page = data.get('per_page', 50)
+
+        logger.info(f"API received filters: {filters}, page: {page}, per_page: {per_page}")
+
+        # DEBUG
+        with open('/tmp/api_debug.log', 'a') as f:
+            f.write(f"  Filters: {filters}\n")
+            f.write(f"  About to call get_raw_signals...\n")
+            f.flush()
 
         # Валидация параметров
         page = max(1, int(page))
@@ -4528,12 +4542,47 @@ def api_get_raw_signals():
         # Получаем данные
         result = get_raw_signals(db, filters, page, per_page)
 
-        # Конвертируем datetime в строки для JSON
-        for signal in result['signals']:
-            if signal.get('timestamp'):
-                signal['timestamp'] = signal['timestamp'].isoformat()
+        # DEBUG
+        with open('/tmp/api_debug.log', 'a') as f:
+            f.write(f"  get_raw_signals returned: total={result['total']}\n")
+            f.flush()
 
-        return jsonify(result)
+        logger.info(f"API result: total={result['total']}, signals_count={len(result['signals'])}")
+
+        # DEBUG
+        with open('/tmp/api_debug.log', 'a') as f:
+            f.write(f"  Converting {len(result['signals'])} signals...\n")
+            f.flush()
+
+        # Конвертируем datetime в строки и Decimal в float для JSON
+        from decimal import Decimal
+        for i, signal in enumerate(result['signals']):
+            try:
+                if signal.get('timestamp'):
+                    signal['timestamp'] = signal['timestamp'].isoformat()
+                # Convert Decimal to float for JSON serialization
+                for key, value in signal.items():
+                    if isinstance(value, Decimal):
+                        signal[key] = float(value)
+            except Exception as e:
+                with open('/tmp/api_debug.log', 'a') as f:
+                    f.write(f"  Error converting signal {i}: {e}\n")
+                    f.flush()
+                raise
+
+        # DEBUG
+        with open('/tmp/api_debug.log', 'a') as f:
+            f.write(f"  About to jsonify...\n")
+            f.flush()
+
+        result_json = jsonify(result)
+
+        # DEBUG
+        with open('/tmp/api_debug.log', 'a') as f:
+            f.write(f"  Jsonify done, returning\n")
+            f.flush()
+
+        return result_json
 
     except Exception as e:
         logger.error(f"Error in api_get_raw_signals: {e}")
@@ -4572,7 +4621,8 @@ def api_get_signal_details(signal_id):
                 'signal_id': signal_id
             }), 404
 
-        # Конвертируем datetime в строки для JSON
+        # Конвертируем datetime в строки и Decimal в float для JSON
+        from decimal import Decimal
         def convert_dates(obj):
             if obj is None:
                 return None
@@ -4580,6 +4630,8 @@ def api_get_signal_details(signal_id):
                 return {k: convert_dates(v) for k, v in obj.items()}
             if isinstance(obj, list):
                 return [convert_dates(item) for item in obj]
+            if isinstance(obj, Decimal):
+                return float(obj)
             if hasattr(obj, 'isoformat'):
                 return obj.isoformat()
             return obj

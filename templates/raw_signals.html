@@ -56,9 +56,6 @@
                     <select id="actionFilter" multiple class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" size="3">
                         <option value="BUY" selected>BUY</option>
                         <option value="SELL" selected>SELL</option>
-                        <option value="LONG" selected>LONG</option>
-                        <option value="SHORT" selected>SHORT</option>
-                        <option value="NEUTRAL" selected>NEUTRAL</option>
                         <option value="NO_TRADE" selected>NO_TRADE</option>
                     </select>
                 </div>
@@ -96,15 +93,15 @@
                     <span id="stat-total" class="text-lg font-bold text-gray-900">-</span>
                 </div>
                 <div class="flex justify-between items-center">
-                    <span class="text-sm text-green-600">BUY/LONG:</span>
+                    <span class="text-sm text-green-600">BUY:</span>
                     <span id="stat-buy" class="text-lg font-bold text-green-600">-</span>
                 </div>
                 <div class="flex justify-between items-center">
-                    <span class="text-sm text-red-600">SELL/SHORT:</span>
+                    <span class="text-sm text-red-600">SELL:</span>
                     <span id="stat-sell" class="text-lg font-bold text-red-600">-</span>
                 </div>
                 <div class="flex justify-between items-center">
-                    <span class="text-sm text-gray-600">NEUTRAL:</span>
+                    <span class="text-sm text-gray-600">NO_TRADE:</span>
                     <span id="stat-neutral" class="text-lg font-bold text-gray-600">-</span>
                 </div>
                 <div class="border-t pt-3">
@@ -235,7 +232,8 @@ async function loadSignals() {
         renderSignalsTable(data.signals);
     } catch (error) {
         console.error('Error loading signals:', error);
-        document.getElementById('signalsTable').innerHTML = '<tr><td colspan="8" class="px-4 py-8 text-center text-red-500">Ошибка загрузки данных</td></tr>';
+        console.error('Error details:', error.message, error.stack);
+        document.getElementById('signalsTable').innerHTML = '<tr><td colspan="8" class="px-4 py-8 text-center text-red-500">Ошибка загрузки данных: ' + error.message + '</td></tr>';
     }
 }
 
@@ -249,9 +247,9 @@ async function loadStats() {
         const stats = await response.json();
 
         document.getElementById('stat-total').textContent = stats.total || 0;
-        const buyCount = (stats.by_action?.BUY || 0) + (stats.by_action?.LONG || 0);
-        const sellCount = (stats.by_action?.SELL || 0) + (stats.by_action?.SHORT || 0);
-        const neutralCount = (stats.by_action?.NEUTRAL || 0) + (stats.by_action?.NO_TRADE || 0);
+        const buyCount = (stats.by_action?.BUY || 0);
+        const sellCount = (stats.by_action?.SELL || 0);
+        const neutralCount = (stats.by_action?.NO_TRADE || 0);
         document.getElementById('stat-buy').textContent = buyCount;
         document.getElementById('stat-sell').textContent = sellCount;
         document.getElementById('stat-neutral').textContent = neutralCount;
@@ -270,8 +268,8 @@ function renderSignalsTable(signals) {
     }
 
     tbody.innerHTML = signals.map(signal => {
-        const actionClass = ['BUY', 'LONG'].includes(signal.recommended_action) ? 'bg-green-100 text-green-800' :
-                           ['SELL', 'SHORT'].includes(signal.recommended_action) ? 'bg-red-100 text-red-800' :
+        const actionClass = signal.recommended_action === 'BUY' ? 'bg-green-100 text-green-800' :
+                           signal.recommended_action === 'SELL' ? 'bg-red-100 text-red-800' :
                            'bg-gray-100 text-gray-800';
 
         const scoreWeekColor = signal.score_week > 30 ? 'text-green-600' : signal.score_week < -30 ? 'text-red-600' : 'text-yellow-600';
@@ -356,7 +354,10 @@ function renderModalContent(data) {
                     <div class="space-y-4">
                         ${patterns.map((p, i) => `
                             <div class="border-l-4 border-blue-500 pl-4">
-                                <div class="font-bold text-lg">${i + 1}. ${p.pattern_type}</div>
+                                <div class="flex items-center gap-3">
+                                    <div class="font-bold text-lg">${i + 1}. ${p.pattern_type}</div>
+                                    <span class="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded">${p.timeframe || 'N/A'}</span>
+                                </div>
                                 <div class="grid grid-cols-3 gap-2 mt-2 text-sm">
                                     <div>Сила: <span class="font-bold">${(p.strength || 0).toFixed(0)}%</span></div>
                                     <div>Уверенность: <span class="font-bold">${(p.confidence || 0).toFixed(0)}%</span></div>

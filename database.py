@@ -135,7 +135,7 @@ class Database:
             conn.execute("SET tcp_keepalives_count = 3")
             
             # Быстрая проверка работоспособности
-            with conn.cursor() as cur:
+            with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute("SELECT 1", prepare=False)  # Не используем prepared statement
                 result = cur.fetchone()
                 if not result or result[0] != 1:
@@ -378,7 +378,7 @@ class Database:
                 return False
             
             # Проверяем работоспособность
-            with conn.cursor() as cur:
+            with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute("SELECT 1", prepare=False)
                 result = cur.fetchone()
                 return result and result[0] == 1
@@ -537,7 +537,7 @@ class Database:
         
         Использование:
             with db.transaction() as conn:
-                with conn.cursor() as cur:
+                with conn.cursor(row_factory=dict_row) as cur:
                     cur.execute("INSERT...")
                     cur.execute("UPDATE...")
                 # Автоматический commit при успехе или rollback при ошибке
@@ -882,7 +882,7 @@ def get_trading_stats(db, time_filter=None, min_value_usd=None, operation_type=N
 
 def initialize_signals_with_params(db, hours_back=24, tp_percent=4.0, sl_percent=3.0):
     """
-    Полная инициализация системы с использованием fas.market_data_aggregated
+    Полная инициализация системы с использованием fas_v2.market_data_aggregated
     """
     try:
         print(f"[INIT] ========== НАЧАЛО ИНИЦИАЛИЗАЦИИ ==========")
@@ -903,7 +903,7 @@ def initialize_signals_with_params(db, hours_back=24, tp_percent=4.0, sl_percent
                 tp.exchange_id,
                 ex.exchange_name
             FROM smart_ml.predictions pr
-            JOIN fas.scoring_history sh ON sh.id = pr.signal_id
+            JOIN fas_v2.scoring_history sh ON sh.id = pr.signal_id
             JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
             JOIN public.exchanges ex ON ex.id = tp.exchange_id
             WHERE pr.created_at >= NOW() - (INTERVAL '1 hour' * %s)
@@ -1090,7 +1090,7 @@ def process_signal_complete(db, signal,
         # Получаем цену входа
         entry_price_query = """
             SELECT open_price
-            FROM fas.market_data_aggregated
+            FROM fas_v2.market_data_aggregated
             WHERE trading_pair_id = %s 
                 AND timeframe = '5m'
                 AND timestamp >= %s - INTERVAL '5 minutes'
@@ -1109,7 +1109,7 @@ def process_signal_complete(db, signal,
             # Расширенный поиск
             fallback_query = """
                 SELECT open_price
-                FROM fas.market_data_aggregated
+                FROM fas_v2.market_data_aggregated
                 WHERE trading_pair_id = %s
                     AND timeframe = '5m'
                     AND timestamp >= %s - INTERVAL '1 hour'
@@ -1135,7 +1135,7 @@ def process_signal_complete(db, signal,
         # Получаем историю (24 часа от signal_timestamp для полной симуляции)
         history_query = """
             SELECT timestamp, open_price, high_price, low_price, close_price
-            FROM fas.market_data_aggregated
+            FROM fas_v2.market_data_aggregated
             WHERE trading_pair_id = %s
                 AND timeframe = '5m'
                 AND timestamp >= %s
@@ -1827,7 +1827,7 @@ def process_signal_with_trailing(db, signal, user_settings):
         # Получаем цену входа
         entry_price_query = """
             SELECT open_price
-            FROM fas.market_data_aggregated
+            FROM fas_v2.market_data_aggregated
             WHERE trading_pair_id = %s 
                 AND timeframe = '5m'
                 AND timestamp >= %s - INTERVAL '5 minutes'
@@ -1846,7 +1846,7 @@ def process_signal_with_trailing(db, signal, user_settings):
             # Расширенный поиск
             fallback_query = """
                 SELECT open_price
-                FROM fas.market_data_aggregated
+                FROM fas_v2.market_data_aggregated
                 WHERE trading_pair_id = %s
                     AND timeframe = '5m'
                     AND timestamp >= %s - INTERVAL '1 hour'
@@ -1868,7 +1868,7 @@ def process_signal_with_trailing(db, signal, user_settings):
         # Получаем историю (24 часа от signal_timestamp для полной симуляции)
         history_query = """
             SELECT timestamp, open_price, high_price, low_price, close_price
-            FROM fas.market_data_aggregated
+            FROM fas_v2.market_data_aggregated
             WHERE trading_pair_id = %s
                 AND timeframe = '5m'
                 AND timestamp >= %s
@@ -2128,7 +2128,7 @@ def initialize_signals_with_trailing(db, hours_back=None, user_id=None):
                 tp.exchange_id,
                 ex.exchange_name
             FROM smart_ml.predictions pr
-            JOIN fas.scoring_history sh ON sh.id = pr.signal_id
+            JOIN fas_v2.scoring_history sh ON sh.id = pr.signal_id
             JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
             JOIN public.exchanges ex ON ex.id = tp.exchange_id
             WHERE pr.created_at >= NOW() - (INTERVAL '1 hour' * %s)
@@ -2231,7 +2231,7 @@ def get_scoring_date_range(db):
         SELECT 
             MIN(timestamp)::date as min_date,
             (CURRENT_DATE - INTERVAL '2 days')::date as max_date
-        FROM fas.scoring_history
+        FROM fas_v2.scoring_history
     """
     result = db.execute_query(query, fetch=True)
     return result[0] if result else {'min_date': None, 'max_date': None}
@@ -2240,7 +2240,7 @@ def get_scoring_date_range(db):
 def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=None, allowed_hours=None):
     """
     Получение сигналов на основе простых фильтров score_week, score_month и allowed_hours
-    НОВАЯ ЛОГИКА: Прямой запрос к fas.scoring_history без сложных конструкторов
+    НОВАЯ ЛОГИКА: Прямой запрос к fas_v2.scoring_history без сложных конструкторов
     """
 
     print(f"\n[SCORING] ========== ПОЛУЧЕНИЕ СИГНАЛОВ ==========")
@@ -2256,7 +2256,7 @@ def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=No
         print(f"[SCORING] Разрешенные часы (UTC): {sorted(allowed_hours)}")
         print(f"[SCORING] Количество разрешенных часов: {len(allowed_hours)}")
 
-    # Базовый запрос к fas.scoring_history
+    # Базовый запрос к fas_v2.scoring_history
     query = """
         WITH market_regime_data AS (
             -- Получаем режимы рынка для выбранной даты
@@ -2264,7 +2264,7 @@ def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=No
                 DATE_TRUNC('hour', timestamp) as hour_bucket,
                 regime,
                 timestamp
-            FROM fas.market_regime
+            FROM fas_v2.market_regime
             WHERE timeframe = '4h'
                 AND timestamp::date = %s
             ORDER BY DATE_TRUNC('hour', timestamp), timestamp DESC
@@ -2284,7 +2284,7 @@ def get_scoring_signals(db, date_filter, score_week_min=None, score_month_min=No
             tp.exchange_id,
             ex.exchange_name,
             COALESCE(mr.regime, 'NEUTRAL') AS market_regime
-        FROM fas.scoring_history sh
+        FROM fas_v2.scoring_history sh
         JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
         JOIN public.exchanges ex ON ex.id = tp.exchange_id
         LEFT JOIN LATERAL (
@@ -2391,7 +2391,7 @@ def get_scoring_date_info(db, date, score_week_min=None, score_month_min=None, a
             SELECT DISTINCT 
                 DATE_TRUNC('hour', timestamp) as hour,
                 regime
-            FROM fas.market_regime
+            FROM fas_v2.market_regime
             WHERE timestamp::date = %s
                 AND timeframe = '4h'
             ORDER BY hour
@@ -2412,7 +2412,7 @@ def get_scoring_date_info(db, date, score_week_min=None, score_month_min=None, a
         # Подсчитываем количество сигналов с учетом фильтров
         count_query = """
             SELECT COUNT(*) as count
-            FROM fas.scoring_history sh
+            FROM fas_v2.scoring_history sh
             JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
             WHERE sh.timestamp::date = %s
                 AND tp.contract_type_id = 1
@@ -2544,7 +2544,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                 SELECT 
                     open_price as entry_price,
                     timestamp
-                FROM fas.market_data_aggregated
+                FROM fas_v2.market_data_aggregated
                 WHERE trading_pair_id = %s
                     AND timeframe = '5m'
                     AND timestamp >= %s - INTERVAL '15 minutes'
@@ -2566,7 +2566,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                     SELECT 
                         open_price as entry_price,
                         timestamp
-                    FROM fas.market_data_aggregated
+                    FROM fas_v2.market_data_aggregated
                     WHERE trading_pair_id = %s
                         AND timeframe = '5m'
                         AND timestamp >= %s - INTERVAL '1 hour'
@@ -2595,7 +2595,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                     high_price,
                     low_price,
                     close_price
-                FROM fas.market_data_aggregated
+                FROM fas_v2.market_data_aggregated
                 WHERE trading_pair_id = %s
                     AND timeframe = '5m'
                     AND timestamp >= %s
@@ -3053,7 +3053,7 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
                 high_price,
                 low_price,
                 close_price
-            FROM fas.market_data_aggregated
+            FROM fas_v2.market_data_aggregated
             WHERE trading_pair_id = %s
                 AND timeframe = '5m'
                 AND timestamp >= %s
@@ -3133,7 +3133,7 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
             # Получаем entry_price
             entry_price_query = """
                 SELECT open_price as entry_price
-                FROM fas.market_data_aggregated
+                FROM fas_v2.market_data_aggregated
                 WHERE trading_pair_id = %s
                     AND timeframe = '5m'
                     AND timestamp >= %s - INTERVAL '15 minutes'
@@ -3656,7 +3656,7 @@ def get_best_scoring_signals_with_backtest_params(db):
             DATE_TRUNC('hour', timestamp) as hour_bucket,
             regime,
             timestamp
-        FROM fas.market_regime
+        FROM fas_v2.market_regime
         WHERE timeframe = '4h'
             AND timestamp >= NOW() - INTERVAL '24 hours'
         ORDER BY DATE_TRUNC('hour', timestamp), timestamp DESC
@@ -3688,7 +3688,7 @@ def get_best_scoring_signals_with_backtest_params(db):
         bp.trailing_activation_filter,
         bp.trailing_distance_filter
 
-    FROM fas.scoring_history AS sc
+    FROM fas_v2.scoring_history AS sc
     JOIN public.trading_pairs AS tp ON sc.trading_pair_id = tp.id
     JOIN public.exchanges AS ex ON ex.id = tp.exchange_id
     JOIN all_best_params AS bp ON tp.exchange_id = bp.exchange_id
@@ -3878,22 +3878,29 @@ def get_raw_signals(db, filters, page=1, per_page=50):
         }
     """
     try:
+        logger.info(f"get_raw_signals called with filters: {filters}, page: {page}, per_page: {per_page}")
+
+        # DEBUG: write to file
+        with open('/tmp/raw_signals_debug.log', 'a') as f:
+            import datetime
+            f.write(f"\n{datetime.datetime.now()}: get_raw_signals called\n")
+            f.write(f"  Filters: {filters}\n")
+            f.write(f"  Page: {page}, Per page: {per_page}\n")
+            f.flush()
+
         # Построение WHERE условий
         where_clauses = ["sh.is_active = true"]
         params = []
-        param_counter = 1
 
         # Временной диапазон
         time_range = filters.get('time_range', '24h')
         if time_range == 'custom':
             if filters.get('custom_start'):
-                where_clauses.append(f"sh.timestamp >= ${param_counter}")
+                where_clauses.append("sh.timestamp >= %s")
                 params.append(filters['custom_start'])
-                param_counter += 1
             if filters.get('custom_end'):
-                where_clauses.append(f"sh.timestamp <= ${param_counter}")
+                where_clauses.append("sh.timestamp <= %s")
                 params.append(filters['custom_end'])
-                param_counter += 1
         else:
             # Предустановленные диапазоны
             hours_map = {'1h': 1, '3h': 3, '6h': 6, '12h': 12, '24h': 24}
@@ -3902,56 +3909,48 @@ def get_raw_signals(db, filters, page=1, per_page=50):
 
         # Score Week фильтр
         if filters.get('score_week_min') is not None:
-            where_clauses.append(f"sh.score_week >= ${param_counter}")
+            where_clauses.append("sh.score_week >= %s")
             params.append(filters['score_week_min'])
-            param_counter += 1
 
         if filters.get('score_week_max') is not None:
-            where_clauses.append(f"sh.score_week <= ${param_counter}")
+            where_clauses.append("sh.score_week <= %s")
             params.append(filters['score_week_max'])
-            param_counter += 1
 
         # Score Month фильтр
         if filters.get('score_month_min') is not None:
-            where_clauses.append(f"sh.score_month >= ${param_counter}")
+            where_clauses.append("sh.score_month >= %s")
             params.append(filters['score_month_min'])
-            param_counter += 1
 
         if filters.get('score_month_max') is not None:
-            where_clauses.append(f"sh.score_month <= ${param_counter}")
+            where_clauses.append("sh.score_month <= %s")
             params.append(filters['score_month_max'])
-            param_counter += 1
 
         # Действие фильтр
         if filters.get('actions') and len(filters['actions']) > 0:
-            where_clauses.append(f"sh.recommended_action = ANY(${param_counter})")
+            where_clauses.append("sh.recommended_action = ANY(%s)")
             params.append(filters['actions'])
-            param_counter += 1
 
         # Биржа фильтр
         if filters.get('exchanges') and len(filters['exchanges']) > 0:
-            where_clauses.append(f"tp.exchange_id = ANY(${param_counter})")
+            where_clauses.append("tp.exchange_id = ANY(%s)")
             params.append(filters['exchanges'])
-            param_counter += 1
 
         # Паттерны фильтр (через EXISTS подзапрос)
         if filters.get('patterns') and len(filters['patterns']) > 0:
-            where_clauses.append(f"""
+            where_clauses.append("""
                 EXISTS (
                     SELECT 1 FROM fas_v2.sh_patterns shp
                     JOIN fas_v2.signal_patterns sp ON sp.id = shp.signal_patterns_id
                     WHERE shp.scoring_history_id = sh.id
-                    AND sp.pattern_type = ANY(${param_counter})
+                    AND sp.pattern_type = ANY(%s)
                 )
             """)
             params.append(filters['patterns'])
-            param_counter += 1
 
         # Режим рынка фильтр
         if filters.get('regimes') and len(filters['regimes']) > 0:
-            where_clauses.append(f"mr.regime = ANY(${param_counter})")
+            where_clauses.append("mr.regime = ANY(%s)")
             params.append(filters['regimes'])
-            param_counter += 1
 
         where_sql = " AND ".join(where_clauses)
 
@@ -3965,10 +3964,55 @@ def get_raw_signals(db, filters, page=1, per_page=50):
             WHERE {where_sql}
         """
 
+        logger.info(f"WHERE clause: {where_sql}")
+        logger.info(f"Params: {params}")
+        print(f"DEBUG: WHERE clause: {where_sql}", flush=True)
+        print(f"DEBUG: Params: {params}", flush=True)
+
+        # DEBUG: Before get_connection
+        with open('/tmp/raw_signals_debug.log', 'a') as f:
+            f.write(f"  About to get connection...\n")
+            f.flush()
+
         with db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(count_query, params)
-                total = cur.fetchone()['total']
+            # DEBUG: After get_connection
+            with open('/tmp/raw_signals_debug.log', 'a') as f:
+                f.write(f"  Got connection!\n")
+                f.flush()
+            with conn.cursor(row_factory=dict_row) as cur:
+                logger.info(f"Executing count query...")
+                print(f"DEBUG: Executing count query...", flush=True)
+
+                # DEBUG: write SQL to file
+                with open('/tmp/raw_signals_debug.log', 'a') as f:
+                    f.write(f"  WHERE: {where_sql}\n")
+                    f.write(f"  PARAMS: {params}\n")
+                    f.flush()
+
+                try:
+                    with open('/tmp/raw_signals_debug.log', 'a') as f:
+                        f.write(f"  Executing cur.execute...\n")
+                        f.flush()
+
+                    cur.execute(count_query, params)
+
+                    with open('/tmp/raw_signals_debug.log', 'a') as f:
+                        f.write(f"  Execute done, fetching...\n")
+                        f.flush()
+
+                    total = cur.fetchone()['total']
+
+                    with open('/tmp/raw_signals_debug.log', 'a') as f:
+                        f.write(f"  TOTAL FOUND: {total}\n")
+                        f.flush()
+
+                    logger.info(f"Total signals found: {total}")
+                    print(f"DEBUG: Total signals found: {total}", flush=True)
+                except Exception as e:
+                    with open('/tmp/raw_signals_debug.log', 'a') as f:
+                        f.write(f"  ERROR in execute: {e}\n")
+                        f.flush()
+                    raise
 
                 # Расчет пагинации
                 pages = (total + per_page - 1) // per_page if total > 0 else 1
@@ -3991,7 +4035,7 @@ def get_raw_signals(db, filters, page=1, per_page=50):
                         sh.patterns_details,
                         sh.combinations_details,
                         tp.exchange_id,
-                        ex.name as exchange_name,
+                        ex.exchange_name,
                         mr.regime as market_regime,
                         mr.strength as regime_strength,
                         COUNT(DISTINCT shp.id) as patterns_count,
@@ -4009,13 +4053,28 @@ def get_raw_signals(db, filters, page=1, per_page=50):
                     LEFT JOIN fas_v2.sh_indicators shi ON shi.scoring_history_id = sh.id
                     LEFT JOIN fas_v2.sh_poc shpoc ON shpoc.scoring_history_id = sh.id
                     WHERE {where_sql}
-                    GROUP BY sh.id, tp.exchange_id, ex.name, mr.regime, mr.strength
+                    GROUP BY sh.id, tp.exchange_id, ex.exchange_name, mr.regime, mr.strength
                     ORDER BY sh.timestamp DESC
                     LIMIT {per_page} OFFSET {offset}
                 """
 
+                logger.info(f"Executing main query for page {page} (offset {offset}, limit {per_page})...")
+
+                # DEBUG
+                with open('/tmp/raw_signals_debug.log', 'a') as f:
+                    f.write(f"  Executing main query (offset={offset}, limit={per_page})...\n")
+                    f.flush()
+
                 cur.execute(query, params)
                 signals = cur.fetchall()
+                logger.info(f"Fetched {len(signals)} signals")
+
+                # DEBUG
+                with open('/tmp/raw_signals_debug.log', 'a') as f:
+                    f.write(f"  Fetched {len(signals)} signals\n")
+                    if signals:
+                        f.write(f"  First signal keys: {list(signals[0].keys())}\n")
+                    f.flush()
 
                 return {
                     'signals': signals,
@@ -4028,6 +4087,13 @@ def get_raw_signals(db, filters, page=1, per_page=50):
         logger.error(f"Error getting raw signals: {e}")
         import traceback
         traceback.print_exc()
+
+        # DEBUG
+        with open('/tmp/raw_signals_debug.log', 'a') as f:
+            f.write(f"  EXCEPTION: {e}\n")
+            f.write(f"  Traceback: {traceback.format_exc()}\n")
+            f.flush()
+
         return {
             'signals': [],
             'total': 0,
@@ -4055,13 +4121,13 @@ def get_signal_details(db, signal_id):
     """
     try:
         with db.get_connection() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(row_factory=dict_row) as cur:
                 # Основная информация о сигнале
                 signal_query = """
                     SELECT
                         sh.*,
                         tp.exchange_id,
-                        ex.name as exchange_name
+                        ex.exchange_name
                     FROM fas_v2.scoring_history sh
                     JOIN trading_pairs tp ON tp.id = sh.trading_pair_id
                     JOIN exchanges ex ON ex.id = tp.exchange_id
@@ -4226,19 +4292,16 @@ def get_raw_signals_stats(db, filters):
         # Строим те же WHERE условия что и в get_raw_signals
         where_clauses = ["sh.is_active = true"]
         params = []
-        param_counter = 1
 
         # Временной диапазон
         time_range = filters.get('time_range', '24h')
         if time_range == 'custom':
             if filters.get('custom_start'):
-                where_clauses.append(f"sh.timestamp >= ${param_counter}")
+                where_clauses.append("sh.timestamp >= %s")
                 params.append(filters['custom_start'])
-                param_counter += 1
             if filters.get('custom_end'):
-                where_clauses.append(f"sh.timestamp <= ${param_counter}")
+                where_clauses.append("sh.timestamp <= %s")
                 params.append(filters['custom_end'])
-                param_counter += 1
         else:
             hours_map = {'1h': 1, '3h': 3, '6h': 6, '12h': 12, '24h': 24}
             hours = hours_map.get(time_range, 24)
@@ -4246,61 +4309,53 @@ def get_raw_signals_stats(db, filters):
 
         # Score Week фильтр
         if filters.get('score_week_min') is not None:
-            where_clauses.append(f"sh.score_week >= ${param_counter}")
+            where_clauses.append("sh.score_week >= %s")
             params.append(filters['score_week_min'])
-            param_counter += 1
 
         if filters.get('score_week_max') is not None:
-            where_clauses.append(f"sh.score_week <= ${param_counter}")
+            where_clauses.append("sh.score_week <= %s")
             params.append(filters['score_week_max'])
-            param_counter += 1
 
         # Score Month фильтр
         if filters.get('score_month_min') is not None:
-            where_clauses.append(f"sh.score_month >= ${param_counter}")
+            where_clauses.append("sh.score_month >= %s")
             params.append(filters['score_month_min'])
-            param_counter += 1
 
         if filters.get('score_month_max') is not None:
-            where_clauses.append(f"sh.score_month <= ${param_counter}")
+            where_clauses.append("sh.score_month <= %s")
             params.append(filters['score_month_max'])
-            param_counter += 1
 
         # Действие фильтр
         if filters.get('actions') and len(filters['actions']) > 0:
-            where_clauses.append(f"sh.recommended_action = ANY(${param_counter})")
+            where_clauses.append("sh.recommended_action = ANY(%s)")
             params.append(filters['actions'])
-            param_counter += 1
 
         # Биржа фильтр
         if filters.get('exchanges') and len(filters['exchanges']) > 0:
-            where_clauses.append(f"tp.exchange_id = ANY(${param_counter})")
+            where_clauses.append("tp.exchange_id = ANY(%s)")
             params.append(filters['exchanges'])
-            param_counter += 1
 
         # Паттерны фильтр
         if filters.get('patterns') and len(filters['patterns']) > 0:
-            where_clauses.append(f"""
+            where_clauses.append("""
                 EXISTS (
                     SELECT 1 FROM fas_v2.sh_patterns shp
                     JOIN fas_v2.signal_patterns sp ON sp.id = shp.signal_patterns_id
                     WHERE shp.scoring_history_id = sh.id
-                    AND sp.pattern_type = ANY(${param_counter})
+                    AND sp.pattern_type = ANY(%s)
                 )
             """)
             params.append(filters['patterns'])
-            param_counter += 1
 
         # Режим рынка фильтр
         if filters.get('regimes') and len(filters['regimes']) > 0:
-            where_clauses.append(f"mr.regime = ANY(${param_counter})")
+            where_clauses.append("mr.regime = ANY(%s)")
             params.append(filters['regimes'])
-            param_counter += 1
 
         where_sql = " AND ".join(where_clauses)
 
         with db.get_connection() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(row_factory=dict_row) as cur:
                 # Основная статистика
                 main_stats_query = f"""
                     SELECT
