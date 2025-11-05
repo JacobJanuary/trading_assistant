@@ -1260,7 +1260,8 @@ def process_signal_complete(db, signal,
                         if unrealized_pnl_pct <= liquidation_loss_pct:
                             is_closed = True
                             close_reason = 'liquidation'
-                            close_price = high_price
+                            # КРИТИЧНО: Ликвидация по liquidation_price, не по actual price
+                            close_price = entry_price * (1 - liquidation_loss_pct / 100)
                             close_time = current_time
                         elif low_price <= tp_price:
                             is_closed = True
@@ -1291,7 +1292,8 @@ def process_signal_complete(db, signal,
                         if unrealized_pnl_pct <= liquidation_loss_pct:
                             is_closed = True
                             close_reason = 'liquidation'
-                            close_price = low_price
+                            # КРИТИЧНО: Ликвидация по liquidation_price, не по actual price
+                            close_price = entry_price * (1 + liquidation_loss_pct / 100)
                             close_time = current_time
                         elif high_price >= tp_price:
                             is_closed = True
@@ -1562,8 +1564,15 @@ def calculate_trailing_stop_exit(entry_price, history, signal_action,
             if unrealized_pnl_pct <= liquidation_loss_pct:
                 is_closed = True
                 close_reason = 'liquidation'
-                close_price = low_price if is_long else high_price
+                # КРИТИЧНО: При isolated margin ликвидация происходит по liquidation_price,
+                # а не по actual price! Используем цену соответствующую liquidation threshold
+                if is_long:
+                    close_price = entry_price * (1 + liquidation_loss_pct / 100)
+                else:  # SHORT
+                    close_price = entry_price * (1 - liquidation_loss_pct / 100)
                 close_time = candle_time
+                print(f"[LIQUIDATION] Price would be {low_price if is_long else high_price:.8f}, "
+                      f"but liquidation occurs at {close_price:.8f} ({liquidation_loss_pct:.2f}%)")
                 continue
 
             # ПРОВЕРКА ПЕРЕХОДА В ФАЗУ 2: ДОЛЖНА БЫТЬ ДО проверки Phase 1!
@@ -1958,7 +1967,8 @@ def process_signal_with_trailing(db, signal, user_settings):
                         if unrealized_pnl_pct <= liquidation_loss_pct:
                             is_closed = True
                             close_reason = 'liquidation'
-                            close_price = high_price
+                            # КРИТИЧНО: Ликвидация по liquidation_price, не по actual price
+                            close_price = entry_price * (1 - liquidation_loss_pct / 100)
                             close_time = current_time
                         elif low_price <= tp_price:
                             is_closed = True
@@ -1987,7 +1997,8 @@ def process_signal_with_trailing(db, signal, user_settings):
                         if unrealized_pnl_pct <= liquidation_loss_pct:
                             is_closed = True
                             close_reason = 'liquidation'
-                            close_price = low_price
+                            # КРИТИЧНО: Ликвидация по liquidation_price, не по actual price
+                            close_price = entry_price * (1 + liquidation_loss_pct / 100)
                             close_time = current_time
                         elif high_price >= tp_price:
                             is_closed = True
