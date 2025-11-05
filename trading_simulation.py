@@ -77,8 +77,9 @@ class TradingSimulation:
         """
         Ограничивает убыток размером изолированной маржи
 
-        При isolated margin максимальный убыток = размер маржи минус entry_commission
-        (т.к. entry_commission уже была списана при открытии)
+        При isolated margin максимальный убыток = начальная маржа + все комиссии
+        Начальная маржа = position_size (не умноженная на leverage)
+        Максимальный убыток = -(position_size + entry_commission + exit_commission)
 
         Args:
             gross_pnl: Валовая прибыль/убыток до комиссий
@@ -94,11 +95,12 @@ class TradingSimulation:
         # Чистый PnL после комиссий
         net_pnl = gross_pnl - total_commission
 
-        # Максимально возможный убыток = маржа минус входная комиссия
-        # (входная комиссия уже списана, поэтому она не входит в убыток)
-        max_loss = -(self.position_size - entry_commission)
+        # КРИТИЧНО: При isolated margin максимальный убыток = начальная маржа + все комиссии
+        max_loss = -(self.position_size + entry_commission + exit_commission)
 
         # Возвращаем большее из двух значений (ограничение убытка)
+        if net_pnl < max_loss:
+            print(f"[ISOLATED MARGIN CAP] Capping loss from ${net_pnl:.2f} to ${max_loss:.2f} (position: ${self.position_size}, fees: ${total_commission:.2f})")
         return max(net_pnl, max_loss)
 
     def can_open_position(self, pair_symbol):
@@ -371,8 +373,9 @@ class TradingSimulation:
                                                 self.position_size * self.leverage * 0.0006)
             exit_commission = self.position_size * self.leverage * 0.0006
 
-            # Дополнительная проверка ограничения
-            max_loss = -(self.position_size - entry_commission)
+            # Дополнительная проверка isolated margin ограничения
+            # КРИТИЧНО: max_loss = -(position_size + entry_commission + exit_commission)
+            max_loss = -(self.position_size + entry_commission + exit_commission)
             actual_pnl = max(position_info['pnl_usd'], max_loss)
 
             if actual_pnl != position_info['pnl_usd']:
