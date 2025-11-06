@@ -2667,19 +2667,8 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                 error_count += 1
                 continue
 
-            # Получаем цену входа
-            entry_price_query = """
-                SELECT 
-                    open_price as entry_price,
-                    timestamp
-                FROM fas_v2.market_data_aggregated
-                WHERE trading_pair_id = %s
-                    AND timeframe = '5m'
-                    AND timestamp >= %s - INTERVAL '15 minutes'
-                    AND timestamp <= %s + INTERVAL '15 minutes'
-                ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
-                LIMIT 1
-            """
+            # Получаем цену входа (используем helper function, 15-min window для scoring)
+            entry_price_query = build_entry_price_query(window_minutes=15)
 
             price_result = db.execute_query(
                 entry_price_query,
@@ -2689,19 +2678,8 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
             )
 
             if not price_result:
-                # Расширенный поиск
-                extended_query = """
-                    SELECT 
-                        open_price as entry_price,
-                        timestamp
-                    FROM fas_v2.market_data_aggregated
-                    WHERE trading_pair_id = %s
-                        AND timeframe = '5m'
-                        AND timestamp >= %s - INTERVAL '1 hour'
-                        AND timestamp <= %s + INTERVAL '1 hour'
-                    ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
-                    LIMIT 1
-                """
+                # Расширенный поиск (используем helper function)
+                extended_query = build_entry_price_fallback_query(window_hours=1)
                 price_result = db.execute_query(
                     extended_query,
                     (signal['trading_pair_id'], signal['timestamp'],
@@ -2715,21 +2693,8 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
 
             entry_price = float(price_result[0]['entry_price'])
 
-            # Получаем историю
-            history_query = """
-                SELECT 
-                    timestamp,
-                    open_price,
-                    high_price,
-                    low_price,
-                    close_price
-                FROM fas_v2.market_data_aggregated
-                WHERE trading_pair_id = %s
-                    AND timeframe = '5m'
-                    AND timestamp >= %s
-                    AND timestamp <= %s + INTERVAL '24 hours'
-                ORDER BY timestamp ASC
-            """
+            # Получаем историю (используем helper function)
+            history_query = build_candle_history_query(duration_hours=24)
 
             history = db.execute_query(
                 history_query,
@@ -3174,20 +3139,8 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
         if cache_key in market_data_cache:
             return market_data_cache[cache_key]
 
-        history_query = """
-            SELECT
-                timestamp,
-                open_price,
-                high_price,
-                low_price,
-                close_price
-            FROM fas_v2.market_data_aggregated
-            WHERE trading_pair_id = %s
-                AND timeframe = '5m'
-                AND timestamp >= %s
-                AND timestamp <= %s + INTERVAL '24 hours'
-            ORDER BY timestamp ASC
-        """
+        # Используем helper function для миграции на public.candles
+        history_query = build_candle_history_query(duration_hours=24)
         history = db.execute_query(
             history_query,
             (trading_pair_id, signal_timestamp, signal_timestamp),
@@ -3258,17 +3211,8 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
             trading_pair_id = signal['trading_pair_id']
             signal_timestamp = signal['timestamp']
 
-            # Получаем entry_price
-            entry_price_query = """
-                SELECT open_price as entry_price
-                FROM fas_v2.market_data_aggregated
-                WHERE trading_pair_id = %s
-                    AND timeframe = '5m'
-                    AND timestamp >= %s - INTERVAL '15 minutes'
-                    AND timestamp <= %s + INTERVAL '15 minutes'
-                ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
-                LIMIT 1
-            """
+            # Получаем entry_price (используем helper function, 15-min window)
+            entry_price_query = build_entry_price_query(window_minutes=15)
             price_result = db.execute_query(
                 entry_price_query,
                 (trading_pair_id, signal_timestamp, signal_timestamp, signal_timestamp),
