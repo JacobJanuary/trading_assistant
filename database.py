@@ -3614,7 +3614,7 @@ def get_best_scoring_signals_with_backtest_params(db):
                 total_pnl_usd >= (
                     SELECT MAX(total_pnl_usd)
                     FROM web.backtest_summary_binance
-                ) * 0.85
+                ) * 0.95
             ORDER BY
                 total_pnl_usd DESC,
                 win_rate DESC
@@ -3641,7 +3641,7 @@ def get_best_scoring_signals_with_backtest_params(db):
                 total_pnl_usd >= (
                     SELECT MAX(total_pnl_usd)
                     FROM web.backtest_summary_bybit
-                ) * 0.85
+                ) * 0.95
             ORDER BY
                 total_pnl_usd DESC,
                 win_rate DESC
