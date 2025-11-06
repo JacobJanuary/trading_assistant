@@ -170,6 +170,16 @@ class Config:
     WAVE_INTERVAL_MINUTES = int(os.getenv('WAVE_INTERVAL_MINUTES', 15))  # Интервал волны (15 минут)
 
     # ============================================
+    # CANDLE DATA SOURCE
+    # ============================================
+
+    # Feature flag для миграции с fas_v2.market_data_aggregated на public.candles
+    # public.candles содержит данные по ВСЕМ монетам (не только топ-100)
+    # При USE_PUBLIC_CANDLES=True система будет использовать public.candles
+    # При USE_PUBLIC_CANDLES=False система будет использовать fas_v2.market_data_aggregated (legacy)
+    USE_PUBLIC_CANDLES = os.getenv('USE_PUBLIC_CANDLES', 'False').lower() == 'true'
+
+    # ============================================
     # МОНИТОРИНГ И ЛОГИРОВАНИЕ
     # ============================================
     
