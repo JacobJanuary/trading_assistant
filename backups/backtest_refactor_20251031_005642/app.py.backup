@@ -9,8 +9,7 @@ from flask_login import LoginManager, login_user, logout_user, login_required, c
 from dotenv import load_dotenv
 import logging
 # Импорт модулей приложения
-from database import (Database, initialize_signals_with_params, process_signal_complete,
-                      get_raw_signals, get_signal_details, get_raw_signals_stats)
+from database import Database, initialize_signals_with_params, process_signal_complete
 from models import User, TradingData, TradingStats
 from config import Config
 
@@ -1048,7 +1047,7 @@ def scoring_analysis_v2():
             SELECT 
                 MIN(timestamp)::date as min_date,
                 (CURRENT_DATE - INTERVAL '2 days')::date as max_date
-            FROM fas_v2.scoring_history
+            FROM fas.scoring_history
         """, fetch=True)[0]
 
         # Получаем выбранную дату или используем максимальную
@@ -1346,7 +1345,7 @@ def api_scoring_get_date_info_v2():
         # Получаем общее количество сигналов
         count_query = """
             SELECT COUNT(*) as total
-            FROM fas_v2.scoring_history sh
+            FROM fas.scoring_history sh
             JOIN public.trading_pairs tp ON tp.id = sh.trading_pair_id
             WHERE sh.timestamp::date = %s
                 AND sh.score_week >= %s
@@ -3359,7 +3358,7 @@ def _calculate_efficiency_pnl(score_type='total_score', score_min=60):
                     shr.signal_type
                 FROM web.scoring_history_results_v2 shr
                 WHERE shr.scoring_history_id IN (
-                    SELECT id FROM fas_v2.scoring_history
+                    SELECT id FROM fas.scoring_history
                     WHERE {score_type} >= %s
                 )
                 AND shr.signal_timestamp >= NOW() - INTERVAL '32 days'
@@ -3434,7 +3433,7 @@ def _calculate_efficiency_pnl_combined(total_score_min=60, indicator_score_min=6
                     shr.signal_type
                 FROM web.scoring_history_results_v2 shr
                 WHERE shr.scoring_history_id IN (
-                    SELECT id FROM fas_v2.scoring_history
+                    SELECT id FROM fas.scoring_history
                     WHERE total_score >= %s AND indicator_score >= %s
                 )
                 AND shr.signal_timestamp >= NOW() - INTERVAL '32 days'
@@ -3682,20 +3681,6 @@ def backtest_strategy():
     return render_template('backtest_strategy.html')
 
 
-@app.route('/backtest_strategy_binance')
-@login_required
-def backtest_strategy_binance():
-    """Страница анализа backtest стратегии - Binance only"""
-    return render_template('backtest_strategy_binance.html')
-
-
-@app.route('/backtest_strategy_bybit')
-@login_required
-def backtest_strategy_bybit():
-    """Страница анализа backtest стратегии - Bybit only"""
-    return render_template('backtest_strategy_bybit.html')
-
-
 @app.route('/api/backtest/latest_session', methods=['GET'])
 @login_required
 def api_backtest_latest_session():
@@ -3778,186 +3763,6 @@ def api_backtest_latest_session():
         }), 500
 
 
-@app.route('/api/backtest_binance/latest_session', methods=['GET'])
-@login_required
-def api_backtest_binance_latest_session():
-    """API: Get latest backtest session for Binance"""
-    try:
-        sort_by = request.args.get('sort_by', 'final_equity')
-        limit = int(request.args.get('limit', 50))
-
-        # Validate sort_by
-        if sort_by not in ['final_equity', 'win_rate']:
-            sort_by = 'final_equity'
-
-        # Get latest session from binance table
-        session_query = """
-            SELECT session_id, start_time, end_time, status, parameters, description
-            FROM web.backtest_sessions_binance
-            ORDER BY start_time DESC
-            LIMIT 1
-        """
-
-        session_result = db.execute_query(session_query, fetch=True)
-
-        if not session_result:
-            return jsonify({'status': 'success', 'session': None, 'combinations': []})
-
-        session = session_result[0]
-        session_id = session['session_id']
-
-        # Get top combinations
-        sort_column = 'final_equity DESC' if sort_by == 'final_equity' else 'win_rate DESC'
-
-        combos_query = f"""
-            SELECT
-                score_week_filter as score_week,
-                score_month_filter as score_month,
-                max_trades_filter as max_trades,
-                stop_loss_filter as stop_loss,
-                trailing_activation_filter as trailing_activation,
-                trailing_distance_filter as trailing_distance,
-                win_rate,
-                total_pnl_usd as total_pnl,
-                final_equity,
-                total_trades,
-                win_count,
-                loss_count,
-                breakeven_count,
-                max_concurrent_positions as max_concurrent,
-                min_equity,
-                total_commission_usd as total_commission
-            FROM web.backtest_summary_binance
-            WHERE session_id = %s
-            ORDER BY {sort_column}, total_pnl_usd DESC
-            LIMIT %s
-        """
-
-        combos_result = db.execute_query(combos_query, (session_id, limit), fetch=True)
-
-        # Format response
-        session_data = {
-            'session_id': str(session['session_id']),
-            'start_time': session['start_time'].isoformat() if session['start_time'] else None,
-            'end_time': session['end_time'].isoformat() if session['end_time'] else None,
-            'status': session['status'],
-            'description': session['description'],
-            'parameters': session['parameters']
-        }
-
-        combinations = []
-        if combos_result:
-            for row in combos_result:
-                combo_dict = {}
-                for key, value in dict(row).items():
-                    # Convert Decimal to float for JSON serialization
-                    if hasattr(value, 'is_finite'):  # Check if it's a Decimal
-                        combo_dict[key] = float(value)
-                    else:
-                        combo_dict[key] = value
-                combinations.append(combo_dict)
-
-        return jsonify({
-            'status': 'success',
-            'session': session_data,
-            'combinations': combinations
-        })
-
-    except Exception as e:
-        logger.error(f"Error in api_backtest_binance_latest_session: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-
-@app.route('/api/backtest_bybit/latest_session', methods=['GET'])
-@login_required
-def api_backtest_bybit_latest_session():
-    """API: Get latest backtest session for Bybit"""
-    try:
-        sort_by = request.args.get('sort_by', 'final_equity')
-        limit = int(request.args.get('limit', 50))
-
-        # Validate sort_by
-        if sort_by not in ['final_equity', 'win_rate']:
-            sort_by = 'final_equity'
-
-        # Get latest session from bybit table
-        session_query = """
-            SELECT session_id, start_time, end_time, status, parameters, description
-            FROM web.backtest_sessions_bybit
-            ORDER BY start_time DESC
-            LIMIT 1
-        """
-
-        session_result = db.execute_query(session_query, fetch=True)
-
-        if not session_result:
-            return jsonify({'status': 'success', 'session': None, 'combinations': []})
-
-        session = session_result[0]
-        session_id = session['session_id']
-
-        # Get top combinations
-        sort_column = 'final_equity DESC' if sort_by == 'final_equity' else 'win_rate DESC'
-
-        combos_query = f"""
-            SELECT
-                score_week_filter as score_week,
-                score_month_filter as score_month,
-                max_trades_filter as max_trades,
-                stop_loss_filter as stop_loss,
-                trailing_activation_filter as trailing_activation,
-                trailing_distance_filter as trailing_distance,
-                win_rate,
-                total_pnl_usd as total_pnl,
-                final_equity,
-                total_trades,
-                win_count,
-                loss_count,
-                breakeven_count,
-                max_concurrent_positions as max_concurrent,
-                min_equity,
-                total_commission_usd as total_commission
-            FROM web.backtest_summary_bybit
-            WHERE session_id = %s
-            ORDER BY {sort_column}, total_pnl_usd DESC
-            LIMIT %s
-        """
-
-        combos_result = db.execute_query(combos_query, (session_id, limit), fetch=True)
-
-        # Format response
-        session_data = {
-            'session_id': str(session['session_id']),
-            'start_time': session['start_time'].isoformat() if session['start_time'] else None,
-            'end_time': session['end_time'].isoformat() if session['end_time'] else None,
-            'status': session['status'],
-            'description': session['description'],
-            'parameters': session['parameters']
-        }
-
-        combinations = []
-        if combos_result:
-            for row in combos_result:
-                combo_dict = {}
-                for key, value in dict(row).items():
-                    # Convert Decimal to float for JSON serialization
-                    if hasattr(value, 'is_finite'):  # Check if it's a Decimal
-                        combo_dict[key] = float(value)
-                    else:
-                        combo_dict[key] = value
-                combinations.append(combo_dict)
-
-        return jsonify({
-            'status': 'success',
-            'session': session_data,
-            'combinations': combinations
-        })
-
-    except Exception as e:
-        logger.error(f"Error in api_backtest_bybit_latest_session: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-
 @app.route('/api/backtest/combo_details', methods=['POST'])
 @login_required
 def api_backtest_combo_details():
@@ -3978,26 +3783,12 @@ def api_backtest_combo_details():
                 DATE(signal_timestamp) as day,
                 COUNT(*) as total_trades,
                 SUM(pnl_usd) as day_pnl,
-
-                -- Liquidation (критический убыток)
-                COUNT(CASE WHEN close_reason = 'liquidation' THEN 1 END) as liquidation_count,
-                SUM(CASE WHEN close_reason = 'liquidation' THEN pnl_usd ELSE 0 END) as liquidation_loss,
-
-                -- Stop Loss (защитный механизм фазы 1)
                 COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_count,
                 SUM(CASE WHEN close_reason = 'stop_loss' THEN pnl_usd ELSE 0 END) as sl_loss,
-
-                -- Trailing Stop (WIN механизм)
                 COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as ts_count,
                 SUM(CASE WHEN close_reason = 'trailing_stop' THEN pnl_usd ELSE 0 END) as ts_profit,
-
-                -- Breakeven (нейтральное закрытие фазы 2)
-                COUNT(CASE WHEN close_reason = 'breakeven' THEN 1 END) as breakeven_count,
-                SUM(CASE WHEN close_reason = 'breakeven' THEN pnl_usd ELSE 0 END) as breakeven_pnl,
-
-                -- Smart Loss (прогрессивный убыток фазы 3)
-                COUNT(CASE WHEN close_reason = 'smart_loss' THEN 1 END) as smart_loss_count,
-                SUM(CASE WHEN close_reason = 'smart_loss' THEN pnl_usd ELSE 0 END) as smart_loss_amount
+                COUNT(CASE WHEN close_reason = 'smart_loss' THEN 1 END) as timeout_count,
+                SUM(CASE WHEN close_reason = 'smart_loss' THEN pnl_usd ELSE 0 END) as timeout_loss
             FROM web.backtest_results
             WHERE session_id = %s
                 AND score_week_filter = %s
@@ -4031,22 +3822,12 @@ def api_backtest_combo_details():
                 'balance_end': round(balance, 2),
                 'day_pnl': round(day_pnl, 2),
                 'total_trades': stat['total_trades'],
-
-                # Exit reasons
-                'liquidation_count': stat['liquidation_count'] or 0,
-                'liquidation_loss': round(float(stat['liquidation_loss'] or 0), 2),
-
-                'sl_count': stat['sl_count'] or 0,
+                'sl_count': stat['sl_count'],
                 'sl_loss': round(float(stat['sl_loss'] or 0), 2),
-
-                'ts_count': stat['ts_count'] or 0,
+                'ts_count': stat['ts_count'],
                 'ts_profit': round(float(stat['ts_profit'] or 0), 2),
-
-                'breakeven_count': stat['breakeven_count'] or 0,
-                'breakeven_pnl': round(float(stat['breakeven_pnl'] or 0), 2),
-
-                'smart_loss_count': stat['smart_loss_count'] or 0,
-                'smart_loss_amount': round(float(stat['smart_loss_amount'] or 0), 2)
+                'timeout_count': stat['timeout_count'],
+                'timeout_loss': round(float(stat['timeout_loss'] or 0), 2)
             })
 
         return jsonify({
@@ -4060,208 +3841,6 @@ def api_backtest_combo_details():
             'status': 'error',
             'message': str(e)
         }), 500
-
-
-@app.route('/api/backtest_binance/combo_details', methods=['POST'])
-@login_required
-def api_backtest_binance_combo_details():
-    """API: Get detailed daily stats for Binance combination"""
-    try:
-        data = request.get_json()
-        session_id = data.get('session_id')
-        score_week = data.get('score_week')
-        score_month = data.get('score_month')
-        max_trades = data.get('max_trades')
-        stop_loss = data.get('stop_loss')
-        trailing_activation = data.get('trailing_activation')
-        trailing_distance = data.get('trailing_distance')
-
-        # Query daily stats from binance results table
-        query = """
-            SELECT
-                DATE(signal_timestamp) as day,
-                COUNT(*) as total_trades,
-                SUM(pnl_usd) as day_pnl,
-
-                -- Liquidation (критический убыток)
-                COUNT(CASE WHEN close_reason = 'liquidation' THEN 1 END) as liquidation_count,
-                SUM(CASE WHEN close_reason = 'liquidation' THEN pnl_usd ELSE 0 END) as liquidation_loss,
-
-                -- Stop Loss (защитный механизм фазы 1)
-                COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_count,
-                SUM(CASE WHEN close_reason = 'stop_loss' THEN pnl_usd ELSE 0 END) as sl_loss,
-
-                -- Trailing Stop (WIN механизм)
-                COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as ts_count,
-                SUM(CASE WHEN close_reason = 'trailing_stop' THEN pnl_usd ELSE 0 END) as ts_profit,
-
-                -- Breakeven (нейтральное закрытие фазы 2)
-                COUNT(CASE WHEN close_reason = 'breakeven' THEN 1 END) as breakeven_count,
-                SUM(CASE WHEN close_reason = 'breakeven' THEN pnl_usd ELSE 0 END) as breakeven_pnl,
-
-                -- Smart Loss (прогрессивный убыток фазы 3)
-                COUNT(CASE WHEN close_reason = 'smart_loss' THEN 1 END) as smart_loss_count,
-                SUM(CASE WHEN close_reason = 'smart_loss' THEN pnl_usd ELSE 0 END) as smart_loss_amount
-            FROM web.backtest_results_binance
-            WHERE session_id = %s
-                AND score_week_filter = %s
-                AND score_month_filter = %s
-                AND max_trades_filter = %s
-                AND stop_loss_filter = %s
-                AND trailing_activation_filter = %s
-                AND trailing_distance_filter = %s
-            GROUP BY DATE(signal_timestamp)
-            ORDER BY day
-        """
-
-        daily_stats = db.execute_query(query, (
-            session_id, score_week, score_month, max_trades,
-            stop_loss, trailing_activation, trailing_distance
-        ), fetch=True)
-
-        # Calculate cumulative balance
-        initial_capital = 1000.0
-        balance = initial_capital
-        result_data = []
-
-        for stat in daily_stats:
-            day_pnl = float(stat['day_pnl'] or 0)
-            balance_start = balance
-            balance += day_pnl
-
-            result_data.append({
-                'day': stat['day'].isoformat(),
-                'balance_start': round(balance_start, 2),
-                'balance_end': round(balance, 2),
-                'day_pnl': round(day_pnl, 2),
-                'total_trades': stat['total_trades'],
-
-                # Exit reasons
-                'liquidation_count': stat['liquidation_count'] or 0,
-                'liquidation_loss': round(float(stat['liquidation_loss'] or 0), 2),
-
-                'sl_count': stat['sl_count'] or 0,
-                'sl_loss': round(float(stat['sl_loss'] or 0), 2),
-
-                'ts_count': stat['ts_count'] or 0,
-                'ts_profit': round(float(stat['ts_profit'] or 0), 2),
-
-                'breakeven_count': stat['breakeven_count'] or 0,
-                'breakeven_pnl': round(float(stat['breakeven_pnl'] or 0), 2),
-
-                'smart_loss_count': stat['smart_loss_count'] or 0,
-                'smart_loss_amount': round(float(stat['smart_loss_amount'] or 0), 2)
-            })
-
-        return jsonify({
-            'status': 'success',
-            'daily_stats': result_data
-        })
-
-    except Exception as e:
-        logger.error(f"Error in api_backtest_binance_combo_details: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-
-@app.route('/api/backtest_bybit/combo_details', methods=['POST'])
-@login_required
-def api_backtest_bybit_combo_details():
-    """API: Get detailed daily stats for Bybit combination"""
-    try:
-        data = request.get_json()
-        session_id = data.get('session_id')
-        score_week = data.get('score_week')
-        score_month = data.get('score_month')
-        max_trades = data.get('max_trades')
-        stop_loss = data.get('stop_loss')
-        trailing_activation = data.get('trailing_activation')
-        trailing_distance = data.get('trailing_distance')
-
-        # Query daily stats from bybit results table
-        query = """
-            SELECT
-                DATE(signal_timestamp) as day,
-                COUNT(*) as total_trades,
-                SUM(pnl_usd) as day_pnl,
-
-                -- Liquidation (критический убыток)
-                COUNT(CASE WHEN close_reason = 'liquidation' THEN 1 END) as liquidation_count,
-                SUM(CASE WHEN close_reason = 'liquidation' THEN pnl_usd ELSE 0 END) as liquidation_loss,
-
-                -- Stop Loss (защитный механизм фазы 1)
-                COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as sl_count,
-                SUM(CASE WHEN close_reason = 'stop_loss' THEN pnl_usd ELSE 0 END) as sl_loss,
-
-                -- Trailing Stop (WIN механизм)
-                COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as ts_count,
-                SUM(CASE WHEN close_reason = 'trailing_stop' THEN pnl_usd ELSE 0 END) as ts_profit,
-
-                -- Breakeven (нейтральное закрытие фазы 2)
-                COUNT(CASE WHEN close_reason = 'breakeven' THEN 1 END) as breakeven_count,
-                SUM(CASE WHEN close_reason = 'breakeven' THEN pnl_usd ELSE 0 END) as breakeven_pnl,
-
-                -- Smart Loss (прогрессивный убыток фазы 3)
-                COUNT(CASE WHEN close_reason = 'smart_loss' THEN 1 END) as smart_loss_count,
-                SUM(CASE WHEN close_reason = 'smart_loss' THEN pnl_usd ELSE 0 END) as smart_loss_amount
-            FROM web.backtest_results_bybit
-            WHERE session_id = %s
-                AND score_week_filter = %s
-                AND score_month_filter = %s
-                AND max_trades_filter = %s
-                AND stop_loss_filter = %s
-                AND trailing_activation_filter = %s
-                AND trailing_distance_filter = %s
-            GROUP BY DATE(signal_timestamp)
-            ORDER BY day
-        """
-
-        daily_stats = db.execute_query(query, (
-            session_id, score_week, score_month, max_trades,
-            stop_loss, trailing_activation, trailing_distance
-        ), fetch=True)
-
-        # Calculate cumulative balance
-        initial_capital = 1000.0
-        balance = initial_capital
-        result_data = []
-
-        for stat in daily_stats:
-            day_pnl = float(stat['day_pnl'] or 0)
-            balance_start = balance
-            balance += day_pnl
-
-            result_data.append({
-                'day': stat['day'].isoformat(),
-                'balance_start': round(balance_start, 2),
-                'balance_end': round(balance, 2),
-                'day_pnl': round(day_pnl, 2),
-                'total_trades': stat['total_trades'],
-
-                # Exit reasons
-                'liquidation_count': stat['liquidation_count'] or 0,
-                'liquidation_loss': round(float(stat['liquidation_loss'] or 0), 2),
-
-                'sl_count': stat['sl_count'] or 0,
-                'sl_loss': round(float(stat['sl_loss'] or 0), 2),
-
-                'ts_count': stat['ts_count'] or 0,
-                'ts_profit': round(float(stat['ts_profit'] or 0), 2),
-
-                'breakeven_count': stat['breakeven_count'] or 0,
-                'breakeven_pnl': round(float(stat['breakeven_pnl'] or 0), 2),
-
-                'smart_loss_count': stat['smart_loss_count'] or 0,
-                'smart_loss_amount': round(float(stat['smart_loss_amount'] or 0), 2)
-            })
-
-        return jsonify({
-            'status': 'success',
-            'daily_stats': result_data
-        })
-
-    except Exception as e:
-        logger.error(f"Error in api_backtest_bybit_combo_details: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 # ============================================================================
@@ -4471,286 +4050,6 @@ def api_whale_futures_data():
     except Exception as e:
         logger.error(f"Error in whale_futures_data: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
-
-
-# =============================================================================
-# RAW SIGNALS FEATURE - Endpoints for displaying signals from fas_v2.scoring_history
-# =============================================================================
-
-@app.route('/raw_signals')
-@login_required
-def raw_signals():
-    """Страница отображения сырых сигналов"""
-    return render_template('raw_signals.html')
-
-
-@app.route('/api/raw_signals/list', methods=['POST'])
-@login_required
-def api_get_raw_signals():
-    """
-    API для получения списка сырых сигналов с фильтрацией и пагинацией
-
-    POST Body:
-    {
-        "filters": {
-            "time_range": "24h",
-            "score_week_min": -100,
-            "score_week_max": 100,
-            "score_month_min": -100,
-            "score_month_max": 100,
-            "actions": ["BUY", "SELL", "LONG", "SHORT", "NEUTRAL", "NO_TRADE"],
-            "patterns": ["OI_EXPLOSION", ...],
-            "regimes": ["BULL", "BEAR", "NEUTRAL"],
-            "exchanges": [1, 2]
-        },
-        "page": 1,
-        "per_page": 50
-    }
-
-    Returns:
-    {
-        "signals": [...],
-        "total": int,
-        "page": int,
-        "pages": int
-    }
-    """
-    try:
-        # DEBUG
-        with open('/tmp/api_debug.log', 'a') as f:
-            import datetime
-            f.write(f"\n{datetime.datetime.now()}: API endpoint called\n")
-            f.flush()
-
-        data = request.get_json()
-        filters = data.get('filters', {})
-        page = data.get('page', 1)
-        per_page = data.get('per_page', 50)
-
-        logger.info(f"API received filters: {filters}, page: {page}, per_page: {per_page}")
-
-        # DEBUG
-        with open('/tmp/api_debug.log', 'a') as f:
-            f.write(f"  Filters: {filters}\n")
-            f.write(f"  About to call get_raw_signals...\n")
-            f.flush()
-
-        # Валидация параметров
-        page = max(1, int(page))
-        per_page = max(1, min(int(per_page), 100))  # Максимум 100 на страницу
-
-        # Получаем данные
-        result = get_raw_signals(db, filters, page, per_page)
-
-        # DEBUG
-        with open('/tmp/api_debug.log', 'a') as f:
-            f.write(f"  get_raw_signals returned: total={result['total']}\n")
-            f.flush()
-
-        logger.info(f"API result: total={result['total']}, signals_count={len(result['signals'])}")
-
-        # DEBUG
-        with open('/tmp/api_debug.log', 'a') as f:
-            f.write(f"  Converting {len(result['signals'])} signals...\n")
-            f.flush()
-
-        # Конвертируем datetime в строки и Decimal в float для JSON
-        from decimal import Decimal
-        for i, signal in enumerate(result['signals']):
-            try:
-                if signal.get('timestamp'):
-                    signal['timestamp'] = signal['timestamp'].isoformat()
-                # Convert Decimal to float for JSON serialization
-                for key, value in signal.items():
-                    if isinstance(value, Decimal):
-                        signal[key] = float(value)
-            except Exception as e:
-                with open('/tmp/api_debug.log', 'a') as f:
-                    f.write(f"  Error converting signal {i}: {e}\n")
-                    f.flush()
-                raise
-
-        # DEBUG
-        with open('/tmp/api_debug.log', 'a') as f:
-            f.write(f"  About to jsonify...\n")
-            f.flush()
-
-        result_json = jsonify(result)
-
-        # DEBUG
-        with open('/tmp/api_debug.log', 'a') as f:
-            f.write(f"  Jsonify done, returning\n")
-            f.flush()
-
-        return result_json
-
-    except Exception as e:
-        logger.error(f"Error in api_get_raw_signals: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'error': 'Failed to fetch signals',
-            'message': str(e)
-        }), 500
-
-
-@app.route('/api/raw_signals/details/<int:signal_id>')
-@login_required
-def api_get_signal_details(signal_id):
-    """
-    API для получения детальной информации о сигнале
-
-    Args:
-        signal_id: int - ID сигнала из scoring_history
-
-    Returns:
-    {
-        "signal": {...},
-        "patterns": [...],
-        "indicators": {...},
-        "poc": {...},
-        "regime": {...}
-    }
-    """
-    try:
-        details = get_signal_details(db, signal_id)
-
-        if not details:
-            return jsonify({
-                'error': 'Signal not found',
-                'signal_id': signal_id
-            }), 404
-
-        # Конвертируем datetime в строки и Decimal в float для JSON
-        from decimal import Decimal
-        def convert_dates(obj):
-            if obj is None:
-                return None
-            if isinstance(obj, dict):
-                return {k: convert_dates(v) for k, v in obj.items()}
-            if isinstance(obj, list):
-                return [convert_dates(item) for item in obj]
-            if isinstance(obj, Decimal):
-                return float(obj)
-            if hasattr(obj, 'isoformat'):
-                return obj.isoformat()
-            return obj
-
-        details = convert_dates(details)
-
-        return jsonify(details)
-
-    except Exception as e:
-        logger.error(f"Error in api_get_signal_details for ID {signal_id}: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'error': 'Failed to fetch signal details',
-            'message': str(e)
-        }), 500
-
-
-@app.route('/api/raw_signals/stats', methods=['POST'])
-@login_required
-def api_get_raw_signals_stats():
-    """
-    API для получения статистики по сырым сигналам
-
-    POST Body:
-    {
-        "filters": {...}  // Те же фильтры что и в /list
-    }
-
-    Returns:
-    {
-        "total": int,
-        "by_action": {"BUY": 123, "SELL": 456, ...},
-        "by_regime": {"BULL": 234, "BEAR": 345, ...},
-        "avg_score_week": float,
-        "avg_score_month": float,
-        "last_signal_time": "2025-11-05T12:00:00+00:00",
-        "pattern_distribution": {"OI_EXPLOSION": 45, ...}
-    }
-    """
-    try:
-        data = request.get_json()
-        filters = data.get('filters', {})
-
-        stats = get_raw_signals_stats(db, filters)
-
-        # Конвертируем datetime в строки для JSON
-        if stats.get('last_signal_time'):
-            stats['last_signal_time'] = stats['last_signal_time'].isoformat()
-
-        return jsonify(stats)
-
-    except Exception as e:
-        logger.error(f"Error in api_get_raw_signals_stats: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'error': 'Failed to fetch statistics',
-            'message': str(e)
-        }), 500
-
-
-@app.route('/api/raw_signals/export/<int:signal_id>')
-@login_required
-def api_export_signal(signal_id):
-    """
-    API для экспорта сигнала в JSON файл
-
-    Args:
-        signal_id: int - ID сигнала из scoring_history
-
-    Returns:
-        JSON file download
-    """
-    try:
-        details = get_signal_details(db, signal_id)
-
-        if not details:
-            return jsonify({
-                'error': 'Signal not found',
-                'signal_id': signal_id
-            }), 404
-
-        # Конвертируем datetime в строки для JSON
-        def convert_dates(obj):
-            if obj is None:
-                return None
-            if isinstance(obj, dict):
-                return {k: convert_dates(v) for k, v in obj.items()}
-            if isinstance(obj, list):
-                return [convert_dates(item) for item in obj]
-            if hasattr(obj, 'isoformat'):
-                return obj.isoformat()
-            # Конвертируем Decimal в float
-            if hasattr(obj, '__float__'):
-                return float(obj)
-            return obj
-
-        details = convert_dates(details)
-
-        # Создаем JSON с отступами для читаемости
-        import json
-        json_data = json.dumps(details, indent=2, ensure_ascii=False)
-
-        # Создаем response для скачивания
-        response = make_response(json_data)
-        response.headers['Content-Type'] = 'application/json; charset=utf-8'
-        response.headers['Content-Disposition'] = f'attachment; filename=signal_{signal_id}.json'
-
-        return response
-
-    except Exception as e:
-        logger.error(f"Error in api_export_signal for ID {signal_id}: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'error': 'Failed to export signal',
-            'message': str(e)
-        }), 500
 
 
 # Запуск приложения

@@ -38,3 +38,4 @@ trading_assistant.sock
 *.tmp
 *.bak
 *.swp
+*.backup*

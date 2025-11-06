@@ -24,8 +24,8 @@ worker_class = 'sync'  # Можно изменить на 'gevent' для луч
 # keepalive = 75
 
 # Логирование
-accesslog = '-'
-errorlog = '-'
+accesslog = '/home/elcrypto/trading_assistant/gunicorn_access.log'
+errorlog = '/home/elcrypto/trading_assistant/gunicorn_error.log'
 loglevel = 'info'
 
 # Настройки для обработки больших запросов

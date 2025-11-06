@@ -1,0 +1,311 @@
+{% extends "base.html" %}
+
+{% block title %}Whale Futures Tracker{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <h1 class="text-3xl font-bold text-gray-900 mb-6">
+        <i class="fas fa-fish mr-3 text-blue-600"></i>
+        Whale Futures Tracker
+    </h1>
+
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-lg shadow p-4">
+            <div class="text-sm text-gray-600">Total Positions</div>
+            <div id="stat-total" class="text-2xl font-bold text-gray-900">-</div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4">
+            <div class="text-sm text-gray-600">LONG Positions</div>
+            <div id="stat-long" class="text-2xl font-bold text-green-600">-</div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4">
+            <div class="text-sm text-gray-600">SHORT Positions</div>
+            <div id="stat-short" class="text-2xl font-bold text-red-600">-</div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4">
+            <div class="text-sm text-gray-600">Total Volume</div>
+            <div id="stat-volume" class="text-2xl font-bold text-blue-600">-</div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="bg-white rounded-lg shadow p-4 mb-6">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Time Filter</label>
+                <select id="time-filter" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    <option value="24h" selected>Last 24h</option>
+                    <option value="12h">Last 12h</option>
+                    <option value="6h">Last 6h</option>
+                    <option value="1h">Last 1h</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Min Size USD</label>
+                <input type="number" id="min-size" value="500000" placeholder="500000" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Side</label>
+                <select id="side-filter" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    <option value="both" selected>Both</option>
+                    <option value="LONG">LONG</option>
+                    <option value="SHORT">SHORT</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Exchange</label>
+                <select id="exchange-filter" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    <option value="all" selected>All</option>
+                    <option value="Binance">Binance</option>
+                    <option value="Hyperliquid">Hyperliquid</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Long/Short Chart by Symbol -->
+    <div class="bg-white rounded-lg shadow p-6 mb-6">
+        <h2 class="text-xl font-bold text-gray-900 mb-4">
+            <i class="fas fa-chart-bar mr-2 text-blue-600"></i>
+            Long vs Short Volume by Asset (Top 20)
+        </h2>
+        <canvas id="longShortChart" height="80"></canvas>
+    </div>
+
+    <!-- Whale Positions Table -->
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Time</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Exchange</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Side</th>
+                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Size USD</th>
+                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th>
+                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">MM</th>
+                </tr>
+            </thead>
+            <tbody id="whale-table" class="bg-white divide-y divide-gray-200">
+                <tr>
+                    <td colspan="7" class="px-4 py-8 text-center text-gray-500">Loading...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+let refreshInterval;
+
+function formatNumber(num) {
+    if (num >= 1e9) return (num / 1e9).toFixed(2) + 'B';
+    if (num >= 1e6) return (num / 1e6).toFixed(2) + 'M';
+    if (num >= 1e3) return (num / 1e3).toFixed(2) + 'K';
+    return num.toFixed(2);
+}
+
+function formatTime(timestamp) {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+
+async function loadData() {
+    const timeFilter = document.getElementById('time-filter').value;
+    const minSize = document.getElementById('min-size').value;
+    const side = document.getElementById('side-filter').value;
+    const exchange = document.getElementById('exchange-filter').value;
+
+    try {
+        // Load stats
+        const statsResp = await fetch(`/api/whale_futures/stats?time_filter=${timeFilter}&min_size_usd=${minSize}`);
+        const statsData = await statsResp.json();
+
+        if (statsData.status === 'success' && statsData.stats) {
+            document.getElementById('stat-total').textContent = statsData.stats.total_positions;
+            document.getElementById('stat-long').textContent = statsData.stats.long_count;
+            document.getElementById('stat-short').textContent = statsData.stats.short_count;
+            document.getElementById('stat-volume').textContent = '$' + formatNumber(statsData.stats.total_volume_usd);
+        }
+
+        // Load positions
+        const dataResp = await fetch(`/api/whale_futures/data?time_filter=${timeFilter}&min_size_usd=${minSize}&side=${side}&exchange=${exchange}&limit=100`);
+        const posData = await dataResp.json();
+
+        const tbody = document.getElementById('whale-table');
+
+        if (posData.status === 'success' && posData.data && posData.data.length > 0) {
+            tbody.innerHTML = posData.data.map(pos => `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3 text-sm text-gray-900">${formatTime(pos.trade_timestamp)}</td>
+                    <td class="px-4 py-3 text-sm text-gray-900">${pos.exchange}</td>
+                    <td class="px-4 py-3 text-sm font-medium text-gray-900">${pos.symbol}</td>
+                    <td class="px-4 py-3 text-sm">
+                        <span class="px-2 py-1 rounded text-xs font-semibold ${pos.side === 'LONG' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                            ${pos.side}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-right font-semibold text-gray-900">$${formatNumber(pos.size_usd)}</td>
+                    <td class="px-4 py-3 text-sm text-right text-gray-600">${pos.price ? '$' + pos.price.toFixed(2) : '-'}</td>
+                    <td class="px-4 py-3 text-sm text-center">
+                        ${pos.is_market_maker ? '<i class="fas fa-check text-yellow-600"></i>' : ''}
+                    </td>
+                </tr>
+            `).join('');
+        } else {
+            tbody.innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">No data found</td></tr>';
+        }
+    } catch (error) {
+        console.error('Error loading data:', error);
+        document.getElementById('whale-table').innerHTML =
+            '<tr><td colspan="7" class="px-4 py-8 text-center text-red-500">Error loading data</td></tr>';
+    }
+}
+
+// Event listeners
+document.getElementById('time-filter').addEventListener('change', loadData);
+document.getElementById('min-size').addEventListener('change', loadData);
+document.getElementById('side-filter').addEventListener('change', loadData);
+document.getElementById('exchange-filter').addEventListener('change', loadData);
+
+// Chart instance
+let longShortChart = null;
+
+async function loadSymbolsChart() {
+    const timeFilter = document.getElementById('time-filter').value;
+    const minSize = document.getElementById('min-size').value;
+
+    try {
+        const url = `/api/whale_futures/symbols?time_filter=${timeFilter}&min_size_usd=${minSize}`;
+        console.log('Fetching symbols from:', url);
+
+        const resp = await fetch(url);
+        console.log('Response status:', resp.status);
+
+        if (!resp.ok) {
+            console.error('Response not OK:', resp.status, resp.statusText);
+            return;
+        }
+
+        const data = await resp.json();
+        console.log('Symbols data:', data);
+
+        if (data.status === 'success' && data.data && data.data.length > 0) {
+            const ctx = document.getElementById('longShortChart').getContext('2d');
+
+            // Destroy previous chart if exists
+            if (longShortChart) {
+                longShortChart.destroy();
+            }
+
+            const symbols = data.data.map(d => d.symbol);
+            const longVolumes = data.data.map(d => d.long_volume);
+            const shortVolumes = data.data.map(d => d.short_volume);
+
+            console.log('Creating chart with', symbols.length, 'symbols');
+
+            longShortChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: symbols,
+                    datasets: [
+                        {
+                            label: 'LONG Volume',
+                            data: longVolumes,
+                            backgroundColor: 'rgba(34, 197, 94, 0.7)',
+                            borderColor: 'rgb(34, 197, 94)',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'SHORT Volume',
+                            data: shortVolumes,
+                            backgroundColor: 'rgba(239, 68, 68, 0.7)',
+                            borderColor: 'rgb(239, 68, 68)',
+                            borderWidth: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    scales: {
+                        x: {
+                            stacked: false
+                        },
+                        y: {
+                            stacked: false,
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    if (value >= 1e9) return '$' + (value / 1e9).toFixed(1) + 'B';
+                                    if (value >= 1e6) return '$' + (value / 1e6).toFixed(1) + 'M';
+                                    if (value >= 1e3) return '$' + (value / 1e3).toFixed(1) + 'K';
+                                    return '$' + value;
+                                }
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    label += '$' + formatNumber(context.parsed.y);
+                                    return label;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        } else {
+            console.warn('No symbols data available:', data);
+            // Show empty state
+            const ctx = document.getElementById('longShortChart').getContext('2d');
+            if (longShortChart) {
+                longShortChart.destroy();
+            }
+            longShortChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: []
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Error loading symbols chart:', error);
+    }
+}
+
+// Modified loadData to also refresh chart
+async function loadDataAndChart() {
+    await loadData();
+    await loadSymbolsChart();
+}
+
+// Update event listeners
+document.getElementById('time-filter').addEventListener('change', loadDataAndChart);
+document.getElementById('min-size').addEventListener('change', loadDataAndChart);
+document.getElementById('side-filter').addEventListener('change', loadData);
+document.getElementById('exchange-filter').addEventListener('change', loadData);
+
+// Initial load and auto-refresh
+loadDataAndChart();
+refreshInterval = setInterval(loadDataAndChart, 60000); // Refresh every 60 seconds
+</script>
+{% endblock %}
