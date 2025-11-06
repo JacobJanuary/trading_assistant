@@ -1229,17 +1229,8 @@ def process_signal_complete(db, signal,
         # Инициализируем last_price значением по умолчанию
         last_price = None
 
-        # Получаем цену входа
-        entry_price_query = """
-            SELECT open_price
-            FROM fas_v2.market_data_aggregated
-            WHERE trading_pair_id = %s 
-                AND timeframe = '5m'
-                AND timestamp >= %s - INTERVAL '5 minutes'
-                AND timestamp <= %s + INTERVAL '5 minutes'
-            ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
-            LIMIT 1
-        """
+        # Получаем цену входа (используем helper function для миграции на public.candles)
+        entry_price_query = build_entry_price_query(window_minutes=5)
 
         price_result = db.execute_query(
             entry_price_query,
@@ -1248,17 +1239,8 @@ def process_signal_complete(db, signal,
         )
 
         if not price_result:
-            # Расширенный поиск
-            fallback_query = """
-                SELECT open_price
-                FROM fas_v2.market_data_aggregated
-                WHERE trading_pair_id = %s
-                    AND timeframe = '5m'
-                    AND timestamp >= %s - INTERVAL '1 hour'
-                    AND timestamp <= %s + INTERVAL '1 hour'
-                ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s))) ASC
-                LIMIT 1
-            """
+            # Расширенный поиск (используем helper function)
+            fallback_query = build_entry_price_fallback_query(window_hours=1)
             price_result = db.execute_query(
                 fallback_query,
                 (trading_pair_id, signal_timestamp, signal_timestamp, signal_timestamp),
@@ -1269,21 +1251,14 @@ def process_signal_complete(db, signal,
             print(f"[PROCESS] Нет цены для {pair_symbol} ({exchange_name})")
             return {'success': False}
 
-        entry_price = float(price_result[0]['open_price'])
+        entry_price = float(price_result[0]['entry_price'])
 
         # Устанавливаем last_price = entry_price по умолчанию
         last_price = entry_price
 
         # Получаем историю (24 часа от signal_timestamp для полной симуляции)
-        history_query = """
-            SELECT timestamp, open_price, high_price, low_price, close_price
-            FROM fas_v2.market_data_aggregated
-            WHERE trading_pair_id = %s
-                AND timeframe = '5m'
-                AND timestamp >= %s
-                AND timestamp <= %s + INTERVAL '24 hours'
-            ORDER BY timestamp ASC
-        """
+        # Используем helper function для миграции на public.candles
+        history_query = build_candle_history_query(duration_hours=24)
 
         history = db.execute_query(history_query, (trading_pair_id, signal_timestamp, signal_timestamp), fetch=True)
 
