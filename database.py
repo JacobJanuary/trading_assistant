@@ -28,6 +28,148 @@ def make_aware(dt):
     return dt
 
 
+# ============================================
+# CANDLE DATA ABSTRACTION LAYER
+# ============================================
+# Helper functions для поддержки миграции с fas_v2.market_data_aggregated на public.candles
+# Используют Config.USE_PUBLIC_CANDLES для выбора источника данных
+
+
+def get_candle_table_info():
+    """
+    Возвращает информацию о таблице свечей и маппинг колонок
+    для поддержки миграции fas_v2.market_data_aggregated → public.candles
+
+    Returns:
+        tuple: (table_name: str, column_aliases: dict)
+
+    Колонки в aliases:
+        - open: SELECT фрагмент для open_price
+        - high: SELECT фрагмент для high_price
+        - low: SELECT фрагмент для low_price
+        - close: SELECT фрагмент для close_price
+        - timestamp, trading_pair_id, timeframe: AS IS
+
+    Example:
+        >>> table, aliases = get_candle_table_info()
+        >>> print(f"SELECT {aliases['open']} FROM {table}")
+        SELECT open AS open_price FROM public.candles
+    """
+    if Config.USE_PUBLIC_CANDLES:
+        # public.candles: колонки названы без суффикса _price
+        return "public.candles", {
+            'open': 'open AS open_price',
+            'high': 'high AS high_price',
+            'low': 'low AS low_price',
+            'close': 'close AS close_price',
+            'timestamp': 'timestamp',
+            'trading_pair_id': 'trading_pair_id',
+            'timeframe': 'timeframe'
+        }
+    else:
+        # fas_v2.market_data_aggregated: legacy таблица с суффиксами _price
+        return "fas_v2.market_data_aggregated", {
+            'open': 'open_price',
+            'high': 'high_price',
+            'low': 'low_price',
+            'close': 'close_price',
+            'timestamp': 'timestamp',
+            'trading_pair_id': 'trading_pair_id',
+            'timeframe': 'timeframe'
+        }
+
+
+def build_entry_price_query(window_minutes=5):
+    """
+    Строит SQL запрос для получения цены входа с автовыбором таблицы
+
+    Args:
+        window_minutes: Окно поиска в минутах (default: 5)
+
+    Returns:
+        str: SQL query для получения entry price
+
+    Example:
+        >>> query = build_entry_price_query(5)
+        >>> result = db.execute_query(query, (pair_id, ts, ts, ts))
+        >>> entry_price = result[0]['entry_price']
+    """
+    table, cols = get_candle_table_info()
+
+    return f"""
+        SELECT {cols['open']} as entry_price
+        FROM {table}
+        WHERE {cols['trading_pair_id']} = %s
+            AND {cols['timeframe']} = '5m'
+            AND {cols['timestamp']} >= %s - INTERVAL '{window_minutes} minutes'
+            AND {cols['timestamp']} <= %s + INTERVAL '{window_minutes} minutes'
+        ORDER BY ABS(EXTRACT(EPOCH FROM ({cols['timestamp']} - %s))) ASC
+        LIMIT 1
+    """
+
+
+def build_entry_price_fallback_query(window_hours=1):
+    """
+    Строит SQL запрос для fallback поиска цены входа (расширенное окно)
+
+    Args:
+        window_hours: Расширенное окно поиска в часах (default: 1)
+
+    Returns:
+        str: SQL query для fallback поиска entry price
+
+    Example:
+        >>> query = build_entry_price_fallback_query(1)
+        >>> result = db.execute_query(query, (pair_id, ts, ts, ts))
+    """
+    table, cols = get_candle_table_info()
+
+    return f"""
+        SELECT {cols['open']} as entry_price
+        FROM {table}
+        WHERE {cols['trading_pair_id']} = %s
+            AND {cols['timeframe']} = '5m'
+            AND {cols['timestamp']} >= %s - INTERVAL '{window_hours} hour'
+            AND {cols['timestamp']} <= %s + INTERVAL '{window_hours} hour'
+        ORDER BY ABS(EXTRACT(EPOCH FROM ({cols['timestamp']} - %s))) ASC
+        LIMIT 1
+    """
+
+
+def build_candle_history_query(duration_hours=24):
+    """
+    Строит SQL запрос для получения истории свечей
+
+    Args:
+        duration_hours: Длительность истории в часах (default: 24)
+
+    Returns:
+        str: SQL query для получения истории свечей
+
+    Example:
+        >>> query = build_candle_history_query(24)
+        >>> history = db.execute_query(query, (pair_id, start_ts, start_ts))
+        >>> for candle in history:
+        >>>     print(candle['open_price'], candle['high_price'])
+    """
+    table, cols = get_candle_table_info()
+
+    return f"""
+        SELECT
+            {cols['timestamp']},
+            {cols['open']},
+            {cols['high']},
+            {cols['low']},
+            {cols['close']}
+        FROM {table}
+        WHERE {cols['trading_pair_id']} = %s
+            AND {cols['timeframe']} = '5m'
+            AND {cols['timestamp']} >= %s
+            AND {cols['timestamp']} <= %s + INTERVAL '{duration_hours} hours'
+        ORDER BY {cols['timestamp']} ASC
+    """
+
+
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
