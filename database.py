@@ -3747,7 +3747,7 @@ def get_user_scoring_filters(db, user_id):
     return []
 
 
-def get_best_scoring_signals_with_backtest_params(db, selected_exchanges=None):
+def get_best_scoring_signals_with_backtest_params(db, selected_exchanges=None, enable_oi_volume_filter=False):
     """
     Получение сигналов с оптимальными параметрами из backtest_summary_binance/bybit.
     Автоматически находит лучшие параметры фильтрации на основе результатов бэктестов.
@@ -3756,12 +3756,23 @@ def get_best_scoring_signals_with_backtest_params(db, selected_exchanges=None):
         db: Database instance
         selected_exchanges: list[int] - ID бирж для фильтрации (например [1, 2])
                            По умолчанию [1, 2] (Binance, Bybit)
+        enable_oi_volume_filter: bool - Включить фильтрацию по OI/Volume
+                                Исключает сигналы где:
+                                - open_interest < 500,000 ИЛИ
+                                - mark_price * volume < 10,000
+                                По умолчанию False (выключен)
 
     Логика выбора лучших параметров:
     1. Для каждой выбранной биржи находим summary с max(total_pnl_usd)
     2. Берем записи где total_pnl_usd >= 85% от максимального
     3. Из этих записей выбираем ту, у которой максимальный win_rate
     4. Используем все параметры из этой записи (SL, TS, max_trades)
+
+    OI/Volume Filter (когда enable_oi_volume_filter=True):
+        Исключает сигналы где:
+        - open_interest < 500,000 ИЛИ
+        - mark_price * volume < 10,000
+        Данные берутся из fas_v2.market_data_aggregated (timeframe=15m)
 
     Возвращает: (signals, params_by_exchange)
         signals: список сигналов
@@ -3780,6 +3791,7 @@ def get_best_scoring_signals_with_backtest_params(db, selected_exchanges=None):
     print(f"[BEST SIGNALS] Выбранные биржи: {selected_exchanges}")
     print(f"[BEST SIGNALS] Период: последние 24 часа")
     print(f"[BEST SIGNALS] Все параметры берутся из оптимального backtest для каждой биржи")
+    print(f"[BEST SIGNALS] OI/Volume фильтр: {'ВКЛЮЧЕН' if enable_oi_volume_filter else 'ВЫКЛЮЧЕН'}")
 
     # SQL запрос для получения сигналов с оптимальными параметрами
     query = """
@@ -3917,6 +3929,10 @@ def get_best_scoring_signals_with_backtest_params(db, selected_exchanges=None):
         ORDER BY mr.hour_bucket DESC
         LIMIT 1
     ) AS mr ON true
+    LEFT JOIN fas_v2.market_data_aggregated AS mda ON
+        mda.trading_pair_id = tp.id
+        AND mda.timestamp = sc.timestamp
+        AND mda.timeframe = '15m'
 
     WHERE
         sc.timestamp >= NOW() - INTERVAL '24 hours'
@@ -3928,6 +3944,19 @@ def get_best_scoring_signals_with_backtest_params(db, selected_exchanges=None):
         AND sc.score_month > bp.score_month_filter
         AND EXTRACT(HOUR FROM sc.timestamp) NOT BETWEEN 0 AND 1
     """
+
+    # Добавляем OI/Volume фильтр если включен
+    if enable_oi_volume_filter:
+        query += """
+        AND (
+            mda.timestamp IS NULL OR  -- Сохраняем сигналы без market data
+            (
+                mda.open_interest >= 500000
+                AND (mda.mark_price * mda.volume) >= 10000
+            )
+        )
+        """
+        print(f"[BEST SIGNALS] OI/Volume фильтр применен: OI >= 500,000 AND Volume USD >= 10,000")
 
     query += " ORDER BY sc.timestamp DESC"
 
