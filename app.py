@@ -597,6 +597,11 @@ def signal_performance():
         if not isinstance(selected_exchanges, list):
             selected_exchanges = [1, 2]
 
+        # Получаем enable_oi_volume_filter из фильтров (по умолчанию False)
+        enable_oi_volume_filter = filters.get('enable_oi_volume_filter', False)
+        if not isinstance(enable_oi_volume_filter, bool):
+            enable_oi_volume_filter = False
+
         # ========== ИСПОЛЬЗУЕМ АВТОМАТИЧЕСКИЙ ПОДБОР ОПТИМАЛЬНЫХ ПАРАМЕТРОВ ИЗ БЭКТЕСТОВ ==========
         from database import get_best_scoring_signals_with_backtest_params
         from datetime import datetime, date, timedelta
@@ -605,8 +610,13 @@ def signal_performance():
         print(f"[SIGNAL_PERFORMANCE] Период: последние 48 часов")
         print(f"[SIGNAL_PERFORMANCE] Все параметры (SL, TS, max_trades) берутся из оптимальных backtest для каждой биржи")
         print(f"[SIGNAL_PERFORMANCE] Выбранные биржи: {selected_exchanges}")
+        print(f"[SIGNAL_PERFORMANCE] OI/Volume фильтр: {'ВКЛЮЧЕН' if enable_oi_volume_filter else 'ВЫКЛЮЧЕН'}")
 
-        raw_signals, params_by_exchange = get_best_scoring_signals_with_backtest_params(db, selected_exchanges=selected_exchanges)
+        raw_signals, params_by_exchange = get_best_scoring_signals_with_backtest_params(
+            db,
+            selected_exchanges=selected_exchanges,
+            enable_oi_volume_filter=enable_oi_volume_filter
+        )
 
         print(f"[SIGNAL_PERFORMANCE] Получено {len(raw_signals) if raw_signals else 0} сигналов с оптимальными параметрами")
         print(f"[SIGNAL_PERFORMANCE] Оптимальные параметры для каждой биржи:")
@@ -1064,7 +1074,8 @@ def signal_performance():
                 'score_month_min': 0,  # Фильтруется автоматически в SQL запросе
                 'allowed_hours': list(range(24)),  # Все часы разрешены (без фильтрации)
                 'max_trades_per_15min': 0,  # Устанавливается автоматически для каждой биржи
-                'selected_exchanges': selected_exchanges  # Выбранные биржи
+                'selected_exchanges': selected_exchanges,  # Выбранные биржи
+                'enable_oi_volume_filter': enable_oi_volume_filter  # OI/Volume фильтр
             },
             last_update=datetime.now()
         )
@@ -1885,13 +1896,18 @@ def api_save_filters():
         # Используем только валидные ID
         selected_exchanges = valid_ids
 
+        # Валидация OI/Volume фильтра
+        enable_oi_volume_filter = data.get('enable_oi_volume_filter', False)
+        if not isinstance(enable_oi_volume_filter, bool):
+            enable_oi_volume_filter = False
+
         # НЕ сохраняем TP/SL здесь - они меняются только через инициализацию
         upsert_query = """
             INSERT INTO web.user_signal_filters (
                 user_id, hide_younger_than_hours, hide_older_than_hours,
                 position_size_usd, leverage, score_week_min, score_month_min,
-                allowed_hours, max_trades_per_15min, selected_exchanges
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                allowed_hours, max_trades_per_15min, selected_exchanges, enable_oi_volume_filter
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id) DO UPDATE SET
                 hide_younger_than_hours = EXCLUDED.hide_younger_than_hours,
                 hide_older_than_hours = EXCLUDED.hide_older_than_hours,
@@ -1902,13 +1918,14 @@ def api_save_filters():
                 allowed_hours = EXCLUDED.allowed_hours,
                 max_trades_per_15min = EXCLUDED.max_trades_per_15min,
                 selected_exchanges = EXCLUDED.selected_exchanges,
+                enable_oi_volume_filter = EXCLUDED.enable_oi_volume_filter,
                 updated_at = NOW()
         """
 
         db.execute_query(upsert_query, (
             current_user.id, hide_younger, hide_older, position_size, leverage,
             score_week_min, score_month_min, allowed_hours, max_trades_per_15min,
-            selected_exchanges
+            selected_exchanges, enable_oi_volume_filter
         ))
 
         return jsonify({
