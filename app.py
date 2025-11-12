@@ -587,8 +587,9 @@ def signal_performance():
             filters = default_filters
 
         # Используем параметры по умолчанию (без пользовательских фильтров)
-        hide_younger = filters['hide_younger_than_hours']
-        hide_older = filters['hide_older_than_hours']
+        # Для Signal Performance всегда показываем все сигналы за последние 48 часов
+        hide_younger = 0  # Показываем даже самые свежие сигналы
+        hide_older = 48   # Последние 48 часов
         display_leverage = filters['leverage']
         display_position_size = float(filters['position_size_usd'])
 
