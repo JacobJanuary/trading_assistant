@@ -1278,15 +1278,19 @@ def has_open_position(db, pair_symbol):
         return None
 
 
-def process_signal_complete(db, signal, 
+def process_signal_complete(db, signal,
                             tp_percent=None, sl_percent=None,
                             position_size=None, leverage=None,
-                            use_trailing_stop=None, 
+                            use_trailing_stop=None,
                             trailing_distance_pct=None,
-                            trailing_activation_pct=None):
+                            trailing_activation_pct=None,
+                            exchange_id=None):
     """
     Обработка сигнала с поддержкой Trailing Stop
     Использует дефолтные значения из Config если параметры не переданы
+
+    Args:
+        exchange_id: ID биржи из public.exchanges (опционально, берется из signal)
     """
     # Использовать значения из Config если не переданы
     tp_percent = tp_percent if tp_percent is not None else Config.DEFAULT_TAKE_PROFIT_PERCENT
@@ -1305,6 +1309,10 @@ def process_signal_complete(db, signal,
         signal_action = signal['signal_action']
         signal_timestamp = signal['signal_timestamp']
         exchange_name = signal.get('exchange_name', 'Unknown')
+
+        # Получаем exchange_id из signal если не передан явно
+        if exchange_id is None:
+            exchange_id = signal.get('exchange_id')
         
         # Проверяем наличие открытых позиций по этой паре
         open_position = has_open_position(db, pair_symbol)
@@ -1365,9 +1373,9 @@ def process_signal_complete(db, signal,
                     entry_price, position_size_usd, leverage,
                     trailing_stop_percent, take_profit_percent,
                     is_closed, last_known_price, use_trailing_stop,
-                    score_week, score_month
+                    score_week, score_month, exchange_id
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (signal_id) DO UPDATE SET
                     last_updated_at = NOW()
@@ -1377,7 +1385,7 @@ def process_signal_complete(db, signal,
                 entry_price, position_size, leverage,
                 trailing_distance_pct if use_trailing_stop else sl_percent,
                 tp_percent, entry_price, use_trailing_stop,
-                score_week, score_month
+                score_week, score_month, exchange_id
             ))
             return {'success': True, 'is_closed': False, 'close_reason': None, 'max_profit': 0}
 
@@ -1567,9 +1575,9 @@ def process_signal_complete(db, signal,
                 realized_pnl_usd, unrealized_pnl_usd,
                 max_potential_profit_usd, last_known_price,
                 use_trailing_stop, trailing_activated,
-                score_week, score_month
+                score_week, score_month, exchange_id
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             ON CONFLICT (signal_id) DO UPDATE SET
                 pair_symbol = EXCLUDED.pair_symbol,
@@ -1591,6 +1599,7 @@ def process_signal_complete(db, signal,
                 trailing_activated = EXCLUDED.trailing_activated,
                 score_week = EXCLUDED.score_week,
                 score_month = EXCLUDED.score_month,
+                exchange_id = EXCLUDED.exchange_id,
                 last_updated_at = NOW()
         """
 
@@ -1607,7 +1616,7 @@ def process_signal_complete(db, signal,
             realized_pnl if is_closed else 0,
             unrealized_pnl if not is_closed else 0,
             max_profit, last_price, use_trailing_stop, trailing_activated,
-            score_week, score_month
+            score_week, score_month, exchange_id
         ))
 
         return {
@@ -2255,6 +2264,9 @@ def process_signal_with_trailing(db, signal, user_settings):
             unrealized_pnl = 0
 
         # Сохраняем в БД (добавляем новые поля)
+        # Получаем exchange_id из signal
+        exchange_id = signal.get('exchange_id')
+
         insert_query = """
             INSERT INTO web.web_signals (
                 signal_id, pair_symbol, signal_action, signal_timestamp,
@@ -2263,9 +2275,9 @@ def process_signal_with_trailing(db, signal, user_settings):
                 is_closed, closing_price, closed_at, close_reason,
                 realized_pnl_usd, unrealized_pnl_usd,
                 max_potential_profit_usd, last_known_price,
-                score_week, score_month
+                score_week, score_month, exchange_id
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
         """
 
@@ -2278,7 +2290,7 @@ def process_signal_with_trailing(db, signal, user_settings):
             realized_pnl if is_closed else 0,
             unrealized_pnl if not is_closed else 0,
             max_profit, last_price,
-            signal.get('score_week', 0), signal.get('score_month', 0)
+            signal.get('score_week', 0), signal.get('score_month', 0), exchange_id
         ))
 
         return {
@@ -3735,13 +3747,18 @@ def get_user_scoring_filters(db, user_id):
     return []
 
 
-def get_best_scoring_signals_with_backtest_params(db):
+def get_best_scoring_signals_with_backtest_params(db, selected_exchanges=None):
     """
     Получение сигналов с оптимальными параметрами из backtest_summary_binance/bybit.
     Автоматически находит лучшие параметры фильтрации на основе результатов бэктестов.
 
+    Args:
+        db: Database instance
+        selected_exchanges: list[int] - ID бирж для фильтрации (например [1, 2])
+                           По умолчанию [1, 2] (Binance, Bybit)
+
     Логика выбора лучших параметров:
-    1. Для Binance и Bybit отдельно находим summary с max(total_pnl_usd)
+    1. Для каждой выбранной биржи находим summary с max(total_pnl_usd)
     2. Берем записи где total_pnl_usd >= 85% от максимального
     3. Из этих записей выбираем ту, у которой максимальный win_rate
     4. Используем все параметры из этой записи (SL, TS, max_trades)
@@ -3750,8 +3767,17 @@ def get_best_scoring_signals_with_backtest_params(db):
         signals: список сигналов
         params_by_exchange: dict с параметрами для каждой биржи {exchange_id: {...}}
     """
+    # Используем дефолтные биржи если не переданы
+    if selected_exchanges is None:
+        selected_exchanges = [1, 2]  # Binance, Bybit
+
+    # Валидация
+    if not selected_exchanges or not isinstance(selected_exchanges, list):
+        print(f"[BEST SIGNALS] ОШИБКА: selected_exchanges должен быть непустым списком")
+        return [], {}
 
     print(f"\n[BEST SIGNALS] ========== ПОЛУЧЕНИЕ СИГНАЛОВ С ОПТИМАЛЬНЫМИ ПАРАМЕТРАМИ ==========")
+    print(f"[BEST SIGNALS] Выбранные биржи: {selected_exchanges}")
     print(f"[BEST SIGNALS] Период: последние 24 часа")
     print(f"[BEST SIGNALS] Все параметры берутся из оптимального backtest для каждой биржи")
 
@@ -3897,7 +3923,7 @@ def get_best_scoring_signals_with_backtest_params(db):
         AND sc.is_active = true
         AND tp.is_active = true
         AND tp.contract_type_id = 1
-        AND tp.exchange_id IN (1, 2)
+        AND tp.exchange_id = ANY(%s)
         AND sc.score_week > bp.score_week_filter
         AND sc.score_month > bp.score_month_filter
         AND EXTRACT(HOUR FROM sc.timestamp) NOT BETWEEN 0 AND 1
@@ -3906,7 +3932,7 @@ def get_best_scoring_signals_with_backtest_params(db):
     query += " ORDER BY sc.timestamp DESC"
 
     try:
-        results = db.execute_query(query, fetch=True)
+        results = db.execute_query(query, (selected_exchanges,), fetch=True)
 
         if results:
             print(f"[BEST SIGNALS] Найдено {len(results)} сигналов после фильтрации по оптимальным параметрам")
@@ -4638,3 +4664,45 @@ def get_raw_signals_stats(db, filters):
             'last_signal_time': None,
             'pattern_distribution': {}
         }
+
+
+# =============================================================================
+# EXCHANGE FILTER SUPPORT - Helper functions for exchange filtering
+# =============================================================================
+
+def validate_exchange_ids(db, exchange_ids):
+    """
+    Проверяет что все переданные ID бирж существуют в public.exchanges
+
+    Args:
+        db: Database instance
+        exchange_ids: list[int] - список ID бирж для проверки
+
+    Returns:
+        tuple: (is_valid: bool, valid_ids: list, invalid_ids: list)
+
+    Example:
+        >>> is_valid, valid, invalid = validate_exchange_ids(db, [1, 2])
+        >>> print(f"Valid: {valid}, Invalid: {invalid}")
+        Valid: [1, 2], Invalid: []
+    """
+    if not exchange_ids:
+        return False, [], []
+
+    try:
+        query = "SELECT id FROM public.exchanges WHERE id = ANY(%s)"
+        results = db.execute_query(query, (exchange_ids,), fetch=True)
+
+        valid_ids = [r['id'] for r in results] if results else []
+        invalid_ids = [eid for eid in exchange_ids if eid not in valid_ids]
+
+        is_valid = len(invalid_ids) == 0
+
+        if not is_valid:
+            logger.warning(f"[VALIDATE] Invalid exchange IDs: {invalid_ids}")
+
+        return is_valid, valid_ids, invalid_ids
+
+    except Exception as e:
+        logger.error(f"[VALIDATE] Ошибка валидации exchange_ids: {e}")
+        return False, [], exchange_ids
