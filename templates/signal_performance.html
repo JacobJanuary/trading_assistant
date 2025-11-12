@@ -30,6 +30,46 @@
         </div>
     </div>
 
+    <!-- Exchange Filter -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h2 class="text-xl font-bold text-gray-800 mb-4">
+            <i class="fas fa-exchange-alt mr-2 text-blue-600"></i>
+            Фильтр по биржам
+        </h2>
+        <div class="flex items-center space-x-6">
+            <label class="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox" id="exchangeBinance" value="1" class="exchange-checkbox w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                       {% if 1 in filters.selected_exchanges %}checked{% endif %}>
+                <span class="text-sm font-medium text-gray-700">
+                    <span class="inline-flex items-center px-2 py-1 rounded-md bg-yellow-100 text-yellow-800">
+                        <i class="fas fa-coins mr-1"></i> Binance
+                    </span>
+                </span>
+            </label>
+            <label class="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox" id="exchangeBybit" value="2" class="exchange-checkbox w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                       {% if 2 in filters.selected_exchanges %}checked{% endif %}>
+                <span class="text-sm font-medium text-gray-700">
+                    <span class="inline-flex items-center px-2 py-1 rounded-md bg-orange-100 text-orange-800">
+                        <i class="fas fa-chart-line mr-1"></i> Bybit
+                    </span>
+                </span>
+            </label>
+            <label class="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox" id="exchangeCoinbase" value="3" class="exchange-checkbox w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                       {% if 3 in filters.selected_exchanges %}checked{% endif %}>
+                <span class="text-sm font-medium text-gray-700">
+                    <span class="inline-flex items-center px-2 py-1 rounded-md bg-blue-100 text-blue-800">
+                        <i class="fas fa-university mr-1"></i> Coinbase
+                    </span>
+                </span>
+            </label>
+            <button onclick="applyExchangeFilter()" class="ml-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
+                <i class="fas fa-filter mr-1"></i> Применить
+            </button>
+        </div>
+    </div>
+
     <!-- Статистика -->
     <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
         <h2 class="text-xl font-bold text-gray-800 mb-4">
@@ -470,6 +510,7 @@
                 <thead class="bg-gray-50">
                 <tr>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Пара</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Биржа</th>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Тип</th>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Score W/M</th>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Возраст</th>
@@ -485,6 +526,25 @@
                 {% for signal in signals %}
                 <tr class="hover:bg-gray-50">
                     <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ signal.pair_symbol }}</td>
+                    <td class="px-4 py-3 text-sm">
+                        {% if signal.exchange_name == 'Binance' %}
+                            <span class="px-2 py-1 text-xs rounded-md bg-yellow-100 text-yellow-800">
+                                <i class="fas fa-coins"></i> {{ signal.exchange_name }}
+                            </span>
+                        {% elif signal.exchange_name == 'Bybit' %}
+                            <span class="px-2 py-1 text-xs rounded-md bg-orange-100 text-orange-800">
+                                <i class="fas fa-chart-line"></i> {{ signal.exchange_name }}
+                            </span>
+                        {% elif signal.exchange_name == 'Coinbase' %}
+                            <span class="px-2 py-1 text-xs rounded-md bg-blue-100 text-blue-800">
+                                <i class="fas fa-university"></i> {{ signal.exchange_name }}
+                            </span>
+                        {% else %}
+                            <span class="px-2 py-1 text-xs rounded-md bg-gray-100 text-gray-800">
+                                {{ signal.exchange_name|default('Unknown') }}
+                            </span>
+                        {% endif %}
+                    </td>
                     <td class="px-4 py-3 text-sm">
                             <span class="px-2 py-1 text-xs rounded-full
                                 {% if signal.signal_action in ['SELL', 'SHORT'] %}bg-red-100 text-red-800
@@ -645,6 +705,53 @@
             score_month: document.getElementById('scoreMonth').value
         });
         window.location.href = '/signal_performance?' + params.toString();
+    }
+
+    // Применение фильтра по биржам
+    function applyExchangeFilter() {
+        // Собираем выбранные биржи
+        const selectedExchanges = [];
+        document.querySelectorAll('.exchange-checkbox:checked').forEach(checkbox => {
+            selectedExchanges.push(parseInt(checkbox.value));
+        });
+
+        // Проверка: должна быть выбрана хотя бы одна биржа
+        if (selectedExchanges.length === 0) {
+            alert('Выберите хотя бы одну биржу!');
+            return;
+        }
+
+        // Сохраняем выбранные биржи в БД вместе с другими фильтрами
+        const data = {
+            selected_exchanges: selectedExchanges,
+            hide_younger_than_hours: parseInt(document.getElementById('hideYounger')?.value || 6),
+            hide_older_than_hours: parseInt(document.getElementById('hideOlder')?.value || 48),
+            leverage: parseInt(document.getElementById('leverage')?.value || 5),
+            position_size_usd: parseFloat(document.getElementById('positionSize')?.value || 100),
+            score_week_min: parseInt(document.getElementById('scoreWeek')?.value || 0),
+            score_month_min: parseInt(document.getElementById('scoreMonth')?.value || 0),
+            max_trades_per_15min: parseInt(document.getElementById('maxTradesPer15Min')?.value || 3),
+            allowed_hours: Array.from(document.querySelectorAll('.hour-filter:checked')).map(cb => parseInt(cb.value))
+        };
+
+        console.log('Saving exchange filter:', data);
+
+        // Сохраняем в БД
+        fetch('/api/save_filters', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(result => {
+            console.log('Exchange filter saved:', result);
+            // Перезагружаем страницу для применения фильтра
+            window.location.reload();
+        })
+        .catch(error => {
+            console.error('Ошибка сохранения фильтра по биржам:', error);
+            alert('Ошибка при сохранении фильтра. Попробуйте еще раз.');
+        });
     }
 
     // Показать предупреждение при изменении TP/SL
