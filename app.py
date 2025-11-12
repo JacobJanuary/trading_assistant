@@ -165,6 +165,33 @@ def check_user_approval():
         if not current_user.is_approved and not current_user.is_admin:
             return redirect(url_for('unauthorized'))
 
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def get_exchange_name(exchange_id):
+    """
+    Возвращает имя биржи по ID
+
+    Args:
+        exchange_id: int - ID биржи из public.exchanges
+
+    Returns:
+        str - название биржи или 'Unknown'
+    """
+    exchange_names = {
+        1: 'Binance',
+        2: 'Bybit',
+        3: 'Coinbase'
+    }
+    return exchange_names.get(exchange_id, 'Unknown')
+
+
+# =============================================================================
+# ROUTES
+# =============================================================================
+
 # Главная страница - редирект на дашборд
 @app.route('/')
 def index():
@@ -565,6 +592,11 @@ def signal_performance():
         display_leverage = filters['leverage']
         display_position_size = float(filters['position_size_usd'])
 
+        # Получаем selected_exchanges из фильтров (по умолчанию [1, 2] - Binance и Bybit)
+        selected_exchanges = filters.get('selected_exchanges', [1, 2])
+        if not isinstance(selected_exchanges, list):
+            selected_exchanges = [1, 2]
+
         # ========== ИСПОЛЬЗУЕМ АВТОМАТИЧЕСКИЙ ПОДБОР ОПТИМАЛЬНЫХ ПАРАМЕТРОВ ИЗ БЭКТЕСТОВ ==========
         from database import get_best_scoring_signals_with_backtest_params
         from datetime import datetime, date, timedelta
@@ -572,8 +604,9 @@ def signal_performance():
         print(f"[SIGNAL_PERFORMANCE] Получаем сигналы с оптимальными параметрами из бэктестов")
         print(f"[SIGNAL_PERFORMANCE] Период: последние 48 часов")
         print(f"[SIGNAL_PERFORMANCE] Все параметры (SL, TS, max_trades) берутся из оптимальных backtest для каждой биржи")
+        print(f"[SIGNAL_PERFORMANCE] Выбранные биржи: {selected_exchanges}")
 
-        raw_signals, params_by_exchange = get_best_scoring_signals_with_backtest_params(db)
+        raw_signals, params_by_exchange = get_best_scoring_signals_with_backtest_params(db, selected_exchanges=selected_exchanges)
 
         print(f"[SIGNAL_PERFORMANCE] Получено {len(raw_signals) if raw_signals else 0} сигналов с оптимальными параметрами")
         print(f"[SIGNAL_PERFORMANCE] Оптимальные параметры для каждой биржи:")
@@ -627,11 +660,11 @@ def signal_performance():
                 FROM public.trading_pairs tp
                 JOIN public.market_data md ON md.trading_pair_id = tp.id
                 WHERE tp.contract_type_id = 1
-                    AND tp.exchange_id IN (1, 2)
+                    AND tp.exchange_id = ANY(%s)
                     AND md.capture_time >= NOW() - INTERVAL '5 minutes'
                 ORDER BY tp.pair_symbol, md.capture_time DESC
             """
-            price_data = db.execute_query(prices_query, fetch=True)
+            price_data = db.execute_query(prices_query, (selected_exchanges,), fetch=True)
             current_prices = {p['pair_symbol']: float(p['mark_price']) for p in price_data} if price_data else {}
 
             # Обрабатываем сигналы
@@ -686,7 +719,8 @@ def signal_performance():
                         leverage=display_leverage,
                         use_trailing_stop=True,  # Всегда используем TS (параметры из backtest)
                         trailing_distance_pct=exchange_params.get('trailing_distance_filter', 2.0),
-                        trailing_activation_pct=exchange_params.get('trailing_activation_filter', 1.0)
+                        trailing_activation_pct=exchange_params.get('trailing_activation_filter', 1.0),
+                        exchange_id=exchange_id
                     )
 
                     if result['success']:
@@ -722,16 +756,17 @@ def signal_performance():
             print(f"[SIGNAL_PERFORMANCE] Обработано: {processed_count}, Пропущено: {skip_count}, Ошибок: {error_count}")
 
             # Теперь получаем обработанные сигналы из web_signals для отображения
-            # с фильтрацией по возрасту
+            # с фильтрацией по возрасту и биржам
             display_signals_query = """
                 SELECT *
                 FROM web.web_signals
                 WHERE signal_timestamp >= NOW() - (INTERVAL '1 hour' * %s)
                     AND signal_timestamp <= NOW() - (INTERVAL '1 hour' * %s)
+                    AND exchange_id = ANY(%s)
                 ORDER BY signal_timestamp DESC
             """
 
-            display_signals = db.execute_query(display_signals_query, (hide_older, hide_younger), fetch=True)
+            display_signals = db.execute_query(display_signals_query, (hide_older, hide_younger, selected_exchanges), fetch=True)
 
             # Обрабатываем сигналы для отображения
             if display_signals:
@@ -767,7 +802,7 @@ def signal_performance():
                     signal_data = {
                         'pair_symbol': signal['pair_symbol'],
                         'signal_action': signal['signal_action'],
-                        'timestamp': signal['signal_timestamp'],  
+                        'timestamp': signal['signal_timestamp'],
                         'age_hours': round(age_hours, 1),
                         'entry_price': entry_price,
                         'current_price': current_price,
@@ -778,9 +813,10 @@ def signal_performance():
                         'max_potential_profit_usd': max_profit,
                         'score_week': float(signal.get('score_week', 0)),
                         'score_month': float(signal.get('score_month', 0)),
-                        'status': 'open' if not signal['is_closed'] else 
-                                 ('tp' if signal['close_reason'] == 'take_profit' else 
-                                  ('sl' if signal['close_reason'] == 'stop_loss' else 
+                        'exchange_name': get_exchange_name(signal.get('exchange_id')),
+                        'status': 'open' if not signal['is_closed'] else
+                                 ('tp' if signal['close_reason'] == 'take_profit' else
+                                  ('sl' if signal['close_reason'] == 'stop_loss' else
                                    ('trailing' if signal['close_reason'] == 'trailing_stop' else 'closed')))
                     }
 
@@ -789,25 +825,25 @@ def signal_performance():
             # Рассчитываем статистику эффективности
             efficiency_query = """
                 WITH signal_stats AS (
-                    SELECT 
+                    SELECT
                         COUNT(*) as total_signals,
                         COUNT(CASE WHEN is_closed = FALSE THEN 1 END) as open_positions,
                         COUNT(CASE WHEN close_reason = 'take_profit' THEN 1 END) as closed_tp,
                         COUNT(CASE WHEN close_reason = 'stop_loss' THEN 1 END) as closed_sl,
                         COUNT(CASE WHEN close_reason = 'trailing_stop' THEN 1 END) as closed_trailing,
                         COUNT(CASE WHEN close_reason = 'timeout' THEN 1 END) as closed_timeout,
-                        COUNT(CASE 
-                            WHEN close_reason = 'trailing_stop' AND realized_pnl_usd > 0 
-                            THEN 1 
+                        COUNT(CASE
+                            WHEN close_reason = 'trailing_stop' AND realized_pnl_usd > 0
+                            THEN 1
                         END) as trailing_wins,
-                        COUNT(CASE 
-                            WHEN close_reason = 'trailing_stop' AND realized_pnl_usd <= 0 
-                            THEN 1 
+                        COUNT(CASE
+                            WHEN close_reason = 'trailing_stop' AND realized_pnl_usd <= 0
+                            THEN 1
                         END) as trailing_losses,
                         -- Средние проценты P&L по типам выхода
-                        AVG(CASE WHEN close_reason = 'take_profit' 
+                        AVG(CASE WHEN close_reason = 'take_profit'
                             THEN take_profit_percent END) as avg_tp_percent,
-                        COALESCE(AVG(CASE WHEN close_reason = 'stop_loss' 
+                        COALESCE(AVG(CASE WHEN close_reason = 'stop_loss'
                             THEN ABS(realized_pnl_usd / NULLIF(position_size_usd, 0) * 100.0 / NULLIF(leverage, 1)) END), 0) as avg_sl_percent,
                         AVG(CASE WHEN close_reason = 'trailing_stop' AND realized_pnl_usd > 0
                             THEN trailing_stop_percent END) as avg_trailing_percent,
@@ -821,11 +857,12 @@ def signal_performance():
                     FROM web.web_signals
                     WHERE signal_timestamp >= NOW() - (INTERVAL '1 hour' * %s)
                         AND signal_timestamp <= NOW() - (INTERVAL '1 hour' * %s)
+                        AND exchange_id = ANY(%s)
                 )
                 SELECT * FROM signal_stats
             """
 
-            eff_stats = db.execute_query(efficiency_query, (hide_older, hide_younger), fetch=True)
+            eff_stats = db.execute_query(efficiency_query, (hide_older, hide_younger, selected_exchanges), fetch=True)
 
             if eff_stats:
                 raw_stats = eff_stats[0]
@@ -902,41 +939,42 @@ def signal_performance():
                 
                 # Дополнительные запросы для расчета метрик trailing stop
                 trailing_query = """
-                    SELECT 
+                    SELECT
                         -- Средний профит для trailing stop vs TP
-                        AVG(CASE WHEN close_reason = 'trailing_stop' AND realized_pnl_usd > 0 
+                        AVG(CASE WHEN close_reason = 'trailing_stop' AND realized_pnl_usd > 0
                             THEN realized_pnl_usd END) as trailing_avg_profit,
-                        AVG(CASE WHEN close_reason = 'take_profit' 
+                        AVG(CASE WHEN close_reason = 'take_profit'
                             THEN realized_pnl_usd END) as tp_avg_profit,
-                        
+
                         -- Максимальное движение и захват для trailing
-                        AVG(CASE WHEN close_reason = 'trailing_stop' 
+                        AVG(CASE WHEN close_reason = 'trailing_stop'
                             THEN max_potential_profit_usd END) as trailing_max_movement,
-                        SUM(CASE WHEN close_reason = 'trailing_stop' 
+                        SUM(CASE WHEN close_reason = 'trailing_stop'
                             THEN realized_pnl_usd END) as trailing_captured,
-                        SUM(CASE WHEN close_reason = 'trailing_stop' 
+                        SUM(CASE WHEN close_reason = 'trailing_stop'
                             THEN max_potential_profit_usd - realized_pnl_usd END) as trailing_missed,
-                            
+
                         -- Распределение точек выхода
-                        COUNT(CASE WHEN close_reason = 'trailing_stop' AND 
+                        COUNT(CASE WHEN close_reason = 'trailing_stop' AND
                             realized_pnl_usd > max_potential_profit_usd * 0.8 THEN 1 END) as exit_80_100,
-                        COUNT(CASE WHEN close_reason = 'trailing_stop' AND 
-                            realized_pnl_usd > max_potential_profit_usd * 0.6 AND 
+                        COUNT(CASE WHEN close_reason = 'trailing_stop' AND
+                            realized_pnl_usd > max_potential_profit_usd * 0.6 AND
                             realized_pnl_usd <= max_potential_profit_usd * 0.8 THEN 1 END) as exit_60_80,
-                        COUNT(CASE WHEN close_reason = 'trailing_stop' AND 
-                            realized_pnl_usd > max_potential_profit_usd * 0.4 AND 
+                        COUNT(CASE WHEN close_reason = 'trailing_stop' AND
+                            realized_pnl_usd > max_potential_profit_usd * 0.4 AND
                             realized_pnl_usd <= max_potential_profit_usd * 0.6 THEN 1 END) as exit_40_60,
-                        COUNT(CASE WHEN close_reason = 'trailing_stop' AND 
-                            realized_pnl_usd > max_potential_profit_usd * 0.2 AND 
+                        COUNT(CASE WHEN close_reason = 'trailing_stop' AND
+                            realized_pnl_usd > max_potential_profit_usd * 0.2 AND
                             realized_pnl_usd <= max_potential_profit_usd * 0.4 THEN 1 END) as exit_20_40,
-                        COUNT(CASE WHEN close_reason = 'trailing_stop' AND 
+                        COUNT(CASE WHEN close_reason = 'trailing_stop' AND
                             realized_pnl_usd <= max_potential_profit_usd * 0.2 THEN 1 END) as exit_0_20
                     FROM web.web_signals
                     WHERE signal_timestamp >= NOW() - (INTERVAL '1 hour' * %s)
                         AND signal_timestamp <= NOW() - (INTERVAL '1 hour' * %s)
+                        AND exchange_id = ANY(%s)
                 """
-                
-                trailing_stats = db.execute_query(trailing_query, (hide_older, hide_younger), fetch=True)
+
+                trailing_stats = db.execute_query(trailing_query, (hide_older, hide_younger, selected_exchanges), fetch=True)
                 
                 if trailing_stats and trailing_stats[0]:
                     t_stats = trailing_stats[0]
@@ -1025,7 +1063,8 @@ def signal_performance():
                 'score_week_min': 0,  # Фильтруется автоматически в SQL запросе
                 'score_month_min': 0,  # Фильтруется автоматически в SQL запросе
                 'allowed_hours': list(range(24)),  # Все часы разрешены (без фильтрации)
-                'max_trades_per_15min': 0  # Устанавливается автоматически для каждой биржи
+                'max_trades_per_15min': 0,  # Устанавливается автоматически для каждой биржи
+                'selected_exchanges': selected_exchanges  # Выбранные биржи
             },
             last_update=datetime.now()
         )
@@ -1828,13 +1867,31 @@ def api_save_filters():
         # Фильтруем только валидные часы (0-23)
         allowed_hours = [h for h in allowed_hours if 0 <= h <= 23]
 
+        # Валидация выбранных бирж
+        selected_exchanges = data.get('selected_exchanges', [1, 2])
+        if not isinstance(selected_exchanges, list) or not selected_exchanges:
+            selected_exchanges = [1, 2]  # По умолчанию Binance и Bybit
+
+        # Валидация exchange_ids через database.py
+        from database import validate_exchange_ids
+        is_valid, valid_ids, invalid_ids = validate_exchange_ids(db, selected_exchanges)
+
+        if not is_valid:
+            return jsonify({
+                'status': 'error',
+                'message': f'Недопустимые ID бирж: {invalid_ids}'
+            }), 400
+
+        # Используем только валидные ID
+        selected_exchanges = valid_ids
+
         # НЕ сохраняем TP/SL здесь - они меняются только через инициализацию
         upsert_query = """
             INSERT INTO web.user_signal_filters (
                 user_id, hide_younger_than_hours, hide_older_than_hours,
                 position_size_usd, leverage, score_week_min, score_month_min,
-                allowed_hours, max_trades_per_15min
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                allowed_hours, max_trades_per_15min, selected_exchanges
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id) DO UPDATE SET
                 hide_younger_than_hours = EXCLUDED.hide_younger_than_hours,
                 hide_older_than_hours = EXCLUDED.hide_older_than_hours,
@@ -1844,12 +1901,14 @@ def api_save_filters():
                 score_month_min = EXCLUDED.score_month_min,
                 allowed_hours = EXCLUDED.allowed_hours,
                 max_trades_per_15min = EXCLUDED.max_trades_per_15min,
+                selected_exchanges = EXCLUDED.selected_exchanges,
                 updated_at = NOW()
         """
 
         db.execute_query(upsert_query, (
             current_user.id, hide_younger, hide_older, position_size, leverage,
-            score_week_min, score_month_min, allowed_hours, max_trades_per_15min
+            score_week_min, score_month_min, allowed_hours, max_trades_per_15min,
+            selected_exchanges
         ))
 
         return jsonify({
