@@ -70,6 +70,48 @@
         </div>
     </div>
 
+    <!-- OI/Volume Filter -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h2 class="text-xl font-bold text-gray-800 mb-4">
+            <i class="fas fa-filter mr-2 text-blue-600"></i>
+            Фильтр по OI/Volume
+        </h2>
+        <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-4">
+                <label class="flex items-center space-x-2 cursor-pointer">
+                    <input type="checkbox" id="enableOiVolumeFilter" class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                           {% if filters.enable_oi_volume_filter %}checked{% endif %}
+                           onchange="onOiVolumeFilterChange()">
+                    <span class="text-sm font-medium text-gray-700">
+                        Включить фильтры OI/Volume
+                    </span>
+                </label>
+                <span id="oiVolumeFilterStatus" class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium
+                    {% if filters.enable_oi_volume_filter %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-600{% endif %}">
+                    {% if filters.enable_oi_volume_filter %}
+                        <i class="fas fa-check-circle mr-1"></i> АКТИВЕН
+                    {% else %}
+                        <i class="fas fa-times-circle mr-1"></i> ВЫКЛЮЧЕН
+                    {% endif %}
+                </span>
+            </div>
+        </div>
+        <div class="mt-4 bg-blue-50 p-4 rounded-lg border border-blue-200">
+            <p class="text-sm text-gray-700">
+                <i class="fas fa-info-circle mr-1 text-blue-600"></i>
+                <strong>Критерии фильтрации:</strong>
+            </p>
+            <ul class="mt-2 text-sm text-gray-700 space-y-1 ml-5">
+                <li>• <strong>Open Interest:</strong> >= 500,000</li>
+                <li>• <strong>Volume USD:</strong> >= 10,000 (mark_price × volume)</li>
+            </ul>
+            <p class="mt-3 text-xs text-gray-600">
+                Сигналы, не соответствующие этим критериям, будут исключены из отображения.
+                Данные берутся из свечей 15m на момент возникновения сигнала.
+            </p>
+        </div>
+    </div>
+
     <!-- Статистика -->
     <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
         <h2 class="text-xl font-bold text-gray-800 mb-4">
@@ -750,6 +792,66 @@
         })
         .catch(error => {
             console.error('Ошибка сохранения фильтра по биржам:', error);
+            alert('Ошибка при сохранении фильтра. Попробуйте еще раз.');
+        });
+    }
+
+    // OI/Volume Filter Functions
+    let oiVolumeFilterDebounce = null;
+
+    function onOiVolumeFilterChange() {
+        const checkbox = document.getElementById('enableOiVolumeFilter');
+        const statusBadge = document.getElementById('oiVolumeFilterStatus');
+
+        // Обновляем визуальный статус
+        if (checkbox.checked) {
+            statusBadge.className = 'inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800';
+            statusBadge.innerHTML = '<i class="fas fa-check-circle mr-1"></i> АКТИВЕН';
+        } else {
+            statusBadge.className = 'inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600';
+            statusBadge.innerHTML = '<i class="fas fa-times-circle mr-1"></i> ВЫКЛЮЧЕН';
+        }
+
+        // Применяем фильтр с debounce (500ms)
+        clearTimeout(oiVolumeFilterDebounce);
+        oiVolumeFilterDebounce = setTimeout(() => {
+            applyOiVolumeFilter();
+        }, 500);
+    }
+
+    function applyOiVolumeFilter() {
+        const enableOiVolumeFilter = document.getElementById('enableOiVolumeFilter').checked;
+
+        // Сохраняем в БД вместе с другими фильтрами
+        const data = {
+            enable_oi_volume_filter: enableOiVolumeFilter,
+            selected_exchanges: Array.from(document.querySelectorAll('.exchange-checkbox:checked')).map(cb => parseInt(cb.value)),
+            hide_younger_than_hours: parseInt(document.getElementById('hideYounger')?.value || 6),
+            hide_older_than_hours: parseInt(document.getElementById('hideOlder')?.value || 48),
+            leverage: parseInt(document.getElementById('leverage')?.value || 5),
+            position_size_usd: parseFloat(document.getElementById('positionSize')?.value || 100),
+            score_week_min: parseInt(document.getElementById('scoreWeek')?.value || 0),
+            score_month_min: parseInt(document.getElementById('scoreMonth')?.value || 0),
+            max_trades_per_15min: parseInt(document.getElementById('maxTradesPer15Min')?.value || 3),
+            allowed_hours: Array.from(document.querySelectorAll('.hour-filter:checked')).map(cb => parseInt(cb.value))
+        };
+
+        console.log('Saving OI/Volume filter:', data);
+
+        // Сохраняем в БД
+        fetch('/api/save_filters', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(result => {
+            console.log('OI/Volume filter saved:', result);
+            // Перезагружаем страницу для применения фильтра
+            window.location.reload();
+        })
+        .catch(error => {
+            console.error('Ошибка сохранения OI/Volume фильтра:', error);
             alert('Ошибка при сохранении фильтра. Попробуйте еще раз.');
         });
     }
