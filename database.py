@@ -35,6 +35,33 @@ def make_aware(dt):
 # Используют Config.USE_PUBLIC_CANDLES для выбора источника данных
 
 
+def convert_timestamp_param(ts):
+    """
+    Конвертирует timestamp параметр в нужный формат для текущей таблицы свечей
+
+    Args:
+        ts: datetime object или timestamp with timezone
+
+    Returns:
+        int: миллисекунды (для public.candles) или datetime (для legacy)
+    """
+    from datetime import datetime
+
+    _, cols = get_candle_table_info()
+
+    if cols.get('use_unix_ms'):
+        # public.candles: конвертируем в миллисекунды
+        if isinstance(ts, datetime):
+            return int(ts.timestamp() * 1000)
+        elif isinstance(ts, (int, float)):
+            return int(ts * 1000) if ts < 10000000000 else int(ts)  # Если уже в ms
+        else:
+            raise ValueError(f"Unsupported timestamp type: {type(ts)}")
+    else:
+        # fas_v2.market_data_aggregated: возвращаем как есть
+        return ts
+
+
 def get_candle_table_info():
     """
     Возвращает информацию о таблице свечей и маппинг колонок
@@ -56,26 +83,35 @@ def get_candle_table_info():
         SELECT open AS open_price FROM public.candles
     """
     if Config.USE_PUBLIC_CANDLES:
-        # public.candles: колонки названы без суффикса _price
+        # public.candles: РЕАЛЬНАЯ структура (проверено 2025-11-06 23:50)
+        # - Колонки УЖЕ имеют суффикс _price (как в fas_v2!)
+        # - open_time вместо timestamp (BIGINT Unix ms) - сравниваем НАПРЯМУЮ!
+        # - interval_id вместо timeframe (1=5m, 2=15m, 3=1h, 4=4h, 5=24h)
         return "public.candles", {
-            'open': 'open AS open_price',
-            'high': 'high AS high_price',
-            'low': 'low AS low_price',
-            'close': 'close AS close_price',
-            'timestamp': 'timestamp',
+            'open': 'open_price',
+            'high': 'high_price',
+            'low': 'low_price',
+            'close': 'close_price',
+            'timestamp': 'open_time',  # BIGINT миллисекунды (для WHERE прямое сравнение)
+            'timestamp_display': 'to_timestamp(open_time / 1000)',  # Для SELECT (отображение)
             'trading_pair_id': 'trading_pair_id',
-            'timeframe': 'timeframe'
+            'timeframe': 'interval_id',  # Используем напрямую (1 = '5m')
+            'timeframe_value': '1',  # Значение для WHERE (interval_id = 1 для 5m)
+            'use_unix_ms': True  # Флаг что используем Unix миллисекунды
         }
     else:
-        # fas_v2.market_data_aggregated: legacy таблица с суффиксами _price
+        # fas_v2.market_data_aggregated: legacy таблица
         return "fas_v2.market_data_aggregated", {
             'open': 'open_price',
             'high': 'high_price',
             'low': 'low_price',
             'close': 'close_price',
             'timestamp': 'timestamp',
+            'timestamp_display': 'timestamp',
             'trading_pair_id': 'trading_pair_id',
-            'timeframe': 'timeframe'
+            'timeframe': 'timeframe',
+            'timeframe_value': "'5m'",  # Значение для WHERE (timeframe = '5m')
+            'use_unix_ms': False  # Флаг что используем TIMESTAMP
         }
 
 
@@ -91,21 +127,37 @@ def build_entry_price_query(window_minutes=5):
 
     Example:
         >>> query = build_entry_price_query(5)
-        >>> result = db.execute_query(query, (pair_id, ts, ts, ts))
+        >>> result = db.execute_query(query, (pair_id, ts_ms, ts_ms, ts_ms))  # ts_ms = timestamp * 1000
         >>> entry_price = result[0]['entry_price']
     """
     table, cols = get_candle_table_info()
 
-    return f"""
-        SELECT {cols['open']} as entry_price
-        FROM {table}
-        WHERE {cols['trading_pair_id']} = %s
-            AND {cols['timeframe']} = '5m'
-            AND {cols['timestamp']} >= %s - INTERVAL '{window_minutes} minutes'
-            AND {cols['timestamp']} <= %s + INTERVAL '{window_minutes} minutes'
-        ORDER BY ABS(EXTRACT(EPOCH FROM ({cols['timestamp']} - %s))) ASC
-        LIMIT 1
-    """
+    if cols.get('use_unix_ms'):
+        # public.candles: сравниваем open_time (BIGINT ms) напрямую
+        # Параметры должны быть в миллисекундах: EXTRACT(EPOCH FROM timestamp) * 1000
+        window_ms = window_minutes * 60 * 1000
+        return f"""
+            SELECT {cols['open']} as entry_price
+            FROM {table}
+            WHERE {cols['trading_pair_id']} = %s
+                AND {cols['timeframe']} = {cols['timeframe_value']}
+                AND {cols['timestamp']} >= %s - {window_ms}
+                AND {cols['timestamp']} <= %s + {window_ms}
+            ORDER BY ABS({cols['timestamp']} - %s) ASC
+            LIMIT 1
+        """
+    else:
+        # fas_v2.market_data_aggregated: используем INTERVAL с timestamp
+        return f"""
+            SELECT {cols['open']} as entry_price
+            FROM {table}
+            WHERE {cols['trading_pair_id']} = %s
+                AND {cols['timeframe']} = {cols['timeframe_value']}
+                AND {cols['timestamp']} >= %s - INTERVAL '{window_minutes} minutes'
+                AND {cols['timestamp']} <= %s + INTERVAL '{window_minutes} minutes'
+            ORDER BY ABS(EXTRACT(EPOCH FROM ({cols['timestamp']} - %s))) ASC
+            LIMIT 1
+        """
 
 
 def build_entry_price_fallback_query(window_hours=1):
@@ -120,20 +172,35 @@ def build_entry_price_fallback_query(window_hours=1):
 
     Example:
         >>> query = build_entry_price_fallback_query(1)
-        >>> result = db.execute_query(query, (pair_id, ts, ts, ts))
+        >>> result = db.execute_query(query, (pair_id, ts_ms, ts_ms, ts_ms))
     """
     table, cols = get_candle_table_info()
 
-    return f"""
-        SELECT {cols['open']} as entry_price
-        FROM {table}
-        WHERE {cols['trading_pair_id']} = %s
-            AND {cols['timeframe']} = '5m'
-            AND {cols['timestamp']} >= %s - INTERVAL '{window_hours} hour'
-            AND {cols['timestamp']} <= %s + INTERVAL '{window_hours} hour'
-        ORDER BY ABS(EXTRACT(EPOCH FROM ({cols['timestamp']} - %s))) ASC
-        LIMIT 1
-    """
+    if cols.get('use_unix_ms'):
+        # public.candles: сравниваем open_time (BIGINT ms) напрямую
+        window_ms = window_hours * 60 * 60 * 1000
+        return f"""
+            SELECT {cols['open']} as entry_price
+            FROM {table}
+            WHERE {cols['trading_pair_id']} = %s
+                AND {cols['timeframe']} = {cols['timeframe_value']}
+                AND {cols['timestamp']} >= %s - {window_ms}
+                AND {cols['timestamp']} <= %s + {window_ms}
+            ORDER BY ABS({cols['timestamp']} - %s) ASC
+            LIMIT 1
+        """
+    else:
+        # fas_v2.market_data_aggregated: используем INTERVAL с timestamp
+        return f"""
+            SELECT {cols['open']} as entry_price
+            FROM {table}
+            WHERE {cols['trading_pair_id']} = %s
+                AND {cols['timeframe']} = {cols['timeframe_value']}
+                AND {cols['timestamp']} >= %s - INTERVAL '{window_hours} hour'
+                AND {cols['timestamp']} <= %s + INTERVAL '{window_hours} hour'
+            ORDER BY ABS(EXTRACT(EPOCH FROM ({cols['timestamp']} - %s))) ASC
+            LIMIT 1
+        """
 
 
 def build_candle_history_query(duration_hours=24):
@@ -148,26 +215,45 @@ def build_candle_history_query(duration_hours=24):
 
     Example:
         >>> query = build_candle_history_query(24)
-        >>> history = db.execute_query(query, (pair_id, start_ts, start_ts))
+        >>> history = db.execute_query(query, (pair_id, start_ts_ms, end_ts_ms))
         >>> for candle in history:
         >>>     print(candle['open_price'], candle['high_price'])
     """
     table, cols = get_candle_table_info()
 
-    return f"""
-        SELECT
-            {cols['timestamp']},
-            {cols['open']},
-            {cols['high']},
-            {cols['low']},
-            {cols['close']}
-        FROM {table}
-        WHERE {cols['trading_pair_id']} = %s
-            AND {cols['timeframe']} = '5m'
-            AND {cols['timestamp']} >= %s
-            AND {cols['timestamp']} <= %s + INTERVAL '{duration_hours} hours'
-        ORDER BY {cols['timestamp']} ASC
-    """
+    if cols.get('use_unix_ms'):
+        # public.candles: сравниваем open_time (BIGINT ms) напрямую
+        # Для SELECT используем timestamp_display для отображения
+        return f"""
+            SELECT
+                {cols['timestamp_display']} as timestamp,
+                {cols['open']},
+                {cols['high']},
+                {cols['low']},
+                {cols['close']}
+            FROM {table}
+            WHERE {cols['trading_pair_id']} = %s
+                AND {cols['timeframe']} = {cols['timeframe_value']}
+                AND {cols['timestamp']} >= %s
+                AND {cols['timestamp']} <= %s
+            ORDER BY {cols['timestamp']} ASC
+        """
+    else:
+        # fas_v2.market_data_aggregated: используем INTERVAL с timestamp
+        return f"""
+            SELECT
+                {cols['timestamp']},
+                {cols['open']},
+                {cols['high']},
+                {cols['low']},
+                {cols['close']}
+            FROM {table}
+            WHERE {cols['trading_pair_id']} = %s
+                AND {cols['timeframe']} = {cols['timeframe_value']}
+                AND {cols['timestamp']} >= %s
+                AND {cols['timestamp']} <= %s + INTERVAL '{duration_hours} hours'
+            ORDER BY {cols['timestamp']} ASC
+        """
 
 
 # Настройка логирования
@@ -1231,10 +1317,11 @@ def process_signal_complete(db, signal,
 
         # Получаем цену входа (используем helper function для миграции на public.candles)
         entry_price_query = build_entry_price_query(window_minutes=5)
+        ts_param = convert_timestamp_param(signal_timestamp)
 
         price_result = db.execute_query(
             entry_price_query,
-            (trading_pair_id, signal_timestamp, signal_timestamp, signal_timestamp),
+            (trading_pair_id, ts_param, ts_param, ts_param),
             fetch=True
         )
 
@@ -1243,7 +1330,7 @@ def process_signal_complete(db, signal,
             fallback_query = build_entry_price_fallback_query(window_hours=1)
             price_result = db.execute_query(
                 fallback_query,
-                (trading_pair_id, signal_timestamp, signal_timestamp, signal_timestamp),
+                (trading_pair_id, ts_param, ts_param, ts_param),
                 fetch=True
             )
 
@@ -1259,8 +1346,16 @@ def process_signal_complete(db, signal,
         # Получаем историю (24 часа от signal_timestamp для полной симуляции)
         # Используем helper function для миграции на public.candles
         history_query = build_candle_history_query(duration_hours=24)
+        start_ts = convert_timestamp_param(signal_timestamp)
 
-        history = db.execute_query(history_query, (trading_pair_id, signal_timestamp, signal_timestamp), fetch=True)
+        # Для public.candles: end_ts = start_ts + 24h в миллисекундах
+        from datetime import timedelta
+        if Config.USE_PUBLIC_CANDLES:
+            end_ts = start_ts + (24 * 60 * 60 * 1000)  # +24 часа в миллисекундах
+        else:
+            end_ts = signal_timestamp
+
+        history = db.execute_query(history_query, (trading_pair_id, start_ts, end_ts), fetch=True)
 
         if not history:
             # Сохраняем с начальными данными (с обработкой дубликатов)
@@ -1962,10 +2057,11 @@ def process_signal_with_trailing(db, signal, user_settings):
 
         # Получаем цену входа (используем helper function для миграции на public.candles)
         entry_price_query = build_entry_price_query(window_minutes=5)
+        ts_param = convert_timestamp_param(signal_timestamp)
 
         price_result = db.execute_query(
             entry_price_query,
-            (trading_pair_id, signal_timestamp, signal_timestamp, signal_timestamp),
+            (trading_pair_id, ts_param, ts_param, ts_param),
             fetch=True
         )
 
@@ -1974,7 +2070,7 @@ def process_signal_with_trailing(db, signal, user_settings):
             fallback_query = build_entry_price_fallback_query(window_hours=1)
             price_result = db.execute_query(
                 fallback_query,
-                (trading_pair_id, signal_timestamp, signal_timestamp, signal_timestamp),
+                (trading_pair_id, ts_param, ts_param, ts_param),
                 fetch=True
             )
 
@@ -1986,8 +2082,16 @@ def process_signal_with_trailing(db, signal, user_settings):
         # Получаем историю (24 часа от signal_timestamp для полной симуляции)
         # Используем helper function для миграции на public.candles
         history_query = build_candle_history_query(duration_hours=24)
+        start_ts = convert_timestamp_param(signal_timestamp)
 
-        history = db.execute_query(history_query, (trading_pair_id, signal_timestamp, signal_timestamp), fetch=True)
+        # Для public.candles: end_ts = start_ts + 24h в миллисекундах
+        from datetime import timedelta
+        if Config.USE_PUBLIC_CANDLES:
+            end_ts = start_ts + (24 * 60 * 60 * 1000)  # +24 часа в миллисекундах
+        else:
+            end_ts = signal_timestamp
+
+        history = db.execute_query(history_query, (trading_pair_id, start_ts, end_ts), fetch=True)
 
         if not history:
             return {'success': False, 'error': 'No history data'}
@@ -2669,11 +2773,11 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
 
             # Получаем цену входа (используем helper function, 15-min window для scoring)
             entry_price_query = build_entry_price_query(window_minutes=15)
+            ts_param = convert_timestamp_param(signal['timestamp'])
 
             price_result = db.execute_query(
                 entry_price_query,
-                (signal['trading_pair_id'], signal['timestamp'],
-                 signal['timestamp'], signal['timestamp']),
+                (signal['trading_pair_id'], ts_param, ts_param, ts_param),
                 fetch=True
             )
 
@@ -2682,8 +2786,7 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
                 extended_query = build_entry_price_fallback_query(window_hours=1)
                 price_result = db.execute_query(
                     extended_query,
-                    (signal['trading_pair_id'], signal['timestamp'],
-                     signal['timestamp'], signal['timestamp']),
+                    (signal['trading_pair_id'], ts_param, ts_param, ts_param),
                     fetch=True
                 )
 
@@ -2695,10 +2798,17 @@ def process_scoring_signals_batch(db, signals, session_id, user_id,
 
             # Получаем историю (используем helper function)
             history_query = build_candle_history_query(duration_hours=24)
+            start_ts = convert_timestamp_param(signal['timestamp'])
+
+            # Для public.candles: end_ts = start_ts + 24h в миллисекундах
+            if Config.USE_PUBLIC_CANDLES:
+                end_ts = start_ts + (24 * 60 * 60 * 1000)  # +24 часа в миллисекундах
+            else:
+                end_ts = signal['timestamp']
 
             history = db.execute_query(
                 history_query,
-                (signal['trading_pair_id'], signal['timestamp'], signal['timestamp']),
+                (signal['trading_pair_id'], start_ts, end_ts),
                 fetch=True
             )
 
@@ -3141,9 +3251,17 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
 
         # Используем helper function для миграции на public.candles
         history_query = build_candle_history_query(duration_hours=24)
+        start_ts = convert_timestamp_param(signal_timestamp)
+
+        # Для public.candles: end_ts = start_ts + 24h в миллисекундах
+        if Config.USE_PUBLIC_CANDLES:
+            end_ts = start_ts + (24 * 60 * 60 * 1000)  # +24 часа в миллисекундах
+        else:
+            end_ts = signal_timestamp
+
         history = db.execute_query(
             history_query,
-            (trading_pair_id, signal_timestamp, signal_timestamp),
+            (trading_pair_id, start_ts, end_ts),
             fetch=True
         )
         market_data_cache[cache_key] = history
@@ -3213,9 +3331,11 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
 
             # Получаем entry_price (используем helper function, 15-min window)
             entry_price_query = build_entry_price_query(window_minutes=15)
+            ts_param = convert_timestamp_param(signal_timestamp)
+
             price_result = db.execute_query(
                 entry_price_query,
-                (trading_pair_id, signal_timestamp, signal_timestamp, signal_timestamp),
+                (trading_pair_id, ts_param, ts_param, ts_param),
                 fetch=True
             )
 
