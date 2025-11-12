@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+
+{% block title %}Backtest Strategy Analysis{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <h1 class="text-3xl font-bold text-gray-900 mb-6">
+        <i class="fas fa-chart-line mr-3 text-blue-600"></i>
+        Backtest Strategy Analysis
+    </h1>
+
+    <!-- Session Info -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h2 class="text-xl font-semibold text-gray-800 mb-4">
+            <i class="fas fa-info-circle mr-2 text-blue-600"></i>
+            Session Information
+        </h2>
+        <div id="sessionInfo" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="bg-gray-50 p-3 rounded">
+                <div class="text-sm text-gray-600">Start Time</div>
+                <div id="sessionStart" class="text-lg font-semibold text-gray-900">Loading...</div>
+            </div>
+            <div class="bg-gray-50 p-3 rounded">
+                <div class="text-sm text-gray-600">End Time</div>
+                <div id="sessionEnd" class="text-lg font-semibold text-gray-900">Loading...</div>
+            </div>
+            <div class="bg-gray-50 p-3 rounded">
+                <div class="text-sm text-gray-600">Status</div>
+                <div id="sessionStatus" class="text-lg font-semibold text-gray-900">Loading...</div>
+            </div>
+            <div class="bg-gray-50 p-3 rounded">
+                <div class="text-sm text-gray-600">Period</div>
+                <div id="sessionPeriod" class="text-lg font-semibold text-gray-900">30 days</div>
+            </div>
+        </div>
+        <div class="mt-4 text-sm text-gray-600" id="sessionDescription">
+            Loading description...
+        </div>
+    </div>
+
+    <!-- Sort Controls -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <div class="flex items-center justify-between">
+            <h2 class="text-xl font-semibold text-gray-800">
+                <i class="fas fa-sort mr-2 text-blue-600"></i>
+                Top 50 Combinations
+            </h2>
+            <div class="flex items-center space-x-4">
+                <label class="text-sm font-medium text-gray-700">Sort by:</label>
+                <select id="sortBy" onchange="loadData()"
+                        class="px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                    <option value="final_equity">Final Equity</option>
+                    <option value="win_rate">Win Rate</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Combinations Table -->
+    <div class="bg-white rounded-lg shadow-lg overflow-hidden mb-6">
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">#</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">SW</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">SM</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Trades/15m</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">SL%</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Act%</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Dist%</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Win Rate</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total PnL</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Final Equity</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Trades</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">W/L</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="combinationsTable" class="bg-white divide-y divide-gray-200">
+                    <!-- Filled by JavaScript -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Detailed View Modal -->
+    <div id="detailsModal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+        <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-6xl shadow-lg rounded-md bg-white">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-2xl font-bold text-gray-900">
+                    Combo Details: <span id="comboTitle"></span>
+                </h3>
+                <button onclick="closeDetails()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times text-2xl"></i>
+                </button>
+            </div>
+
+            <!-- Daily Stats Table -->
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Trades</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">SL (Count/Loss)</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">TS (Count/Profit)</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Timeout (Count/Loss)</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Day PnL</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Balance Start</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Balance End</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dailyStatsTable" class="bg-white divide-y divide-gray-200">
+                        <!-- Filled by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Equity Chart -->
+            <div class="mt-6">
+                <h4 class="text-lg font-semibold text-gray-800 mb-3">Equity Curve</h4>
+                <canvas id="equityChart" height="80"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let currentSession = null;
+let combinations = [];
+let equityChart = null;
+
+// Load data on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadData();
+});
+
+function loadData() {
+    const sortBy = document.getElementById('sortBy').value;
+
+    fetch(`/api/backtest/latest_session?sort_by=${sortBy}&limit=50`)
+        .then(response => response.json())
+        .then(result => {
+            if (result.status === 'success') {
+                currentSession = result.session;
+                combinations = result.combinations;
+
+                updateSessionInfo(result.session);
+                updateCombinationsTable(result.combinations);
+            } else {
+                alert('Error loading data: ' + result.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Network error loading data');
+        });
+}
+
+function updateSessionInfo(session) {
+    document.getElementById('sessionStart').textContent = new Date(session.start_time).toLocaleString('ru-RU');
+    document.getElementById('sessionEnd').textContent = new Date(session.end_time).toLocaleString('ru-RU');
+    document.getElementById('sessionStatus').textContent = session.status;
+    document.getElementById('sessionDescription').textContent = session.description || 'No description';
+}
+
+function updateCombinationsTable(combos) {
+    const tbody = document.getElementById('combinationsTable');
+
+    tbody.innerHTML = combos.map((combo, index) => {
+        const winRate = combo.win_rate.toFixed(2);
+        const totalPnl = combo.total_pnl.toFixed(2);
+        const finalEquity = combo.final_equity.toFixed(2);
+        const wlRatio = `${combo.win_count}/${combo.loss_count}`;
+
+        const pnlColor = combo.total_pnl >= 0 ? 'text-green-600' : 'text-red-600';
+        const equityColor = combo.final_equity >= 1000 ? 'text-green-600' : 'text-red-600';
+
+        return `
+            <tr class="hover:bg-gray-50 transition-colors">
+                <td class="px-4 py-3 text-sm text-gray-900">${index + 1}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${combo.score_week}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${combo.score_month}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${combo.max_trades}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${combo.stop_loss.toFixed(1)}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${combo.trailing_activation.toFixed(1)}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${combo.trailing_distance.toFixed(1)}</td>
+                <td class="px-4 py-3 text-sm font-semibold text-blue-600">${winRate}%</td>
+                <td class="px-4 py-3 text-sm font-semibold ${pnlColor}">$${totalPnl}</td>
+                <td class="px-4 py-3 text-sm font-semibold ${equityColor}">$${finalEquity}</td>
+                <td class="px-4 py-3 text-sm text-gray-900">${combo.total_trades}</td>
+                <td class="px-4 py-3 text-sm text-gray-600">${wlRatio}</td>
+                <td class="px-4 py-3 text-sm">
+                    <button onclick='showDetails(${JSON.stringify(combo)})'
+                            class="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">
+                        <i class="fas fa-eye mr-1"></i> View
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function showDetails(combo) {
+    document.getElementById('comboTitle').textContent =
+        `SW:${combo.score_week} SM:${combo.score_month} MT:${combo.max_trades} SL:${combo.stop_loss}%`;
+
+    // Fetch detailed data
+    fetch('/api/backtest/combo_details', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            session_id: currentSession.session_id,
+            score_week: combo.score_week,
+            score_month: combo.score_month,
+            max_trades: combo.max_trades,
+            stop_loss: combo.stop_loss,
+            trailing_activation: combo.trailing_activation,
+            trailing_distance: combo.trailing_distance
+        })
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.status === 'success') {
+            updateDailyStatsTable(result.daily_stats);
+            updateEquityChart(result.daily_stats);
+            document.getElementById('detailsModal').classList.remove('hidden');
+        } else {
+            alert('Error loading details: ' + result.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Network error loading details');
+    });
+}
+
+function updateDailyStatsTable(dailyStats) {
+    const tbody = document.getElementById('dailyStatsTable');
+
+    tbody.innerHTML = dailyStats.map(stat => {
+        const dayPnlColor = stat.day_pnl >= 0 ? 'text-green-600' : 'text-red-600';
+        const dayPnlSign = stat.day_pnl >= 0 ? '+' : '';
+
+        return `
+            <tr class="hover:bg-gray-50">
+                <td class="px-4 py-3 text-sm text-gray-900">${stat.day}</td>
+                <td class="px-4 py-3 text-sm text-right text-gray-900">${stat.total_trades}</td>
+                <td class="px-4 py-3 text-sm text-right text-red-600">${stat.sl_count} / $${stat.sl_loss}</td>
+                <td class="px-4 py-3 text-sm text-right text-green-600">${stat.ts_count} / $${stat.ts_profit}</td>
+                <td class="px-4 py-3 text-sm text-right text-orange-600">${stat.timeout_count} / $${stat.timeout_loss}</td>
+                <td class="px-4 py-3 text-sm text-right font-semibold ${dayPnlColor}">${dayPnlSign}$${stat.day_pnl}</td>
+                <td class="px-4 py-3 text-sm text-right text-gray-900">$${stat.balance_start}</td>
+                <td class="px-4 py-3 text-sm text-right font-semibold text-gray-900">$${stat.balance_end}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function updateEquityChart(dailyStats) {
+    const ctx = document.getElementById('equityChart').getContext('2d');
+
+    // Destroy previous chart if exists
+    if (equityChart) {
+        equityChart.destroy();
+    }
+
+    const labels = dailyStats.map(s => s.day);
+    const data = dailyStats.map(s => s.balance_end);
+
+    equityChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Equity',
+                data: data,
+                borderColor: 'rgb(59, 130, 246)',
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                tension: 0.1,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: false,
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + value.toFixed(0);
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function closeDetails() {
+    document.getElementById('detailsModal').classList.add('hidden');
+}
+</script>
+{% endblock %}

@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 
 # Загрузка переменных окружения из .env файла
-load_dotenv()
+load_dotenv(override=True)
 
 class Config:
     """Основной класс конфигурации"""
@@ -144,14 +144,41 @@ class Config:
     SCORING_ANALYSIS_DEFAULT_DAYS_BACK = int(os.getenv('SCORING_ANALYSIS_DEFAULT_DAYS_BACK', 30))
     SCORING_ANALYSIS_BATCH_SIZE = int(os.getenv('SCORING_ANALYSIS_BATCH_SIZE', 50))
 
-    # 3-фазная торговая система
-    PHASE1_DURATION_HOURS = int(os.getenv('PHASE1_DURATION_HOURS', 24))  # Фаза 1: Активная торговля
-    PHASE2_DURATION_HOURS = int(os.getenv('PHASE2_DURATION_HOURS', 8))   # Фаза 2: Breakeven Window
+    # 3-фазная торговая система с ранним переходом
+    # Фаза 1 (0-3ч): Активная торговля (TS + SL). Если TS не активирован через 3ч -> Фаза 2
+    # Фаза 2 (3-11ч): Breakeven Window (8 часов на выход в безубыток)
+    # Фаза 3 (11-23ч): Smart Loss ИЛИ SL (что раньше). Максимум 12 часов.
+    PHASE1_DURATION_HOURS = int(os.getenv('PHASE1_DURATION_HOURS', 3))  # Фаза 1: Активная торговля (0-3ч)
+    PHASE2_DURATION_HOURS = int(os.getenv('PHASE2_DURATION_HOURS', 8))   # Фаза 2: Breakeven Window (8ч)
+    PHASE3_MAX_DURATION_HOURS = int(os.getenv('PHASE3_MAX_DURATION_HOURS', 12))  # Фаза 3: Максимум 12 часов
     SMART_LOSS_RATE_PER_HOUR = float(os.getenv('SMART_LOSS_RATE_PER_HOUR', 0.5))  # Фаза 3: 0.5% в час
 
     # Ликвидация
     LIQUIDATION_THRESHOLD = float(os.getenv('LIQUIDATION_THRESHOLD', 0.9))  # Ликвидация при потере 90% маржи
-    
+
+    # ============================================
+    # WAVE-BASED SCORING (новая система)
+    # ============================================
+
+    # Feature flag для включения/выключения новой системы
+    USE_WAVE_BASED_SCORING = os.getenv('USE_WAVE_BASED_SCORING', 'True').lower() == 'true'
+
+    # Управление капиталом
+    INITIAL_CAPITAL = float(os.getenv('INITIAL_CAPITAL', 1000.0))  # Начальный капитал для симуляции
+
+    # Фильтрация по волнам
+    WAVE_INTERVAL_MINUTES = int(os.getenv('WAVE_INTERVAL_MINUTES', 15))  # Интервал волны (15 минут)
+
+    # ============================================
+    # CANDLE DATA SOURCE
+    # ============================================
+
+    # Feature flag для миграции с fas_v2.market_data_aggregated на public.candles
+    # public.candles содержит данные по ВСЕМ монетам (не только топ-100)
+    # При USE_PUBLIC_CANDLES=True система будет использовать public.candles
+    # При USE_PUBLIC_CANDLES=False система будет использовать fas_v2.market_data_aggregated (legacy)
+    USE_PUBLIC_CANDLES = os.getenv('USE_PUBLIC_CANDLES', 'False').lower() == 'true'
+
     # ============================================
     # МОНИТОРИНГ И ЛОГИРОВАНИЕ
     # ============================================

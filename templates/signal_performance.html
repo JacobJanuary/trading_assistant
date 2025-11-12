@@ -6,296 +6,67 @@
 {% block content %}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 
-    <!-- Панель фильтров -->
+    <!-- Информация о параметрах (без возможности изменения) -->
     <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
         <h2 class="text-xl font-bold text-gray-800 mb-4">
-            <i class="fas fa-filter mr-2 text-blue-600"></i>
-            Фильтры и настройки
+            <i class="fas fa-info-circle mr-2 text-blue-600"></i>
+            Параметры
         </h2>
-
-        <!-- Разделяем фильтры по типам - улучшенная компактная сетка -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-6">
-
-            <!-- 1. ФИЛЬТРЫ ОТОБРАЖЕНИЯ -->
-            <div class="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-lg border border-blue-200">
-                <div class="flex items-center mb-4">
-                    <div class="bg-blue-500 p-2 rounded-lg mr-3">
-                        <i class="fas fa-eye text-white text-sm"></i>
-                    </div>
-                    <h3 class="font-bold text-gray-800 text-sm">Фильтры отображения</h3>
+        <div class="bg-blue-50 p-4 rounded-lg border border-blue-200">
+            <p class="text-sm text-gray-700">
+                Используются оптимальные параметры из бэктестов для каждой биржи.
+                SL, TS и другие параметры подбираются автоматически на основе исторических данных.
+            </p>
+            <div class="mt-3 grid grid-cols-2 gap-4">
+                <div>
+                    <span class="text-xs text-gray-600">Leverage:</span>
+                    <span class="text-sm font-semibold text-gray-800">{{ filters.leverage }}x</span>
                 </div>
-
-                <div class="space-y-3">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">
-                            Младше (часов)
-                        </label>
-                        <input type="number" id="hideYounger"
-                               value="{{ filters.hide_younger_than_hours }}"
-                               min="0" max="48" step="1"
-                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">
-                            Старше (часов)
-                        </label>
-                        <input type="number" id="hideOlder"
-                               value="{{ filters.hide_older_than_hours }}"
-                               min="1" max="168" step="1"
-                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                    </div>
-
-                    <button onclick="applyTimeFilters()"
-                            class="w-full bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                        <i class="fas fa-clock mr-1"></i>
-                        Применить
-                    </button>
+                <div>
+                    <span class="text-xs text-gray-600">Размер позиции:</span>
+                    <span class="text-sm font-semibold text-gray-800">${{ filters.position_size_usd }}</span>
                 </div>
             </div>
+        </div>
+    </div>
 
-            <!-- 2. ПАРАМЕТРЫ ТОРГОВЛИ И РЕЖИМ УПРАВЛЕНИЯ -->
-            <div class="bg-gradient-to-br from-purple-50 to-indigo-50 p-4 rounded-lg border border-purple-200">
-                <div class="flex items-center mb-4">
-                    <div class="bg-purple-500 p-2 rounded-lg mr-3">
-                        <i class="fas fa-cogs text-white text-sm"></i>
-                    </div>
-                    <h3 class="font-bold text-gray-800 text-sm">Параметры торговли</h3>
-                </div>
-
-                <div class="space-y-3">
-                    <!-- Переключатель режимов -->
-                    <div class="flex items-center justify-center space-x-3 mb-3">
-                        <label class="flex items-center cursor-pointer">
-                            <input type="radio" name="stopMode" value="fixed"
-                                   id="fixedMode" checked
-                                   onchange="toggleStopMode()"
-                                   class="mr-1 text-purple-600 focus:ring-purple-500">
-                            <span class="text-xs font-medium text-gray-700">Fixed TP/SL</span>
-                        </label>
-                        <label class="flex items-center cursor-pointer">
-                            <input type="radio" name="stopMode" value="trailing"
-                                   id="trailingMode"
-                                   onchange="toggleStopMode()"
-                                   class="mr-1 text-purple-600 focus:ring-purple-500">
-                            <span class="text-xs font-medium text-gray-700">Trailing Stop</span>
-                        </label>
-                    </div>
-
-                    <!-- Параметры Fixed TP/SL -->
-                    <div id="fixedParams" class="space-y-2">
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 mb-1">
-                                Take Profit (%)
-                            </label>
-                            <input type="number" id="takeProfit"
-                                   value="{{ filters.take_profit_percent }}"
-                                   min="1" max="20" step="0.5"
-                                   onchange="showReinitWarning()"
-                                   class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 mb-1">
-                                Stop Loss (%)
-                            </label>
-                            <input type="number" id="stopLoss"
-                                   value="{{ filters.stop_loss_percent }}"
-                                   min="0.5" max="10" step="0.5"
-                                   onchange="showReinitWarning()"
-                                   class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-                        </div>
-                    </div>
-
-                    <!-- Параметры Trailing Stop -->
-                    <div id="trailingParams" class="space-y-2 hidden">
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 mb-1">
-                                Distance (%)
-                            </label>
-                            <input type="number" id="trailingDistance"
-                                   value="2.0"
-                                   min="0.5" max="10" step="0.5"
-                                   class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 mb-1">
-                                Activation (%)
-                            </label>
-                            <input type="number" id="trailingActivation"
-                                   value="1.0"
-                                   min="0.5" max="5" step="0.5"
-                                   class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 mb-1">
-                                Stop Loss (%)
-                            </label>
-                            <input type="number" id="trailingStopLoss"
-                                   value="3.0"
-                                   min="1" max="10" step="0.5"
-                                   class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-                        </div>
-                    </div>
-
-                    <div id="reinitWarning" class="hidden bg-purple-100 p-2 rounded text-xs text-purple-700 border border-purple-200">
-                        <i class="fas fa-exclamation-triangle mr-1"></i>
-                        Требуется переинициализация!
-                    </div>
-
-                    <button onclick="applyTradingMode()"
-                            class="w-full bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                        <i class="fas fa-save mr-1"></i>
-                        <span id="applyButtonText">Сохранить режим</span>
-                    </button>
-                    
-                    {% if current_user.is_admin %}
-                    <button onclick="reinitializeSignals()"
-                            class="w-full mt-2 bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                        <i class="fas fa-sync-alt mr-1"></i>
-                        Переинициализировать
-                    </button>
-                    {% endif %}
-                </div>
-            </div>
-
-            <!-- 3. СКОРИНГОВЫЕ ФИЛЬТРЫ -->
-            <div class="bg-gradient-to-br from-yellow-50 to-orange-50 p-4 rounded-lg border border-yellow-200">
-                <div class="flex items-center mb-4">
-                    <div class="bg-yellow-500 p-2 rounded-lg mr-3">
-                        <i class="fas fa-star text-white text-sm"></i>
-                    </div>
-                    <h3 class="font-bold text-gray-800 text-sm">Фильтры скоринга</h3>
-                </div>
-
-                <div class="space-y-3">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">
-                            Score Week (min)
-                        </label>
-                        <input type="number" id="scoreWeek"
-                               value="{{ filters.score_week_min }}"
-                               min="0" max="100" step="1"
-                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-yellow-500 focus:border-transparent">
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">
-                            Score Month (min)
-                        </label>
-                        <input type="number" id="scoreMonth"
-                               value="{{ filters.score_month_min }}"
-                               min="0" max="100" step="1"
-                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-yellow-500 focus:border-transparent">
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">
-                            Макс. сделок за 15 мин
-                        </label>
-                        <input type="number" id="maxTradesPer15Min"
-                               value="{{ filters.max_trades_per_15min|default(3) }}"
-                               min="1" max="10" step="1"
-                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-yellow-500 focus:border-transparent">
-                        <span class="text-xs text-gray-500 mt-1 block">
-                            Топ N по Score Week
-                        </span>
-                    </div>
-
-                    <button onclick="applyScoringFilters()"
-                            class="w-full bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                        <i class="fas fa-filter mr-1"></i>
-                        Применить скоринг
-                    </button>
-                </div>
-            </div>
-
-            <!-- 4. ФИЛЬТР ПО ВРЕМЕНИ СОЗДАНИЯ -->
-            <div class="bg-gradient-to-br from-indigo-50 to-purple-50 p-4 rounded-lg border border-indigo-200">
-                <div class="flex items-center mb-4">
-                    <div class="bg-indigo-500 p-2 rounded-lg mr-3">
-                        <i class="fas fa-clock text-white text-sm"></i>
-                    </div>
-                    <h3 class="font-bold text-gray-800 text-sm">Фильтр по часам (UTC)</h3>
-                </div>
-
-                <div class="grid grid-cols-6 gap-2 mb-3">
-                    {% for hour in range(24) %}
-                    <div class="flex items-center">
-                        <input type="checkbox" id="hour_{{ hour }}" 
-                               class="hour-filter mr-1" 
-                               value="{{ hour }}"
-                               {% if hour in (filters.allowed_hours or range(24)) %}checked{% endif %}>
-                        <label for="hour_{{ hour }}" class="text-xs text-gray-600 cursor-pointer">{{ '%02d' % hour }}</label>
-                    </div>
-                    {% endfor %}
-                </div>
-
-                <div class="flex gap-2">
-                    <button onclick="selectAllHours()"
-                            class="flex-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-2 py-1 rounded text-xs font-medium transition-colors">
-                        Все
-                    </button>
-                    <button onclick="clearAllHours()"
-                            class="flex-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-2 py-1 rounded text-xs font-medium transition-colors">
-                        Очистить
-                    </button>
-                    <button onclick="applyHourFilter()"
-                            class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded text-xs font-medium transition-colors">
-                        <i class="fas fa-filter mr-1"></i>
-                        Применить
-                    </button>
-                </div>
-            </div>
-
-            <!-- 5. ПАРАМЕТРЫ РАСЧЕТА -->
-            <div class="bg-gradient-to-br from-green-50 to-emerald-50 p-4 rounded-lg border border-green-200">
-                <div class="flex items-center mb-4">
-                    <div class="bg-green-500 p-2 rounded-lg mr-3">
-                        <i class="fas fa-calculator text-white text-sm"></i>
-                    </div>
-                    <h3 class="font-bold text-gray-800 text-sm">Параметры расчета</h3>
-                </div>
-
-                <div class="space-y-3">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">
-                            Leverage (x)
-                        </label>
-                        <input type="number" id="leverage"
-                               value="{{ filters.leverage }}"
-                               min="1" max="20" step="1"
-                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-transparent">
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">
-                            Размер позиции ($)
-                        </label>
-                        <input type="number" id="positionSize"
-                               value="{{ filters.position_size_usd }}"
-                               min="10" max="1000" step="10"
-                               class="w-full px-2 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-transparent">
-                    </div>
-
-                    <div class="flex space-x-2">
-                        <button onclick="applyCalculationParams()"
-                                class="flex-1 bg-green-600 hover:bg-green-700 text-white px-2 py-2 rounded-md text-sm font-medium transition-colors">
-                            <i class="fas fa-play mr-1"></i>
-                            Применить
-                        </button>
-                        <button onclick="saveCalculationParams()"
-                                class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-2 rounded-md text-sm font-medium transition-colors">
-                            <i class="fas fa-save mr-1"></i>
-                            Сохранить
-                        </button>
-                    </div>
-
-                    <div id="unsavedIndicator" class="hidden text-xs text-orange-600 bg-orange-50 p-2 rounded border border-orange-200">
-                        <i class="fas fa-exclamation-circle mr-1"></i>
-                        Изменения не сохранены
-                    </div>
-                </div>
-            </div>
+    <!-- Exchange Filter -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h2 class="text-xl font-bold text-gray-800 mb-4">
+            <i class="fas fa-exchange-alt mr-2 text-blue-600"></i>
+            Фильтр по биржам
+        </h2>
+        <div class="flex items-center space-x-6">
+            <label class="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox" id="exchangeBinance" value="1" class="exchange-checkbox w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                       {% if 1 in filters.selected_exchanges %}checked{% endif %}>
+                <span class="text-sm font-medium text-gray-700">
+                    <span class="inline-flex items-center px-2 py-1 rounded-md bg-yellow-100 text-yellow-800">
+                        <i class="fas fa-coins mr-1"></i> Binance
+                    </span>
+                </span>
+            </label>
+            <label class="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox" id="exchangeBybit" value="2" class="exchange-checkbox w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                       {% if 2 in filters.selected_exchanges %}checked{% endif %}>
+                <span class="text-sm font-medium text-gray-700">
+                    <span class="inline-flex items-center px-2 py-1 rounded-md bg-orange-100 text-orange-800">
+                        <i class="fas fa-chart-line mr-1"></i> Bybit
+                    </span>
+                </span>
+            </label>
+            <label class="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox" id="exchangeCoinbase" value="3" class="exchange-checkbox w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                       {% if 3 in filters.selected_exchanges %}checked{% endif %}>
+                <span class="text-sm font-medium text-gray-700">
+                    <span class="inline-flex items-center px-2 py-1 rounded-md bg-blue-100 text-blue-800">
+                        <i class="fas fa-university mr-1"></i> Coinbase
+                    </span>
+                </span>
+            </label>
+            <button onclick="applyExchangeFilter()" class="ml-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
+                <i class="fas fa-filter mr-1"></i> Применить
+            </button>
         </div>
     </div>
 
@@ -739,6 +510,7 @@
                 <thead class="bg-gray-50">
                 <tr>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Пара</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Биржа</th>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Тип</th>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Score W/M</th>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Возраст</th>
@@ -754,6 +526,25 @@
                 {% for signal in signals %}
                 <tr class="hover:bg-gray-50">
                     <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ signal.pair_symbol }}</td>
+                    <td class="px-4 py-3 text-sm">
+                        {% if signal.exchange_name == 'Binance' %}
+                            <span class="px-2 py-1 text-xs rounded-md bg-yellow-100 text-yellow-800">
+                                <i class="fas fa-coins"></i> {{ signal.exchange_name }}
+                            </span>
+                        {% elif signal.exchange_name == 'Bybit' %}
+                            <span class="px-2 py-1 text-xs rounded-md bg-orange-100 text-orange-800">
+                                <i class="fas fa-chart-line"></i> {{ signal.exchange_name }}
+                            </span>
+                        {% elif signal.exchange_name == 'Coinbase' %}
+                            <span class="px-2 py-1 text-xs rounded-md bg-blue-100 text-blue-800">
+                                <i class="fas fa-university"></i> {{ signal.exchange_name }}
+                            </span>
+                        {% else %}
+                            <span class="px-2 py-1 text-xs rounded-md bg-gray-100 text-gray-800">
+                                {{ signal.exchange_name|default('Unknown') }}
+                            </span>
+                        {% endif %}
+                    </td>
                     <td class="px-4 py-3 text-sm">
                             <span class="px-2 py-1 text-xs rounded-full
                                 {% if signal.signal_action in ['SELL', 'SHORT'] %}bg-red-100 text-red-800
@@ -914,6 +705,53 @@
             score_month: document.getElementById('scoreMonth').value
         });
         window.location.href = '/signal_performance?' + params.toString();
+    }
+
+    // Применение фильтра по биржам
+    function applyExchangeFilter() {
+        // Собираем выбранные биржи
+        const selectedExchanges = [];
+        document.querySelectorAll('.exchange-checkbox:checked').forEach(checkbox => {
+            selectedExchanges.push(parseInt(checkbox.value));
+        });
+
+        // Проверка: должна быть выбрана хотя бы одна биржа
+        if (selectedExchanges.length === 0) {
+            alert('Выберите хотя бы одну биржу!');
+            return;
+        }
+
+        // Сохраняем выбранные биржи в БД вместе с другими фильтрами
+        const data = {
+            selected_exchanges: selectedExchanges,
+            hide_younger_than_hours: parseInt(document.getElementById('hideYounger')?.value || 6),
+            hide_older_than_hours: parseInt(document.getElementById('hideOlder')?.value || 48),
+            leverage: parseInt(document.getElementById('leverage')?.value || 5),
+            position_size_usd: parseFloat(document.getElementById('positionSize')?.value || 100),
+            score_week_min: parseInt(document.getElementById('scoreWeek')?.value || 0),
+            score_month_min: parseInt(document.getElementById('scoreMonth')?.value || 0),
+            max_trades_per_15min: parseInt(document.getElementById('maxTradesPer15Min')?.value || 3),
+            allowed_hours: Array.from(document.querySelectorAll('.hour-filter:checked')).map(cb => parseInt(cb.value))
+        };
+
+        console.log('Saving exchange filter:', data);
+
+        // Сохраняем в БД
+        fetch('/api/save_filters', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(result => {
+            console.log('Exchange filter saved:', result);
+            // Перезагружаем страницу для применения фильтра
+            window.location.reload();
+        })
+        .catch(error => {
+            console.error('Ошибка сохранения фильтра по биржам:', error);
+            alert('Ошибка при сохранении фильтра. Попробуйте еще раз.');
+        });
     }
 
     // Показать предупреждение при изменении TP/SL

@@ -1,0 +1,475 @@
+{% extends "base.html" %}
+
+{% block title %}Сырые Сигналы - Trading Assistant{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <div class="flex items-center justify-between mb-8">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-900">🎯 Сырые Сигналы</h1>
+            <p class="text-gray-600 mt-2">Прямой просмотр сигналов из fas_v2.scoring_history</p>
+        </div>
+        <button onclick="applyFilters()" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg shadow-lg transition">
+            <i class="fas fa-sync-alt mr-2"></i>Обновить
+        </button>
+    </div>
+
+    <!-- Фильтры и Статистика -->
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-8">
+        <!-- Фильтры (3 колонки) -->
+        <div class="lg:col-span-3 bg-white rounded-xl shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-4">Фильтры</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- Временной диапазон -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Период</label>
+                    <select id="timeRange" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                        <option value="1h">Последний час</option>
+                        <option value="3h">Последние 3 часа</option>
+                        <option value="6h">Последние 6 часов</option>
+                        <option value="12h">Последние 12 часов</option>
+                        <option value="24h" selected>Последние 24 часа</option>
+                    </select>
+                </div>
+
+                <!-- Score Week -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Score Week: <span id="scoreWeekValue">-100 до 100</span></label>
+                    <div class="flex gap-2">
+                        <input type="number" id="scoreWeekMin" value="-100" class="w-1/2 px-3 py-2 border rounded-lg" min="-100" max="100">
+                        <input type="number" id="scoreWeekMax" value="100" class="w-1/2 px-3 py-2 border rounded-lg" min="-100" max="100">
+                    </div>
+                </div>
+
+                <!-- Score Month -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Score Month: <span id="scoreMonthValue">-100 до 100</span></label>
+                    <div class="flex gap-2">
+                        <input type="number" id="scoreMonthMin" value="-100" class="w-1/2 px-3 py-2 border rounded-lg" min="-100" max="100">
+                        <input type="number" id="scoreMonthMax" value="100" class="w-1/2 px-3 py-2 border rounded-lg" min="-100" max="100">
+                    </div>
+                </div>
+
+                <!-- Действие -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Действие</label>
+                    <select id="actionFilter" multiple class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" size="3">
+                        <option value="BUY" selected>BUY</option>
+                        <option value="SELL" selected>SELL</option>
+                        <option value="NO_TRADE" selected>NO_TRADE</option>
+                    </select>
+                </div>
+
+                <!-- Режим рынка -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Режим рынка</label>
+                    <select id="regimeFilter" multiple class="w-full px-3 py-2 border border-gray-300 rounded-lg" size="3">
+                        <option value="BULL" selected>BULL</option>
+                        <option value="BEAR" selected>BEAR</option>
+                        <option value="NEUTRAL" selected>NEUTRAL</option>
+                    </select>
+                </div>
+
+                <!-- Биржа -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Биржа</label>
+                    <select id="exchangeFilter" multiple class="w-full px-3 py-2 border border-gray-300 rounded-lg" size="2">
+                        <option value="1" selected>Binance</option>
+                        <option value="2" selected>Bybit</option>
+                    </select>
+                </div>
+            </div>
+            <button onclick="applyFilters()" class="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg w-full">
+                Применить фильтры
+            </button>
+        </div>
+
+        <!-- Статистика (1 колонка) -->
+        <div class="bg-white rounded-xl shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-4">Статистика</h3>
+            <div class="space-y-3">
+                <div class="flex justify-between items-center">
+                    <span class="text-sm text-gray-600">Всего:</span>
+                    <span id="stat-total" class="text-lg font-bold text-gray-900">-</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-sm text-green-600">BUY:</span>
+                    <span id="stat-buy" class="text-lg font-bold text-green-600">-</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-sm text-red-600">SELL:</span>
+                    <span id="stat-sell" class="text-lg font-bold text-red-600">-</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-sm text-gray-600">NO_TRADE:</span>
+                    <span id="stat-neutral" class="text-lg font-bold text-gray-600">-</span>
+                </div>
+                <div class="border-t pt-3">
+                    <div class="text-sm text-gray-600">Avg Score Week:</div>
+                    <div id="stat-avg-week" class="text-xl font-bold text-blue-600">-</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-600">Avg Score Month:</div>
+                    <div id="stat-avg-month" class="text-xl font-bold text-purple-600">-</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Таблица сигналов -->
+    <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead class="bg-gradient-to-r from-slate-700 to-slate-800 text-white">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-sm font-semibold">Время</th>
+                        <th class="px-4 py-3 text-left text-sm font-semibold">Пара</th>
+                        <th class="px-4 py-3 text-left text-sm font-semibold">Действие</th>
+                        <th class="px-4 py-3 text-center text-sm font-semibold">Score W</th>
+                        <th class="px-4 py-3 text-center text-sm font-semibold">Score M</th>
+                        <th class="px-4 py-3 text-center text-sm font-semibold">Паттерны</th>
+                        <th class="px-4 py-3 text-center text-sm font-semibold">Режим</th>
+                        <th class="px-4 py-3 text-center text-sm font-semibold">Действия</th>
+                    </tr>
+                </thead>
+                <tbody id="signalsTable" class="divide-y divide-gray-200">
+                    <tr>
+                        <td colspan="8" class="px-4 py-8 text-center text-gray-500">
+                            <i class="fas fa-spinner fa-spin text-3xl mb-2"></i>
+                            <p>Загрузка данных...</p>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Пагинация -->
+        <div id="pagination" class="bg-gray-50 px-6 py-4 flex justify-between items-center border-t">
+            <div class="text-sm text-gray-600">
+                Страница <span id="currentPage">1</span> из <span id="totalPages">1</span>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="prevPage()" id="prevBtn" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 disabled:opacity-50">
+                    <i class="fas fa-chevron-left"></i> Предыдущая
+                </button>
+                <button onclick="nextPage()" id="nextBtn" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 disabled:opacity-50">
+                    Следующая <i class="fas fa-chevron-right"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal для деталей сигнала -->
+<div id="signalModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50" onclick="if(event.target===this) closeModal()">
+    <div class="bg-white rounded-xl shadow-2xl max-w-6xl w-full mx-4 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+        <div class="sticky top-0 bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-4 flex justify-between items-center">
+            <h2 class="text-2xl font-bold">Детали Сигнала</h2>
+            <button onclick="closeModal()" class="text-white hover:text-gray-200 text-2xl">&times;</button>
+        </div>
+        <div id="modalContent" class="p-6">
+            <div class="text-center py-8">
+                <i class="fas fa-spinner fa-spin text-4xl text-blue-600"></i>
+                <p class="mt-4 text-gray-600">Загрузка данных...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentPage = 1;
+let totalPages = 1;
+let currentFilters = {};
+
+// Инициализация при загрузке страницы
+document.addEventListener('DOMContentLoaded', () => {
+    applyFilters();
+    setInterval(() => {
+        if (document.getElementById('autoRefresh')?.checked) {
+            applyFilters();
+        }
+    }, 30000);
+});
+
+function collectFilters() {
+    const actions = Array.from(document.getElementById('actionFilter').selectedOptions).map(o => o.value);
+    const regimes = Array.from(document.getElementById('regimeFilter').selectedOptions).map(o => o.value);
+    const exchanges = Array.from(document.getElementById('exchangeFilter').selectedOptions).map(o => o.value).map(Number);
+
+    return {
+        time_range: document.getElementById('timeRange').value,
+        score_week_min: parseInt(document.getElementById('scoreWeekMin').value),
+        score_week_max: parseInt(document.getElementById('scoreWeekMax').value),
+        score_month_min: parseInt(document.getElementById('scoreMonthMin').value),
+        score_month_max: parseInt(document.getElementById('scoreMonthMax').value),
+        actions: actions.length > 0 ? actions : undefined,
+        regimes: regimes.length > 0 ? regimes : undefined,
+        exchanges: exchanges.length > 0 ? exchanges : undefined
+    };
+}
+
+async function applyFilters() {
+    currentFilters = collectFilters();
+    currentPage = 1;
+    await Promise.all([loadSignals(), loadStats()]);
+}
+
+async function loadSignals() {
+    try {
+        const response = await fetch('/api/raw_signals/list', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({filters: currentFilters, page: currentPage, per_page: 50})
+        });
+        const data = await response.json();
+
+        totalPages = data.pages;
+        document.getElementById('currentPage').textContent = data.page;
+        document.getElementById('totalPages').textContent = data.pages;
+        document.getElementById('prevBtn').disabled = data.page <= 1;
+        document.getElementById('nextBtn').disabled = data.page >= data.pages;
+
+        renderSignalsTable(data.signals);
+    } catch (error) {
+        console.error('Error loading signals:', error);
+        console.error('Error details:', error.message, error.stack);
+        document.getElementById('signalsTable').innerHTML = '<tr><td colspan="8" class="px-4 py-8 text-center text-red-500">Ошибка загрузки данных: ' + error.message + '</td></tr>';
+    }
+}
+
+async function loadStats() {
+    try {
+        const response = await fetch('/api/raw_signals/stats', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({filters: currentFilters})
+        });
+        const stats = await response.json();
+
+        document.getElementById('stat-total').textContent = stats.total || 0;
+        const buyCount = (stats.by_action?.BUY || 0);
+        const sellCount = (stats.by_action?.SELL || 0);
+        const neutralCount = (stats.by_action?.NO_TRADE || 0);
+        document.getElementById('stat-buy').textContent = buyCount;
+        document.getElementById('stat-sell').textContent = sellCount;
+        document.getElementById('stat-neutral').textContent = neutralCount;
+        document.getElementById('stat-avg-week').textContent = (stats.avg_score_week || 0).toFixed(2);
+        document.getElementById('stat-avg-month').textContent = (stats.avg_score_month || 0).toFixed(2);
+    } catch (error) {
+        console.error('Error loading stats:', error);
+    }
+}
+
+function renderSignalsTable(signals) {
+    const tbody = document.getElementById('signalsTable');
+    if (!signals || signals.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500">Нет данных</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = signals.map(signal => {
+        const actionClass = signal.recommended_action === 'BUY' ? 'bg-green-100 text-green-800' :
+                           signal.recommended_action === 'SELL' ? 'bg-red-100 text-red-800' :
+                           'bg-gray-100 text-gray-800';
+
+        const scoreWeekColor = signal.score_week > 30 ? 'text-green-600' : signal.score_week < -30 ? 'text-red-600' : 'text-yellow-600';
+        const scoreMonthColor = signal.score_month > 30 ? 'text-green-600' : signal.score_month < -30 ? 'text-red-600' : 'text-yellow-600';
+
+        const regimeBadge = signal.market_regime === 'BULL' ? 'bg-green-100 text-green-800' :
+                           signal.market_regime === 'BEAR' ? 'bg-red-100 text-red-800' :
+                           'bg-gray-100 text-gray-800';
+
+        const time = new Date(signal.timestamp).toLocaleString('ru-RU');
+
+        return `
+            <tr class="hover:bg-gray-50 transition">
+                <td class="px-4 py-3 text-sm text-gray-600">${time}</td>
+                <td class="px-4 py-3 text-sm font-medium">${signal.pair_symbol}</td>
+                <td class="px-4 py-3"><span class="px-3 py-1 rounded-full text-xs font-semibold ${actionClass}">${signal.recommended_action}</span></td>
+                <td class="px-4 py-3 text-center font-bold ${scoreWeekColor}">${(signal.score_week || 0).toFixed(2)}</td>
+                <td class="px-4 py-3 text-center font-bold ${scoreMonthColor}">${(signal.score_month || 0).toFixed(2)}</td>
+                <td class="px-4 py-3 text-center text-sm text-gray-600">${signal.patterns_count || 0}</td>
+                <td class="px-4 py-3 text-center"><span class="px-2 py-1 rounded text-xs ${regimeBadge}">${signal.market_regime || 'N/A'}</span></td>
+                <td class="px-4 py-3 text-center">
+                    <button onclick="showSignalDetails(${signal.id})" class="text-blue-600 hover:text-blue-800 font-medium">
+                        <i class="fas fa-eye"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function showSignalDetails(signalId) {
+    document.getElementById('signalModal').classList.remove('hidden');
+    document.getElementById('signalModal').classList.add('flex');
+    document.getElementById('modalContent').innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-4xl text-blue-600"></i></div>';
+
+    try {
+        const response = await fetch(`/api/raw_signals/details/${signalId}`);
+        const data = await response.json();
+        renderModalContent(data);
+    } catch (error) {
+        console.error('Error loading signal details:', error);
+        document.getElementById('modalContent').innerHTML = '<div class="text-center py-8 text-red-500">Ошибка загрузки данных</div>';
+    }
+}
+
+function renderModalContent(data) {
+    const s = data.signal;
+    const patterns = data.patterns || [];
+    const indicators = data.indicators || {};
+    const poc = data.poc;
+    const regime = data.regime;
+
+    const timeframes = ['5m', '15m', '1h', '4h', '1d'];
+
+    let html = `
+        <div class="space-y-6">
+            <!-- Основная информация -->
+            <div class="bg-gradient-to-r from-blue-50 to-purple-50 p-6 rounded-lg">
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div><div class="text-sm text-gray-600">Пара</div><div class="text-xl font-bold">${s.pair_symbol}</div></div>
+                    <div><div class="text-sm text-gray-600">Действие</div><div class="text-xl font-bold">${s.recommended_action}</div></div>
+                    <div><div class="text-sm text-gray-600">Score Week</div><div class="text-xl font-bold text-green-600">${(s.score_week || 0).toFixed(2)}</div></div>
+                    <div><div class="text-sm text-gray-600">Score Month</div><div class="text-xl font-bold text-purple-600">${(s.score_month || 0).toFixed(2)}</div></div>
+                </div>
+            </div>
+
+            <!-- Скоринг декомпозиция -->
+            <div class="bg-gray-50 p-6 rounded-lg">
+                <h3 class="text-lg font-bold mb-4">Скоринг Декомпозиция</h3>
+                <div class="space-y-2">
+                    <div class="flex justify-between"><span>Total Score:</span><span class="font-bold">${(s.total_score || 0).toFixed(2)}</span></div>
+                    <div class="flex justify-between"><span>Pattern Score:</span><span class="font-bold text-green-600">${(s.pattern_score || 0).toFixed(2)}</span></div>
+                    <div class="flex justify-between"><span>Indicator Score:</span><span class="font-bold text-blue-600">${(s.indicator_score || 0).toFixed(2)}</span></div>
+                    <div class="flex justify-between"><span>Combination Score:</span><span class="font-bold text-purple-600">${(s.combination_score || 0).toFixed(2)}</span></div>
+                </div>
+            </div>
+
+            <!-- Паттерны -->
+            ${patterns.length > 0 ? `
+                <div class="bg-white border-2 border-gray-200 p-6 rounded-lg">
+                    <h3 class="text-lg font-bold mb-4">Обнаруженные Паттерны (${patterns.length})</h3>
+                    <div class="space-y-4">
+                        ${patterns.map((p, i) => `
+                            <div class="border-l-4 border-blue-500 pl-4">
+                                <div class="flex items-center gap-3">
+                                    <div class="font-bold text-lg">${i + 1}. ${p.pattern_type}</div>
+                                    <span class="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded">${p.timeframe || 'N/A'}</span>
+                                </div>
+                                <div class="grid grid-cols-3 gap-2 mt-2 text-sm">
+                                    <div>Сила: <span class="font-bold">${(p.strength || 0).toFixed(0)}%</span></div>
+                                    <div>Уверенность: <span class="font-bold">${(p.confidence || 0).toFixed(0)}%</span></div>
+                                    <div>Влияние: <span class="font-bold ${p.score_impact > 0 ? 'text-green-600' : 'text-red-600'}">${(p.score_impact || 0).toFixed(2)}</span></div>
+                                </div>
+                                ${p.details ? `<div class="mt-2 text-xs bg-gray-50 p-2 rounded"><pre>${JSON.stringify(p.details, null, 2)}</pre></div>` : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            ` : ''}
+
+            <!-- Индикаторы -->
+            ${Object.keys(indicators).length > 0 ? `
+                <div class="bg-white border-2 border-gray-200 p-6 rounded-lg">
+                    <h3 class="text-lg font-bold mb-4">Технические Индикаторы</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-100">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">TF</th>
+                                    <th class="px-3 py-2 text-center">RSI</th>
+                                    <th class="px-3 py-2 text-center">Vol Z</th>
+                                    <th class="px-3 py-2 text-center">Imbalance</th>
+                                    <th class="px-3 py-2 text-center">CVD</th>
+                                    <th class="px-3 py-2 text-center">MACD</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y">
+                                ${timeframes.filter(tf => indicators[tf]).map(tf => {
+                                    const ind = indicators[tf];
+                                    return `
+                                        <tr>
+                                            <td class="px-3 py-2 font-bold">${tf}</td>
+                                            <td class="px-3 py-2 text-center">${(ind.rsi || 0).toFixed(1)}</td>
+                                            <td class="px-3 py-2 text-center">${(ind.volume_zscore || 0).toFixed(2)}</td>
+                                            <td class="px-3 py-2 text-center">${(ind.smoothed_imbalance || 0).toFixed(4)}</td>
+                                            <td class="px-3 py-2 text-center">${ind.cvd_cumulative ? (parseFloat(ind.cvd_cumulative) / 1000).toFixed(1) + 'K' : '-'}</td>
+                                            <td class="px-3 py-2 text-center">${(ind.macd_histogram || 0).toFixed(6)}</td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            ` : ''}
+
+            <!-- POC Levels -->
+            ${poc ? `
+                <div class="bg-white border-2 border-gray-200 p-6 rounded-lg">
+                    <h3 class="text-lg font-bold mb-4">POC Levels</h3>
+                    <div class="grid grid-cols-3 gap-4">
+                        <div><div class="text-sm text-gray-600">POC 24h</div><div class="text-lg font-bold">${poc.poc_24h || '-'}</div></div>
+                        <div><div class="text-sm text-gray-600">POC 7d</div><div class="text-lg font-bold">${poc.poc_7d || '-'}</div></div>
+                        <div><div class="text-sm text-gray-600">POC 30d</div><div class="text-lg font-bold">${poc.poc_30d || '-'}</div></div>
+                        <div><div class="text-sm text-gray-600">Volume 24h</div><div class="text-lg font-bold">${poc.volume_24h ? parseFloat(poc.volume_24h).toFixed(0) : '-'}</div></div>
+                        <div><div class="text-sm text-gray-600">Data Points</div><div class="text-lg font-bold">${poc.data_points_24h || '-'}</div></div>
+                        <div><div class="text-sm text-gray-600">Quality</div><div class="text-lg font-bold">${poc.calculation_quality || '-'}%</div></div>
+                    </div>
+                </div>
+            ` : ''}
+
+            <!-- Режим рынка -->
+            ${regime ? `
+                <div class="bg-white border-2 border-gray-200 p-6 rounded-lg">
+                    <h3 class="text-lg font-bold mb-4">Режим Рынка (4h)</h3>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div><div class="text-sm text-gray-600">Режим</div><div class="text-xl font-bold">${regime.regime}</div></div>
+                        <div><div class="text-sm text-gray-600">Сила</div><div class="text-xl font-bold">${(regime.strength * 100 || 0).toFixed(1)}%</div></div>
+                        <div><div class="text-sm text-gray-600">BTC 4h</div><div class="text-lg font-bold">${(regime.btc_change_4h || 0).toFixed(2)}%</div></div>
+                        <div><div class="text-sm text-gray-600">ALT 4h</div><div class="text-lg font-bold">${(regime.alt_change_4h || 0).toFixed(2)}%</div></div>
+                    </div>
+                </div>
+            ` : ''}
+
+            <!-- Кнопки действий -->
+            <div class="flex gap-4">
+                <button onclick="exportSignal(${s.id})" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg">
+                    <i class="fas fa-download mr-2"></i>Экспорт в JSON
+                </button>
+                <button onclick="closeModal()" class="flex-1 bg-gray-600 hover:bg-gray-700 text-white px-6 py-3 rounded-lg">
+                    Закрыть
+                </button>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('modalContent').innerHTML = html;
+}
+
+function closeModal() {
+    document.getElementById('signalModal').classList.add('hidden');
+    document.getElementById('signalModal').classList.remove('flex');
+}
+
+function exportSignal(signalId) {
+    window.location.href = `/api/raw_signals/export/${signalId}`;
+}
+
+function prevPage() {
+    if (currentPage > 1) {
+        currentPage--;
+        loadSignals();
+    }
+}
+
+function nextPage() {
+    if (currentPage < totalPages) {
+        currentPage++;
+        loadSignals();
+    }
+}
+</script>
+{% endblock %}
