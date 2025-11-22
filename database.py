@@ -3310,7 +3310,9 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
                     market_data_by_pair[pair] = market_data_cache[cache_key]
                 else:
                     # Загружаем market_data
-                    market_data = get_market_data(trading_pair_id, signal_timestamp)
+                    # ВАЖНО: Смещаем время начала истории на 15 минут вперед
+                    entry_time = signal_timestamp + timedelta(minutes=15)
+                    market_data = get_market_data(trading_pair_id, entry_time)
                     if market_data:
                         market_data_cache[cache_key] = market_data
                         market_data_by_pair[pair] = market_data
@@ -3342,8 +3344,11 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
             signal_timestamp = signal['timestamp']
 
             # Получаем entry_price (используем helper function, 15-min window)
+            # ВАЖНО: Смещаем время входа на 15 минут вперед (симуляция входа на закрытии свечи сигнала)
+            entry_time = signal_timestamp + timedelta(minutes=15)
+            
             entry_price_query = build_entry_price_query(window_minutes=15)
-            ts_param = convert_timestamp_param(signal_timestamp)
+            ts_param = convert_timestamp_param(entry_time)
 
             price_result = db.execute_query(
                 entry_price_query,
