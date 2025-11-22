@@ -120,7 +120,7 @@ class TradingSimulation:
 
         return True, 'ok'
 
-    def open_position(self, signal, entry_price, market_data, simulation_end_time=None):
+    def open_position(self, signal, entry_price, market_data, simulation_end_time=None, entry_time=None):
         """
         Открытие новой позиции
 
@@ -129,13 +129,14 @@ class TradingSimulation:
             entry_price: Цена входа
             market_data: История цен для симуляции
             simulation_end_time: Время окончания симуляции (для принудительного закрытия)
-
-        Returns:
-            dict: Информация о результате открытия
+            entry_time: Время входа (если отличается от signal['timestamp'])
         """
         pair_symbol = signal['pair_symbol']
         signal_action = signal['signal_action']
         signal_timestamp = signal['timestamp']
+        
+        # Используем переданное время входа или время сигнала
+        actual_entry_time = entry_time if entry_time else signal_timestamp
 
         # Проверяем возможность открытия
         can_open, reason = self.can_open_position(pair_symbol)
@@ -153,13 +154,13 @@ class TradingSimulation:
                 entry_price, market_data, signal_action,
                 self.trailing_distance_pct, self.trailing_activation_pct,
                 self.sl_percent, self.position_size, self.leverage,
-                signal_timestamp, Config.DEFAULT_COMMISSION_RATE,
+                actual_entry_time, Config.DEFAULT_COMMISSION_RATE,
                 simulation_end_time=simulation_end_time
             )
         else:
             # Fixed TP/SL логика (упрощенно вызываем)
             result = self._simulate_fixed_tp_sl(
-                entry_price, market_data, signal_action, signal_timestamp,
+                entry_price, market_data, signal_action, actual_entry_time,
                 simulation_end_time=simulation_end_time
             )
 
@@ -169,7 +170,7 @@ class TradingSimulation:
             'pair_symbol': pair_symbol,
             'signal_action': signal_action,
             'entry_price': entry_price,
-            'entry_time': signal_timestamp,
+            'entry_time': actual_entry_time,
             'position_size': self.position_size,
             'leverage': self.leverage,
             'simulation_result': result,

@@ -3369,8 +3369,10 @@ def process_scoring_signals_batch_v2(db, signals, session_id, user_id,
                 sim.stats['skipped_no_capital'] += 1
                 continue
 
-            # Пытаемся открыть позицию через TradingSimulation (передаем simulation_end_time)
-            result = sim.open_position(signal, entry_price, market_data, simulation_end_time=simulation_end_time)
+            # Пытаемся открыть позицию через TradingSimulation (передаем simulation_end_time и entry_time)
+            result = sim.open_position(signal, entry_price, market_data, 
+                                     simulation_end_time=simulation_end_time,
+                                     entry_time=entry_time)
 
             if result['success']:
                 trades_taken_this_wave += 1
