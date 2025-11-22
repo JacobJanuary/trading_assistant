@@ -806,9 +806,10 @@ def signal_performance():
                     # Максимальный профит
                     max_profit = float(signal['max_potential_profit_usd']) if signal['max_potential_profit_usd'] else 0
 
-                    # Возраст сигнала
-                    from datetime import datetime, timezone
-                    age_hours = (datetime.now(timezone.utc) - signal['signal_timestamp']).total_seconds() / 3600
+                    # Возраст сигнала (считаем от момента входа = сигнал + 15 мин)
+                    from datetime import datetime, timezone, timedelta
+                    entry_time = signal['signal_timestamp'] + timedelta(minutes=15)
+                    age_hours = (datetime.now(timezone.utc) - entry_time).total_seconds() / 3600
 
                     signal_data = {
                         'pair_symbol': signal['pair_symbol'],
