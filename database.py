@@ -1310,6 +1310,11 @@ def process_signal_complete(db, signal,
         signal_timestamp = signal['signal_timestamp']
         exchange_name = signal.get('exchange_name', 'Unknown')
 
+        # КРИТИЧНО: Вход в позицию происходит через 15 минут после сигнала
+        # (на следующей 15-минутной свече после генерации сигнала)
+        from datetime import timedelta
+        entry_time = signal_timestamp + timedelta(minutes=15)
+
         # Получаем exchange_id из signal если не передан явно
         if exchange_id is None:
             exchange_id = signal.get('exchange_id')
@@ -1323,9 +1328,10 @@ def process_signal_complete(db, signal,
         # Инициализируем last_price значением по умолчанию
         last_price = None
 
-        # Получаем цену входа (используем helper function для миграции на public.candles)
-        entry_price_query = build_entry_price_query(window_minutes=5)
-        ts_param = convert_timestamp_param(signal_timestamp)
+        # Получаем цену входа от entry_time (НЕ от signal_timestamp!)
+        # Используем окно ±15 минут для более надежного поиска цены
+        entry_price_query = build_entry_price_query(window_minutes=15)
+        ts_param = convert_timestamp_param(entry_time)  # FIX: используем entry_time
 
         price_result = db.execute_query(
             entry_price_query,
@@ -1336,9 +1342,11 @@ def process_signal_complete(db, signal,
         if not price_result:
             # Расширенный поиск (используем helper function)
             fallback_query = build_entry_price_fallback_query(window_hours=1)
+            # FIX: fallback тоже от entry_time
+            ts_param_fallback = convert_timestamp_param(entry_time)
             price_result = db.execute_query(
                 fallback_query,
-                (trading_pair_id, ts_param, ts_param, ts_param),
+                (trading_pair_id, ts_param_fallback, ts_param_fallback, ts_param_fallback),
                 fetch=True
             )
 
@@ -1351,17 +1359,16 @@ def process_signal_complete(db, signal,
         # Устанавливаем last_price = entry_price по умолчанию
         last_price = entry_price
 
-        # Получаем историю (24 часа от signal_timestamp для полной симуляции)
-        # Используем helper function для миграции на public.candles
+        # Получаем историю (24 часа от entry_time для симуляции)
+        # FIX: История должна начинаться с entry_time, не с signal_timestamp
         history_query = build_candle_history_query(duration_hours=24)
-        start_ts = convert_timestamp_param(signal_timestamp)
+        start_ts = convert_timestamp_param(entry_time)  # FIX: от entry_time
 
         # Для public.candles: end_ts = start_ts + 24h в миллисекундах
-        from datetime import timedelta
         if Config.USE_PUBLIC_CANDLES:
             end_ts = start_ts + (24 * 60 * 60 * 1000)  # +24 часа в миллисекундах
         else:
-            end_ts = signal_timestamp
+            end_ts = entry_time  # FIX: от entry_time
 
         history = db.execute_query(history_query, (trading_pair_id, start_ts, end_ts), fetch=True)
 
@@ -1395,16 +1402,16 @@ def process_signal_complete(db, signal,
 
         # ВЫБОР ЛОГИКИ: Trailing Stop или Fixed TP/SL
         if use_trailing_stop:
-            # Вычисляем simulation_end_time (24 часа от signal_timestamp)
-            from datetime import timedelta
-            simulation_end_time = signal_timestamp + timedelta(hours=24) if signal_timestamp else None
+            # FIX: simulation_end_time должен быть 24 часа от entry_time, не signal_timestamp
+            simulation_end_time = entry_time + timedelta(hours=24) if entry_time else None
 
             # Используем новую функцию trailing stop
+            # FIX: Передаем entry_time вместо signal_timestamp для корректных фазовых расчетов
             result = calculate_trailing_stop_exit(
                 entry_price, history, signal_action,
                 trailing_distance_pct, trailing_activation_pct,
                 sl_percent, position_size, leverage,
-                signal_timestamp,  # Передаем timestamp для корректного расчета таймаута
+                entry_time,  # FIX: Передаем entry_time для правильного расчета фаз
                 Config.DEFAULT_COMMISSION_RATE,  # Передаем commission_rate
                 simulation_end_time  # КРИТИЧНО: передаем simulation_end_time!
             )
@@ -1526,9 +1533,9 @@ def process_signal_complete(db, signal,
                             close_price = sl_price
                             close_time = current_time
 
-            # Если не закрылась, проверяем таймаут (24 часа)
+            # Если не закрылась, проверяем таймаут (24 часа от entry_time)
             if not is_closed:
-                hours_passed = (history[-1]['timestamp'] - signal_timestamp).total_seconds() / 3600
+                hours_passed = (history[-1]['timestamp'] - entry_time).total_seconds() / 3600
                 if hours_passed >= 24:
                     is_closed = True
                     close_reason = 'timeout'
